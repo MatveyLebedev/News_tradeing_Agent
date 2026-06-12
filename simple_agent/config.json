@@ -1,0 +1,7 @@
+{
+  "LLM_MODEL": "google/gemini-3-flash-preview",
+  "LLM_TEMPERATURE": 0,
+  "LANGCHAIN_TRACING_V2": false,
+  "LANGCHAIN_ENDPOINT": "https://api.smith.langchain.com",
+  "LANGCHAIN_PROJECT": "baseline-agent"
+}

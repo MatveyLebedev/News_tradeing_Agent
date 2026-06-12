@@ -1,0 +1,36 @@
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set timezone to US Eastern
+ENV TZ=America/New_York
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY bloomberg_news_fetcher/requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY bloomberg_news_fetcher/config.py .
+COPY bloomberg_news_fetcher/logger.py .
+COPY bloomberg_news_fetcher/embeddings.py .
+COPY bloomberg_news_fetcher/news_fetcher.py .
+COPY bloomberg_news_fetcher/price_fetcher.py .
+COPY bloomberg_news_fetcher/auto_news_fetcher.py .
+COPY graph_db/ graph_db/
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+
+# Run the automated fetcher
+CMD ["python", "-u", "auto_news_fetcher.py"]
+

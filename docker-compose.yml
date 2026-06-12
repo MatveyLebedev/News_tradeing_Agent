@@ -1,0 +1,65 @@
+services:
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: telegram_bot/Dockerfile
+    container_name: telegram_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  news-fetcher:
+    build:
+      context: .
+      dockerfile: bloomberg_news_fetcher/Dockerfile.news
+    container_name: bloomberg_news_fetcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Timezone
+      - TZ=America/New_York
+      
+      # Fetch interval in minutes
+      - FETCH_INTERVAL_MIN=5
+
+      # Console output verbosity
+      - VERBOSE=true
+      
+      # Enable price fetching
+      - FETCH_PRICES=true
+
+      # Full text scraping (off by default - saves time)
+      - FETCH_FULL_TEXT=false
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  price-fetcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: price_fetcher
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+      - FETCH_TIME=22:00
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+

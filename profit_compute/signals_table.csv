@@ -1,0 +1,20 @@
+news_id,time_published_et,news_title,ticker,signal,confidence,agent,entry_time,exit_time,entry_price,exit_price,profit_pct,status
+21975,2026-05-26 10:17:29,Brazil Clears First Generic Copy of Novo Nordisk’s Ozempic Shot,NVO,sell,0.7,complex_agent,,,,,,skipped
+21999,2026-05-26 12:07:50,Webster Investors Approve $12 Billion Purchase by Santander,WBS,buy,0.75,complex_agent,,,,,,skipped
+22013,2026-05-26 13:05:11,MSG Sports Shares Rally to Record as Knicks Reach NBA Finals,MSGS,buy,0.85,complex_agent,,,,,,skipped
+22030,2026-05-26 14:39:10,"AutoZone stock on pace for worst trading day since March 2020, despite retailer ",AZO,sell,0.75,complex_agent,,,,,,skipped
+22278,2026-05-27 09:44:31,"Hormuz Would Reopen One Month After Deal, Iran TV Says",XOM,sell,0.75,complex_agent,2026-05-27 09:45:31,2026-05-27 10:25:31,148.59,148.085,0.34,executed
+22278,2026-05-27 09:44:31,"Hormuz Would Reopen One Month After Deal, Iran TV Says",CVX,sell,0.7,complex_agent,2026-05-27 09:45:31,2026-05-27 10:25:31,183.04,182.67,0.2,executed
+22288,2026-05-27 10:24:04,Boeing Wins FAA Approval to Ramp Up 737 Max Production,BA,buy,0.72,complex_agent,2026-05-27 10:25:04,2026-05-27 11:05:04,223.135,224.1,0.43,executed
+22690,2026-05-28 11:40:35,Travel Stocks Jump on Cease-Fire Talk,BKNG,buy,0.72,complex_agent,2026-05-28 11:41:35,2026-05-28 16:00:00,169.475,169.845,0.22,executed
+22713,2026-05-28 12:53:54,Tilman Fertitta’s Years-Long Pursuit of Caesars Is Paying Off,CZR,buy,0.75,complex_agent,,,,,,skipped
+23047,2026-05-29 11:48:00,Oil prices slide as Trump says the U.S. is close to an Iran deal,CVX,sell,0.72,complex_agent,2026-05-29 11:49:00,2026-05-29 16:00:00,182.23,182.5,-0.15,executed
+23047,2026-05-29 11:48:00,Oil prices slide as Trump says the U.S. is close to an Iran deal,XOM,sell,0.75,complex_agent,2026-05-29 11:49:00,2026-05-29 16:00:00,145.84,145.37,0.32,executed
+23068,2026-05-29 13:26:32,Anthropic Valuation of $965 Billion Passes OpenAI,AMZN,buy,0.85,complex_agent,,,,,,skipped
+23068,2026-05-29 13:26:32,Anthropic Valuation of $965 Billion Passes OpenAI,GOOGL,buy,0.75,complex_agent,,,,,,skipped
+23071,2026-05-29 13:40:58,Mercedes-Benz may be shut out of U.S. market under bill aimed at Chinese automak,MBGYY,sell,0.85,complex_agent,,,,,,skipped
+23455,2026-06-01 09:39:22,Barry Diller's People offers to buy casino giant MGM Resorts for $48.30 per shar,MGM,buy,0.75,complex_agent,,,,,,skipped
+23471,2026-06-01 10:25:25,GM Supplier Strike Threatens Pickup Plant Shutdown Within Weeks,GM,sell,0.72,complex_agent,,,,,,skipped
+23469,2026-06-01 10:31:08,Nvidia Enters the Laptop Market with Superchip (Video),NVDA,buy,0.72,complex_agent,2026-06-01 10:32:08,2026-06-01 11:12:08,224.4425,224.47,0.01,executed
+23508,2026-06-01 11:50:53,Open Interest 6/1/2026 | Jensen Huang's Bullish Software Call,TMHC,buy,0.9,complex_agent,,,,,,skipped
+23514,2026-06-01 12:31:00,Strategy’s stock drops after rare bitcoin sale tests ‘never sell’ narrative,MSTR,sell,0.75,complex_agent,,,,,,skipped

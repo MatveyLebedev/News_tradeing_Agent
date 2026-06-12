@@ -1,0 +1,27 @@
+services:
+  news-fetcher:
+    build:
+      context: .
+      dockerfile: bloomberg_news_fetcher/Dockerfile.news
+    container_name: bloomberg_news_fetcher
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      # Timezone
+      - TZ=America/New_York
+      
+      # Fetch interval in minutes
+      - FETCH_INTERVAL_MIN=5
+      
+      # Console output verbosity (true/false)
+      - VERBOSE=true
+      
+      # Enable price fetching
+      - FETCH_PRICES=true
+      
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
