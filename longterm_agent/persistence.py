@@ -34,6 +34,9 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
     filtered = state.get("filtered_signal")
     no_data = state.get("no_data", False)
     verdict = "NO_DATA" if no_data else (sig.get("direction") or "NEUTRAL")
+    # A "trade" = a directional call that survived the risk gate (actionable). The bot/stats
+    # split signals (all directional verdicts) from trades (traded=TRUE) on this flag.
+    traded = bool(filtered) and (filtered.get("direction") in ("LONG", "SHORT"))
 
     try:
         _ensure_results_table(db_manager)
@@ -43,14 +46,15 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 INSERT INTO longterm_agent_results
                     (agent_name, agent_version, ticker, as_of, lookback_days,
                      background_profile, background_shift, fundamentals_summary, shift_analogs,
-                     signal, verdict, conviction, article_count, execution_time_seconds)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     signal, verdict, traded, risk_flags, conviction, article_count, execution_time_seconds)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (agent_version, ticker, as_of) DO UPDATE SET
                     background_profile=EXCLUDED.background_profile,
                     background_shift=EXCLUDED.background_shift,
                     fundamentals_summary=EXCLUDED.fundamentals_summary,
                     shift_analogs=EXCLUDED.shift_analogs,
                     signal=EXCLUDED.signal, verdict=EXCLUDED.verdict,
+                    traded=EXCLUDED.traded, risk_flags=EXCLUDED.risk_flags,
                     conviction=EXCLUDED.conviction, article_count=EXCLUDED.article_count,
                     execution_time_seconds=EXCLUDED.execution_time_seconds,
                     run_timestamp=NOW()
@@ -62,7 +66,8 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 Json(state.get("fundamentals", {}).get("trend") or {}),
                 Json(state.get("shift_analogs") or {}),
                 Json(filtered or sig or {}),
-                verdict, sig.get("conviction"), state.get("article_count"),
+                verdict, traded, Json(state.get("risk_flags") or []),
+                sig.get("conviction"), state.get("article_count"),
                 round(execution_time, 1) if execution_time else None,
             ])
         conn.commit()

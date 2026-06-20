@@ -9,6 +9,7 @@ Companion to the intraday `news_agent` (one-headline → intraday signal). This 
 **company-driven**: input is a ticker + date, output is a weeks-to-months thesis.
 
 - **Schemas** (state, Pydantic outputs, DB tables, pipeline): [SCHEMAS.md](SCHEMAS.md)
+- **Deployment** (scheduler, Telegram alerts + stats bot, Docker): [DEPLOY.md](DEPLOY.md)
 - **Design rationale & build history**: [../LONG_TERM_AGENT_PLAN.md](../LONG_TERM_AGENT_PLAN.md)
 - **Advanced-analysis plan (7A)**: [DEEP_ANALYSIS_PLAN.md](DEEP_ANALYSIS_PLAN.md)
 - **Architecture diagram**: [add_tools_vs_deep_agents.svg](add_tools_vs_deep_agents.svg)
@@ -139,10 +140,12 @@ LT_MAX_REFLECTION=0 python -m longterm_agent.full_signal_backtest \
 
 ## 7. Honest status
 
-- ✅ Built & verified: the full pipeline, data layer, tests, tracing.
+- ✅ Built & verified: the full pipeline, data layer, tests, tracing, and **Phase 6 ops** —
+  weekly scheduler, Telegram alerts + read-only stats bot, Docker/compose ([DEPLOY.md](DEPLOY.md)).
 - 🟡 Smoke-tested only: the detection backtest and full-signal backtest **ran** but the
   results are **n=17 single-regime noise** — they validate the *machinery and behavior*,
-  not the *strategy*. A real verdict needs forward accumulation across regimes.
+  not the *strategy*. A real verdict needs forward accumulation across regimes. The `/trades`
+  win-rate only becomes meaningful after a quarter of graded forward cohorts.
 - ⏳ Deferred: full-universe replay, conviction calibration, the `deep_analysis` tool node
   (7A), and the Deep Agents harness (7B).
 
@@ -172,13 +175,26 @@ longterm_agent/
 │   ├── risk_tool.py           priced-in + earnings-event checks
 │   └── bucket_cache.py        per-week map-summary cache
 ├── run_longterm_agent.py      CLI (single ticker)
+├── persistence.py             writes results + shift_library rows
 ├── backfill_shift_library.py  detection replay (populates shift_library)
-├── grade_shifts.py            fills realized outcomes
+├── grade_shifts.py            fills realized shift_library outcomes
+├── grade_results.py           fills realized trade outcomes (4w vs SPY)
 ├── backtest_report.py         detection backtest report
 ├── full_signal_backtest.py    whole-pipeline backtest vs SPY
-├── create_*.sql               shift_library / bucket_cache / results table DDL
-├── README.md / SCHEMAS.md / DEEP_ANALYSIS_PLAN.md
-└── tests/                     pytest suite (35)
+├── ── Phase 6 ops ──
+├── batch_run_longterm.py      weekly full-pipeline batch + new/flipped-signal alerts
+├── auto_longterm_agent.py     scheduler (weekly batch + daily grading) — container entrypoint
+├── notifier.py                Telegram push (alerts)
+├── stats.py                   stats queries + win-rate math (CLI: python -m longterm_agent.stats)
+├── stats_bot.py               read-only Telegram bot (/stats /signals /trades /errors /ticker)
+├── oplog.py                   operational log writer (longterm_agent_log)
+├── Dockerfile                 image for scheduler + bot
+├── requirements.txt           ops deps
+├── create_*.sql               shift_library / bucket_cache / results / oplog table DDL
+├── README.md / SCHEMAS.md / DEPLOY.md / DEEP_ANALYSIS_PLAN.md
+└── tests/                     pytest suite (40)
 ```
 Data fetchers live in `../bloomberg_news_fetcher/` (`edgar_fetcher.py`,
 `fundamentals_fetcher.py`, `daily_price_fetcher.py`, and their `create_*.sql`).
+Compose services `longterm-agent` (scheduler) + `longterm-stats-bot` are in the root
+`docker-compose.yml`.

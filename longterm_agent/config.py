@@ -77,6 +77,31 @@ class LongTermAgentConfig:
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "longterm-trading-agent")
 
+    # --- Ops / Phase 6 (weekly scheduler, Telegram alerts, stats bot) ---
+    # Weekly batch cadence (ET). Run after the weekly fundamentals fetch so data is fresh.
+    BATCH_WEEKDAY = os.getenv("LT_BATCH_WEEKDAY", "sunday").lower()
+    BATCH_TIME = os.getenv("LT_BATCH_TIME", "06:00")          # ET, off-market
+    GRADE_TIME = os.getenv("LT_GRADE_TIME", "07:00")          # daily grading of matured cohorts
+    RUN_ON_START = os.getenv("LT_RUN_ON_START", "false").lower() == "true"
+    # Telegram alerts (batch job → push) and the stats bot. Falls back to the shared bot token.
+    TELEGRAM_BOT_TOKEN = os.getenv("LT_TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID = os.getenv("LT_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
+    TELEGRAM_ALLOWED_USER_IDS = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")  # bot auth (comma-sep)
+    ALERT_ON_ERROR = os.getenv("LT_ALERT_ON_ERROR", "true").lower() == "true"
+
+    @classmethod
+    def get_universe(cls):
+        """Default ticker universe for the weekly batch (the curated, news-named set)."""
+        env = os.getenv("LT_UNIVERSE", "").strip()
+        if env:
+            return [t.strip().upper() for t in env.split(",") if t.strip()]
+        try:
+            from bloomberg_news_fetcher.price_fetcher import TOP_50_TICKERS
+            return list(TOP_50_TICKERS)
+        except Exception:
+            from longterm_agent.company_names import COMPANY_NAMES
+            return list(COMPANY_NAMES.keys())
+
     @classmethod
     def get_db_config(cls):
         return dict(cls.DB_CONFIG)

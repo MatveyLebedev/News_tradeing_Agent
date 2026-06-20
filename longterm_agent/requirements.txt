@@ -1,0 +1,25 @@
+# Long-term agent — scheduler + stats bot (Phase 6).
+# Superset covering both the weekly batch (LangGraph pipeline + fetchers) and the bot.
+psycopg2-binary==2.9.11
+pgvector>=0.2.4
+pytz==2024.1
+python-dotenv>=1.0.0
+requests>=2.31.0
+schedule>=1.2.0
+
+pandas>=2.0.0
+numpy>=1.24.0
+yfinance==0.2.66
+
+langchain>=0.1.0
+langchain-core>=0.1.0
+langchain-openai>=0.1.0
+langgraph>=0.0.20
+langsmith>=0.1.0
+openai>=1.0.0
+pydantic>=2.0.0
+
+neo4j>=5.0
+langchain-neo4j>=0.1.0
+
+python-telegram-bot>=20.0

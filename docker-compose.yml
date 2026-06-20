@@ -62,4 +62,46 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # --- Long-term agent (Phase 6) -------------------------------------------
+  # Weekly scheduler: runs the full pipeline across the universe, persists results,
+  # grades matured cohorts, and pushes Telegram alerts for new/flipped signals.
+  longterm-agent:
+    build:
+      context: .
+      dockerfile: longterm_agent/Dockerfile
+    image: longterm-agent          # built once, reused by longterm-stats-bot
+    container_name: longterm_agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+      # Override schedule here or in .env (defaults: Sunday 06:00 ET batch, daily 07:00 grade)
+      # - LT_BATCH_WEEKDAY=sunday
+      # - LT_BATCH_TIME=06:00
+      # - LT_RUN_ON_START=false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Read-only Telegram stats bot: /stats /signals /trades /errors /ticker
+  longterm-stats-bot:
+    image: longterm-agent          # reuse the image built by longterm-agent
+    container_name: longterm_stats_bot
+    restart: unless-stopped
+    depends_on:
+      - longterm-agent
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+    command: ["python", "-u", "-m", "longterm_agent.stats_bot"]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 

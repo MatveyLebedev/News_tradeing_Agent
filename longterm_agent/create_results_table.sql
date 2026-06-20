@@ -20,7 +20,9 @@ CREATE TABLE IF NOT EXISTS longterm_agent_results (
     shift_analogs       JSONB,
     signal              JSONB,         -- final LongTermSignal (direction, conviction, horizon, thesis, invalidation)
 
-    verdict         VARCHAR(20),       -- LONG | SHORT | NEUTRAL | NO_DATA
+    verdict         VARCHAR(20),       -- LONG | SHORT | NEUTRAL | NO_DATA (raw direction)
+    traded          BOOLEAN DEFAULT FALSE,  -- TRUE = directional AND passed the risk gate (actionable)
+    risk_flags      JSONB,             -- why the gate filtered/flagged it
     conviction      REAL,
     article_count   INT,
     execution_time_seconds FLOAT,
@@ -33,8 +35,13 @@ CREATE TABLE IF NOT EXISTS longterm_agent_results (
     UNIQUE (agent_version, ticker, as_of)
 );
 
+-- Idempotent column adds (for tables created before Phase 6).
+ALTER TABLE longterm_agent_results ADD COLUMN IF NOT EXISTS traded BOOLEAN DEFAULT FALSE;
+ALTER TABLE longterm_agent_results ADD COLUMN IF NOT EXISTS risk_flags JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_lar_ticker  ON longterm_agent_results(ticker, as_of DESC);
 CREATE INDEX IF NOT EXISTS idx_lar_version ON longterm_agent_results(agent_version);
 CREATE INDEX IF NOT EXISTS idx_lar_verdict ON longterm_agent_results(verdict);
+CREATE INDEX IF NOT EXISTS idx_lar_traded  ON longterm_agent_results(traded);
 
 COMMENT ON TABLE longterm_agent_results IS 'Long-term agent run results + reasoning artifacts; outcomes graded later';
