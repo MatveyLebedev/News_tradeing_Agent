@@ -1,0 +1,66 @@
+<svg width="680" viewBox="0 0 680 398" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Current agent vs the two advanced-analysis approaches</title>
+<desc>Grey boxes with a green check are the agent built today (deterministic spine + synthesis/reflection/risk gate, plus the pipeline reused as a subagent). Dashed coloured boxes are planned: left 7A adds a bounded tool-calling deep_analysis node; right 7B is a Deep Agents harness with planner, news/fundamentals/red-team subagents, memory and skills.</desc>
+<rect x="0" y="0" width="680" height="398" fill="#FFFFFF"/>
+<defs>
+<marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#475569"/></marker>
+</defs>
+
+<line x1="340" y1="14" x2="340" y2="338" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="4 4"/>
+
+<text x="34" y="22" font-family="sans-serif" font-size="14" font-weight="500" fill="#26215C">A · add LangChain tools (7A)</text>
+<text x="364" y="22" font-family="sans-serif" font-size="14" font-weight="500" fill="#04342C">B · Deep Agents harness (7B)</text>
+
+<rect x="34" y="32" width="276" height="44" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<circle cx="50" cy="46" r="7" fill="#0F6E56"/><text x="50" y="49.5" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#FFFFFF">✓</text>
+<text x="174" y="52" text-anchor="middle" font-family="sans-serif" font-size="12.5" fill="#334155">deterministic spine</text>
+<text x="174" y="68" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#334155">corpus → shift → fundamentals → analogs</text>
+<line x1="172" y1="76" x2="172" y2="94" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<rect x="34" y="96" width="276" height="82" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-dasharray="5 3"/>
+<text x="172" y="114" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="500" fill="#26215C">deep_analysis · bounded ReAct</text>
+<rect x="50" y="124" width="244" height="44" rx="4" fill="#CECBF6" stroke="#534AB7"/>
+<text x="172" y="142" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#26215C">LLM ⇄ tools · bind_tools, ≤7 iters</text>
+<text x="172" y="159" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#26215C">graph · fundamentals · analogs · news</text>
+<line x1="172" y1="178" x2="172" y2="196" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<rect x="34" y="196" width="276" height="38" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<circle cx="50" cy="210" r="7" fill="#0F6E56"/><text x="50" y="213.5" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#FFFFFF">✓</text>
+<text x="174" y="219" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#334155">synthesis → reflection → risk gate</text>
+
+<text x="34" y="256" font-family="sans-serif" font-size="11" fill="#3C3489">grey = built today · deep_analysis = planned (advisory)</text>
+<rect x="34" y="266" width="196" height="22" rx="11" fill="#EEEDFE" stroke="#534AB7" stroke-dasharray="5 3"/>
+<text x="132" y="281" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#26215C">planned · ≈ +3–7 LLM calls / run</text>
+
+<rect x="364" y="32" width="276" height="36" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="502" y="54" text-anchor="middle" font-family="sans-serif" font-size="12.5" fill="#04342C">orchestrator · planner (write_todos)</text>
+<line x1="502" y1="68" x2="502" y2="84" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<rect x="364" y="86" width="276" height="28" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="502" y="104" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#04342C">news-background analyst subagent</text>
+<rect x="364" y="118" width="276" height="28" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="502" y="136" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#04342C">fundamentals analyst subagent</text>
+<rect x="364" y="150" width="276" height="28" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="502" y="168" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#04342C">red-team subagent · attacks the thesis</text>
+<line x1="502" y1="178" x2="502" y2="194" stroke="#475569" stroke-width="1.5" marker-end="url(#ar)"/>
+
+<rect x="364" y="196" width="276" height="34" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<circle cx="380" cy="213" r="7" fill="#0F6E56"/><text x="380" y="216.5" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#FFFFFF">✓</text>
+<text x="504" y="217" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#334155">current pipeline (reused as a subagent)</text>
+
+<rect x="364" y="242" width="132" height="32" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="430" y="262" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#04342C">memory (Store)</text>
+<rect x="508" y="242" width="132" height="32" rx="4" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="574" y="262" text-anchor="middle" font-family="sans-serif" font-size="11.5" fill="#04342C">skills (SKILL.md)</text>
+
+<text x="364" y="294" font-family="sans-serif" font-size="11" fill="#085041">all dashed = planned (7B) · wraps the current pipeline</text>
+<rect x="364" y="304" width="196" height="22" rx="11" fill="#E1F5EE" stroke="#0F6E56" stroke-dasharray="5 3"/>
+<text x="462" y="319" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#04342C">planned · ≈ 10× LLM calls / run</text>
+
+<circle cx="40" cy="358" r="7" fill="#0F6E56"/><text x="40" y="361.5" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#FFFFFF">✓</text>
+<text x="52" y="362" font-family="sans-serif" font-size="11.5" fill="#334155">built today (solid grey)</text>
+<rect x="240" y="352" width="20" height="13" rx="3" fill="#FFFFFF" stroke="#534AB7" stroke-dasharray="5 3"/>
+<text x="266" y="362" font-family="sans-serif" font-size="11.5" fill="#334155">planned addition (7A / 7B, dashed)</text>
+
+<text x="34" y="386" font-family="sans-serif" font-size="11" fill="#64748B">Current agent = the grey ✓ boxes (deterministic spine + synthesis/reflection/risk). Everything coloured is a planned add-on.</text>
+</svg>

@@ -1,0 +1,72 @@
+<svg width="680" viewBox="0 0 680 592" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Long-term agent — pipeline schema</title>
+<desc>Vertical LangGraph pipeline. Input ticker+as_of into corpus_collection (which can exit early to NO_DATA), then background_profiling, shift_detection, fundamentals_analysis, similar_shift_analysis, a planned deep_analysis node, synthesis, reflection (which can loop back to shift_detection), and risk_gate, producing a filtered signal persisted to results and shift_library. Each node is annotated with the schema it outputs.</desc>
+<rect x="0" y="0" width="680" height="592" fill="#FFFFFF"/>
+<defs>
+<marker id="p" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#475569"/></marker>
+</defs>
+
+<rect x="250" y="18" width="180" height="28" rx="14" fill="#DCEFE6" stroke="#0F6E56"/>
+<text x="340" y="36" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#04342C">input · ticker + as_of</text>
+<line x1="340" y1="46" x2="340" y2="58" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="58" width="320" height="40" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<text x="340" y="76" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#334155">1 · corpus_collection</text>
+<text x="340" y="91" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#334155">→ news_corpus · weekly buckets</text>
+<line x1="500" y1="78" x2="536" y2="78" stroke="#475569" stroke-width="1.3" marker-end="url(#p)"/>
+<rect x="540" y="64" width="128" height="28" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<text x="604" y="82" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#334155">NO_DATA → END</text>
+<line x1="340" y1="98" x2="340" y2="110" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="110" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="128" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">2 · background_profiling (map → reduce)</text>
+<text x="340" y="143" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ NewsBackgroundProfile</text>
+<line x1="340" y1="150" x2="340" y2="162" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="162" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="180" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">3 · shift_detection (deterministic score)</text>
+<text x="340" y="195" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ BackgroundShift</text>
+<line x1="340" y1="202" x2="340" y2="214" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="214" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="232" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">4 · fundamentals_analysis</text>
+<text x="340" y="247" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ FundamentalsTrend</text>
+<line x1="340" y1="254" x2="340" y2="266" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="266" width="320" height="40" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<text x="340" y="284" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#334155">4b · similar_shift_analysis</text>
+<text x="340" y="299" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#334155">→ ShiftAnalogs (from shift_library)</text>
+<line x1="340" y1="306" x2="340" y2="318" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="318" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7" stroke-dasharray="5 3"/>
+<text x="340" y="336" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">deep_analysis · bounded ReAct (7A) ⏳</text>
+<text x="340" y="351" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ advisory enrichment (planned)</text>
+<line x1="340" y1="358" x2="340" y2="370" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="370" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="388" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">5 · synthesis (news × fundamentals matrix)</text>
+<text x="340" y="403" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ LongTermSignal</text>
+<line x1="340" y1="410" x2="340" y2="422" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="422" width="320" height="40" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="440" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">6 · reflection</text>
+<text x="340" y="455" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#26215C">→ ReflectionOutput (may loop, ≤1)</text>
+<polyline points="180,442 150,442 150,182 179,182" fill="none" stroke="#475569" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#p)"/>
+<text x="142" y="312" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#475569" transform="rotate(-90 142 312)">reflection loop</text>
+<line x1="340" y1="462" x2="340" y2="474" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="180" y="474" width="320" height="40" rx="4" fill="#EEF1F4" stroke="#94A3B8"/>
+<text x="340" y="492" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="500" fill="#334155">7 · risk_gate (priced-in · earnings · data-sufficiency)</text>
+<text x="340" y="507" text-anchor="middle" font-family="sans-serif" font-size="10.5" fill="#334155">→ filtered_signal (or NEUTRAL)</text>
+<line x1="340" y1="514" x2="340" y2="526" stroke="#475569" stroke-width="1.5" marker-end="url(#p)"/>
+
+<rect x="222" y="526" width="236" height="28" rx="14" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="340" y="544" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#26215C">output → results + shift_library</text>
+
+<rect x="34" y="566" width="13" height="13" rx="3" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="52" y="576" font-family="sans-serif" font-size="11" fill="#26215C">LLM node</text>
+<rect x="150" y="566" width="13" height="13" rx="3" fill="#EEF1F4" stroke="#94A3B8"/>
+<text x="168" y="576" font-family="sans-serif" font-size="11" fill="#334155">deterministic (no LLM)</text>
+<rect x="340" y="566" width="20" height="13" rx="3" fill="#FFFFFF" stroke="#534AB7" stroke-dasharray="5 3"/>
+<text x="366" y="576" font-family="sans-serif" font-size="11" fill="#334155">planned (7A)</text>
+</svg>

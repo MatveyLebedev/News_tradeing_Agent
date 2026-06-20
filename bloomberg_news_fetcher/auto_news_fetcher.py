@@ -8,6 +8,7 @@ from news_fetcher import fetch_and_save_news, embedding_generator, logger
 from config import BLOOMBERG_CATEGORIES, ENABLE_EXTERNAL_RSS
 from price_fetcher import fetch_all_tickers, TOP_50_TICKERS
 from config import FETCH_PRICES, PRICE_FETCH_PERIOD, VERBOSE, FETCH_FULL_TEXT
+from config import FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME
 from graph_db import update_price_movements
 
 # US Eastern Time zone
@@ -68,6 +69,30 @@ FETCH_FULL_TEXT_ENABLED = os.getenv("FETCH_FULL_TEXT", str(FETCH_FULL_TEXT)).low
 VERBOSE_ENABLED = os.getenv("VERBOSE", str(VERBOSE)).lower() == 'true'
 
 
+def scheduled_fundamentals_fetch(verbose=True):
+    """Weekly heavy-data fetch: daily price bars + fundamentals (EDGAR PIT + yfinance)."""
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"WEEKLY FUNDAMENTALS + DAILY PRICE FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    # Imported lazily so a missing dep here never blocks the news/price loop.
+    try:
+        from daily_price_fetcher import fetch_all_daily
+        # 5d top-up keeps daily bars current; the initial 2y backfill is run manually once.
+        dr = fetch_all_daily(tickers=TOP_50_TICKERS, period="5d", verbose=verbose)
+        if verbose:
+            print(f"✓ Daily prices: {dr['rows']} rows")
+    except Exception as e:
+        print(f"❌ Daily price fetch failed: {e}")
+    try:
+        from fundamentals_fetcher import fetch_fundamentals
+        result = fetch_fundamentals(tickers=TOP_50_TICKERS, verbose=verbose)
+        if verbose:
+            print(f"✓ Fundamentals: {result['edgar_rows']} EDGAR rows, {result['yf_rows']} yfinance rows")
+    except Exception as e:
+        print(f"❌ Fundamentals fetch failed: {e}")
+
+
 def scheduled_fetch(verbose=True):
     """
     Fetch news and prices, save to database
@@ -122,9 +147,18 @@ def run_scheduler(verbose=True):
     """
     # Schedule the job
     schedule.every(FETCH_INTERVAL_MIN).minutes.do(lambda: scheduled_fetch(verbose=verbose))
-    
+
+    # Weekly fundamentals fetch (off-market), if enabled
+    if FETCH_FUNDAMENTALS:
+        try:
+            day_job = getattr(schedule.every(), FUNDAMENTALS_FETCH_WEEKDAY)
+            day_job.at(FUNDAMENTALS_FETCH_TIME).do(lambda: scheduled_fundamentals_fetch(verbose=verbose))
+            print(f"✓ Fundamentals fetch scheduled: {FUNDAMENTALS_FETCH_WEEKDAY} at {FUNDAMENTALS_FETCH_TIME} ET")
+        except Exception as e:
+            print(f"⚠️  Could not schedule fundamentals fetch: {e}")
+
     et_now = datetime.now(ET_TIMEZONE)
-    
+
     _init_graph_tables()
     _test_embedding_api()
 

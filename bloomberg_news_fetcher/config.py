@@ -68,6 +68,14 @@ VERBOSE = False  # Enable/disable console output (logging still active when Fals
 # Full text fetching (default: off — saves time and avoids scraping issues)
 FETCH_FULL_TEXT = os.getenv("FETCH_FULL_TEXT", "false").lower() == "true"
 
+# Fundamentals fetching configuration (long-term agent)
+# Runs on a WEEKLY cadence (not every interval) — SEC/yfinance are rate-limited and
+# statements only change quarterly. EDGAR gives true point-in-time history; yfinance
+# snapshots build a forward PIT archive. See fundamentals_fetcher.py.
+FETCH_FUNDAMENTALS = os.getenv("FETCH_FUNDAMENTALS", "false").lower() == "true"
+FUNDAMENTALS_FETCH_WEEKDAY = os.getenv("FUNDAMENTALS_FETCH_WEEKDAY", "saturday").lower()
+FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, off-market
+
 # Price fetching configuration
 FETCH_PRICES = True  # Enable/disable price fetching
 PRICE_FETCH_PERIOD = '1d'  # Period for price data: '1d', '5d', '1mo'

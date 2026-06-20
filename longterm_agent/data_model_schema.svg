@@ -1,0 +1,69 @@
+<svg width="680" viewBox="0 0 680 432" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>Long-term agent — data model</title>
+<desc>The agent reads point-in-time data sources (news, Neo4j graph, fundamentals, daily prices, bucket cache) filtered to as_of, and writes results and shift-library rows. The shift_library is also read back for analogs, and graded later with realized outcomes.</desc>
+<rect x="0" y="0" width="680" height="432" fill="#FFFFFF"/>
+<defs>
+<marker id="d" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#475569"/></marker>
+</defs>
+
+<text x="34" y="22" font-family="sans-serif" font-size="13" font-weight="500" fill="#04342C">read sources (≤ as_of)</text>
+<text x="300" y="22" font-family="sans-serif" font-size="13" font-weight="500" fill="#334155">agent</text>
+<text x="476" y="22" font-family="sans-serif" font-size="13" font-weight="500" fill="#26215C">writes</text>
+
+<rect x="34" y="32" width="200" height="52" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+<text x="46" y="50" font-family="sans-serif" font-size="12" font-weight="500" fill="#04342C">news  (+ pgvector)</text>
+<text x="46" y="66" font-family="sans-serif" font-size="10.5" fill="#04342C">published · title · summary</text>
+<text x="46" y="79" font-family="sans-serif" font-size="10" fill="#0F6E56">read: published ≤ as_of</text>
+
+<rect x="34" y="92" width="200" height="52" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+<text x="46" y="110" font-family="sans-serif" font-size="12" font-weight="500" fill="#04342C">Neo4j graph</text>
+<text x="46" y="126" font-family="sans-serif" font-size="10.5" fill="#04342C">Article→Event→Story · AFFECTS</text>
+<text x="46" y="139" font-family="sans-serif" font-size="10" fill="#0F6E56">read: as-of aware tools</text>
+
+<rect x="34" y="152" width="200" height="52" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+<text x="46" y="170" font-family="sans-serif" font-size="12" font-weight="500" fill="#04342C">fundamentals</text>
+<text x="46" y="186" font-family="sans-serif" font-size="10.5" fill="#04342C">edgar(PIT) + yfinance · jsonb</text>
+<text x="46" y="199" font-family="sans-serif" font-size="10" fill="#0F6E56">read: filed_date / fetch_date ≤ as_of</text>
+
+<rect x="34" y="212" width="200" height="48" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+<text x="46" y="230" font-family="sans-serif" font-size="12" font-weight="500" fill="#04342C">stock_prices_daily (+ SPY)</text>
+<text x="46" y="246" font-family="sans-serif" font-size="10.5" fill="#04342C">OHLCV · read: date ≤ as_of</text>
+
+<rect x="34" y="268" width="200" height="48" rx="4" fill="#E1F5EE" stroke="#0F6E56"/>
+<text x="46" y="286" font-family="sans-serif" font-size="12" font-weight="500" fill="#04342C">bucket_summary_cache</text>
+<text x="46" y="302" font-family="sans-serif" font-size="10.5" fill="#04342C">(ticker, week, version) · jsonb</text>
+
+<rect x="276" y="120" width="128" height="150" rx="6" fill="#EEF1F4" stroke="#475569" stroke-width="1.5"/>
+<text x="340" y="190" text-anchor="middle" font-family="sans-serif" font-size="13" font-weight="500" fill="#334155">longterm_agent</text>
+<text x="340" y="208" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#334155">reads ≤ as_of</text>
+<text x="340" y="223" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#334155">LangGraph pipeline</text>
+
+<line x1="234" y1="58" x2="274" y2="150" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<line x1="234" y1="118" x2="274" y2="160" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<line x1="234" y1="178" x2="274" y2="185" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<line x1="234" y1="236" x2="274" y2="210" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<line x1="234" y1="292" x2="274" y2="235" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+
+<rect x="446" y="92" width="200" height="58" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="458" y="110" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">longterm_agent_results</text>
+<text x="458" y="126" font-family="sans-serif" font-size="10.5" fill="#26215C">verdict · conviction · signal</text>
+<text x="458" y="140" font-family="sans-serif" font-size="10.5" fill="#26215C">+ fwd_return_4w (graded later)</text>
+
+<rect x="446" y="172" width="200" height="58" rx="4" fill="#EEEDFE" stroke="#534AB7"/>
+<text x="458" y="190" font-family="sans-serif" font-size="12" font-weight="500" fill="#26215C">shift_library</text>
+<text x="458" y="206" font-family="sans-serif" font-size="10.5" fill="#26215C">fingerprint · fwd_return_2/4/12w</text>
+<text x="458" y="220" font-family="sans-serif" font-size="10.5" fill="#26215C">unique (version, ticker, as_of)</text>
+
+<line x1="404" y1="170" x2="444" y2="130" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<line x1="404" y1="200" x2="444" y2="200" stroke="#475569" stroke-width="1.2" marker-end="url(#d)"/>
+<path d="M446,214 C420,250 360,250 341,272" fill="none" stroke="#0F6E56" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#d)"/>
+<text x="392" y="262" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#0F6E56">read back for analogs</text>
+
+<rect x="446" y="300" width="200" height="40" rx="4" fill="#FAECE7" stroke="#D85A30"/>
+<text x="458" y="318" font-family="sans-serif" font-size="12" font-weight="500" fill="#4A1B0C">grade_shifts (deferred)</text>
+<text x="458" y="332" font-family="sans-serif" font-size="10.5" fill="#4A1B0C">fills realized returns vs SPY</text>
+<line x1="546" y1="300" x2="546" y2="232" stroke="#D85A30" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#d)"/>
+
+<text x="34" y="372" font-family="sans-serif" font-size="11" fill="#64748B">All reads gated by as_of (no lookahead). Outcomes (fwd_return_*) are graded AFTER as_of — the decision used ≤ as_of, only the result is measured later.</text>
+<text x="34" y="392" font-family="sans-serif" font-size="11" fill="#64748B">"Fetchers write, agent reads" — news/graph/fundamentals/prices are populated by the bloomberg_news_fetcher + graph_db modules.</text>
+</svg>
