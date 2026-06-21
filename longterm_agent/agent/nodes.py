@@ -437,6 +437,8 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"  shift NEGATIVE + fundamentals deteriorating → high-conviction SHORT\n"
         f"  shift NEGATIVE + fundamentals improving (contradicts) → overreaction: contrarian LONG or NEUTRAL\n"
         f"  shift POSITIVE + fundamentals deteriorating → hype risk: low conviction / avoid\n"
+        f"  NO shift → no actionable edge for this agent: default NEUTRAL with LOW conviction "
+        f"(strong standing fundamentals alone are NOT a trade trigger here — this agent trades shifts).\n"
         f"Valuation scales conviction (a positive shift at 40x sales ≠ at 12x earnings). "
         f"Give direction LONG/SHORT/NEUTRAL, conviction 0-1, horizon (e.g. '4-12 weeks'), a concise thesis, "
         f"supporting factors, key risks, and explicit invalidation conditions (what observation kills the thesis)."
@@ -522,6 +524,16 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
         if capped < sig.get("conviction", 0.0):
             flags.append("no usable income fundamentals (news-only) — conviction capped below threshold")
+        sig["conviction"] = round(max(0.0, capped), 2)
+
+    # NO-SHIFT GATE: this agent trades background SHIFTS. With no detected shift the matrix has
+    # no cell and synthesis conviction is unstable run-to-run, so a "trade" here is not
+    # reproducible. Cap conviction below the threshold so no-shift signals degrade to FILTERED
+    # DETERMINISTICALLY (never traded), regardless of LLM jitter. Lean + thesis are preserved.
+    if config.REQUIRE_SHIFT_TO_TRADE and not shift.get("has_shifted"):
+        capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
+        if capped < sig.get("conviction", 0.0):
+            flags.append("no background shift — conviction capped below threshold (not actionable)")
         sig["conviction"] = round(max(0.0, capped), 2)
 
     # priced-in: if the stock already moved hard in the signal's direction, cut conviction

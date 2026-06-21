@@ -26,6 +26,12 @@ COPY bloomberg_news_fetcher/embeddings.py .
 COPY bloomberg_news_fetcher/news_fetcher.py .
 COPY bloomberg_news_fetcher/price_fetcher.py .
 COPY bloomberg_news_fetcher/auto_news_fetcher.py .
+# Long-term agent data fetchers (weekly fundamentals + daily-price job)
+COPY bloomberg_news_fetcher/edgar_fetcher.py .
+COPY bloomberg_news_fetcher/fundamentals_fetcher.py .
+COPY bloomberg_news_fetcher/daily_price_fetcher.py .
+COPY bloomberg_news_fetcher/create_fundamentals_table.sql .
+COPY bloomberg_news_fetcher/create_daily_price_table.sql .
 COPY graph_db/ graph_db/
 
 # Set environment variables

@@ -47,6 +47,11 @@ class LongTermAgentConfig:
     EARNINGS_RISK_DAYS = int(os.getenv("LT_EARNINGS_RISK_DAYS", "10"))
     LONGTERM_CONFIDENCE_THRESHOLD = float(os.getenv("LT_CONF_THRESHOLD", "0.55"))
     MAX_REFLECTION_ITERATIONS = int(os.getenv("LT_MAX_REFLECTION", "1"))
+    # This agent's edge is detecting background SHIFTS. With no shift the matrix has no cell
+    # and synthesis conviction is unstable run-to-run, so a "trade" there is not reproducible.
+    # When true, no-shift signals are capped below the trade threshold (deterministic
+    # not-traded) — the directional lean + thesis stay for information.
+    REQUIRE_SHIFT_TO_TRADE = os.getenv("LT_REQUIRE_SHIFT", "true").lower() == "true"
 
     # --- Corpus retrieval ---
     AFFECTS_MIN_CONFIDENCE = float(os.getenv("LT_AFFECTS_MIN_CONF", "0.5"))
