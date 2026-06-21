@@ -181,6 +181,7 @@ longterm_agent/
 ├── grade_results.py           fills realized trade outcomes (4w vs SPY)
 ├── backtest_report.py         detection backtest report
 ├── full_signal_backtest.py    whole-pipeline backtest vs SPY
+├── llm_cache.py               content-addressed LLM cache → reproducible/cheap backtests (B0)
 ├── ── Phase 6 ops ──
 ├── batch_run_longterm.py      weekly full-pipeline batch + new/flipped-signal alerts
 ├── auto_longterm_agent.py     scheduler (weekly batch + daily grading) — container entrypoint
@@ -190,9 +191,9 @@ longterm_agent/
 ├── oplog.py                   operational log writer (longterm_agent_log)
 ├── Dockerfile                 image for scheduler + bot
 ├── requirements.txt           ops deps
-├── create_*.sql               shift_library / bucket_cache / results / oplog table DDL
-├── README.md / SCHEMAS.md / DEPLOY.md / DEEP_ANALYSIS_PLAN.md
-└── tests/                     pytest suite (40)
+├── create_*.sql               shift_library / bucket_cache / results / oplog / llm_cache DDL
+├── README.md / SCHEMAS.md / DEPLOY.md / DEEP_ANALYSIS_PLAN.md / BACKTEST_PLAN.md
+└── tests/                     pytest suite (46)
 ```
 Data fetchers live in `../bloomberg_news_fetcher/` (`edgar_fetcher.py`,
 `fundamentals_fetcher.py`, `daily_price_fetcher.py`, and their `create_*.sql`).

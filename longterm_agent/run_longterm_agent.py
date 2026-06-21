@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph
 from longterm_agent.persistence import persist_run
+from longterm_agent.llm_cache import maybe_enable_llm_cache
 from news_agent.database.db_manager import DBManager
 
 
@@ -33,6 +34,7 @@ def main():
     # Enable tracing BEFORE building LLMs/graph so callbacks attach to every call.
     if args.trace:
         cfg.enable_tracing()
+    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible & cheap re-runs (B0)
     as_of = datetime.strptime(args.as_of, "%Y-%m-%d")
     lookback = args.lookback or cfg.LOOKBACK_DAYS_BACKGROUND
 

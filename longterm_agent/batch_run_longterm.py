@@ -26,6 +26,7 @@ from longterm_agent.agent.graph import create_longterm_graph
 from longterm_agent.persistence import persist_run
 from longterm_agent import oplog
 from longterm_agent.notifier import TelegramNotifier
+from longterm_agent.llm_cache import maybe_enable_llm_cache
 from news_agent.database.db_manager import DBManager
 
 
@@ -118,6 +119,7 @@ def main():
     cfg = LongTermAgentConfig()
     if args.trace:
         cfg.enable_tracing()
+    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible & cheap re-runs (B0)
     if args.lookback:
         cfg.LOOKBACK_DAYS_BACKGROUND = args.lookback
     as_of = datetime.strptime(args.as_of, "%Y-%m-%d")

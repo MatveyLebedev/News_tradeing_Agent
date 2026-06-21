@@ -94,6 +94,31 @@ class LongTermAgentConfig:
     TELEGRAM_ALLOWED_USER_IDS = os.getenv("TELEGRAM_ALLOWED_USER_IDS", "")  # bot auth (comma-sep)
     ALERT_ON_ERROR = os.getenv("LT_ALERT_ON_ERROR", "true").lower() == "true"
 
+    # --- Backtest reproducibility (Backtest Plan B0) ---
+    LLM_CACHE = os.getenv("LT_LLM_CACHE", "false").lower() == "true"
+
+    @classmethod
+    def provenance(cls):
+        """Run profile stamp for backtests — what produced a result, so runs are comparable."""
+        rev = "unknown"
+        try:
+            import subprocess
+            rev = subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(_REPO_ROOT), stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            pass
+        return {
+            "agent_version": cls.AGENT_VERSION,
+            "git_revision": rev,
+            "model": cls.LLM_MODEL,
+            "map_model": cls.MAP_MODEL,
+            "temperature": cls.LLM_TEMPERATURE,
+            "reflection_iters": cls.MAX_REFLECTION_ITERATIONS,
+            "llm_cache": cls.LLM_CACHE,
+            "lookback_days": cls.LOOKBACK_DAYS_BACKGROUND,
+        }
+
     @classmethod
     def get_universe(cls):
         """Default ticker universe for the weekly batch (the curated, news-named set)."""
@@ -132,9 +157,21 @@ class LongTermAgentConfig:
         max_tokens must leave room for reasoning models (Gemini/o-series burn
         'reasoning_tokens' before any output) — the reduce/synthesis steps need
         several thousand or structured output gets truncated mid-reasoning.
+
+        Structured output is forced to method="function_calling" (see _StructuredFnChatOpenAI):
+        the native json_schema path stashes a non-serializable parsed object in
+        additional_kwargs, which breaks the LLM response cache (Backtest Plan B0). Tool calls
+        serialize cleanly, so the cache round-trips and backtests are reproducible. Live and
+        backtest use the same method, so cached replays match live decisions.
         """
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(
+
+        class _StructuredFnChatOpenAI(ChatOpenAI):
+            def with_structured_output(self, schema, **kwargs):
+                kwargs.setdefault("method", "function_calling")
+                return super().with_structured_output(schema, **kwargs)
+
+        return _StructuredFnChatOpenAI(
             api_key=cls.OPENROUTER_API_KEY,
             base_url=cls.OPENROUTER_BASE_URL,
             model=model or cls.LLM_MODEL,

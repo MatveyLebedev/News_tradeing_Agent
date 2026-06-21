@@ -40,19 +40,26 @@ LT_RUN_ON_START=false          # set true once to produce signals immediately on
 # LT_UNIVERSE=NVDA,AAPL,MSFT   # optional; default = TOP_50_TICKERS
 LT_ALERT_ON_ERROR=true
 
-# Telegram
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...     # @BotFather
-TELEGRAM_CHAT_ID=-1001234567890          # where alerts are pushed (you/channel)
+# Telegram — the stats bot needs its OWN token (see warning below)
+LT_TELEGRAM_BOT_TOKEN=999999:XYZ-...     # @BotFather — a SECOND bot, just for this agent
+LT_TELEGRAM_CHAT_ID=-1001234567890       # where alerts are pushed (you/channel)
 TELEGRAM_ALLOWED_USER_IDS=11111111       # who may query the stats bot (comma-sep)
-# LT_TELEGRAM_BOT_TOKEN / LT_TELEGRAM_CHAT_ID  → use a SEPARATE bot just for this agent (optional)
 ```
 
+> ⚠️ **Use a separate bot token.** Telegram allows only **one** poller per bot token.
+> This repo's existing `telegram-bot` already polls `TELEGRAM_BOT_TOKEN`, so if the stats
+> bot reuses it you get `telegram.error.Conflict: terminated by other getUpdates request`
+> (and it disrupts the existing bot). Create a **second** bot with @BotFather and set
+> `LT_TELEGRAM_BOT_TOKEN` / `LT_TELEGRAM_CHAT_ID`. (Verified in local Docker testing.)
+> If you don't run the existing `telegram-bot`, reusing `TELEGRAM_BOT_TOKEN` is fine.
+
 **Telegram setup (5 min):**
-1. Message **@BotFather** → `/newbot` → copy the token → `TELEGRAM_BOT_TOKEN`.
-2. Get your chat id: message **@userinfobot** (personal) or add the bot to a channel and read the id from `https://api.telegram.org/bot<TOKEN>/getUpdates`. Put it in `TELEGRAM_CHAT_ID`.
+1. Message **@BotFather** → `/newbot` → copy the token → `LT_TELEGRAM_BOT_TOKEN`.
+2. Get your chat id: message **@userinfobot** (personal) or add the bot to a channel and read the id from `https://api.telegram.org/bot<TOKEN>/getUpdates`. Put it in `LT_TELEGRAM_CHAT_ID`.
 3. Put your numeric user id in `TELEGRAM_ALLOWED_USER_IDS` so only you can query the bot.
 
-If you omit the Telegram vars the agent still runs — alerts just print to the container log and the bot service exits with a clear error.
+If you omit the Telegram vars the agent still runs — alerts just print to the container log
+(scheduler stays up; the stats-bot service needs a token to start).
 
 ---
 

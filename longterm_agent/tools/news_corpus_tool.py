@@ -72,8 +72,9 @@ def _affects_news_ids(
             continue
         sents = [s for s in (row.get("sentiments") or []) if s]
         if sents:
-            # majority sentiment
-            out[int(nid)] = max(set(sents), key=sents.count)
+            # majority sentiment; sort the candidates so ties break deterministically
+            # (set() iteration order varies by process hash seed → non-reproducible prompts).
+            out[int(nid)] = max(sorted(set(sents)), key=sents.count)
         else:
             out[int(nid)] = "neutral"
     return out
@@ -109,7 +110,7 @@ def _ilike_articles(
         FROM news
         WHERE published >= %s AND published <= %s
           AND (title ~* %s OR summary ~* %s)
-        ORDER BY published
+        ORDER BY published, id
     """
     try:
         conn = _fresh_conn(db_manager)
@@ -190,7 +191,9 @@ def get_company_news_corpus(
         a["affects_sentiment"] = graph_map.get(a["id"])
         by_id[a["id"]] = a
 
-    articles = sorted(by_id.values(), key=lambda x: x["published"])
+    # Sort by (published, id): the id tiebreaker makes the article sequence fully deterministic
+    # for equal timestamps, so the map/reduce prompts are byte-stable → the LLM cache (B0) hits.
+    articles = sorted(by_id.values(), key=lambda x: (x["published"], x["id"]))
     # Provenance counted over the FINAL (windowed) set, not the all-time graph_map.
     prov = {
         "graph": sum(1 for a in articles if "graph" in a["sources"]),

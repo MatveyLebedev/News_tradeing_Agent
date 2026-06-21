@@ -60,6 +60,9 @@ def main():
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
+    from longterm_agent.llm_cache import maybe_enable_llm_cache
+    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible replay (B0)
+    print(f"provenance: {cfg.provenance()}")
     start = datetime.strptime(args.start, "%Y-%m-%d")
     end = datetime.strptime(args.end, "%Y-%m-%d")
     cohorts = weekly_dates(start, end, args.step)

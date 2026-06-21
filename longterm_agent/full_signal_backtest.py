@@ -48,6 +48,9 @@ def main():
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
+    from longterm_agent.llm_cache import maybe_enable_llm_cache
+    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible backtest (B0)
+    print(f"provenance: {cfg.provenance()}")
     db = DBManager(db_config=cfg.get_db_config(), min_conn=1, max_conn=5)
     neo = None
     try:
