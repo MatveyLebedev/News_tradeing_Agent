@@ -3,7 +3,7 @@ LangGraph wiring for the long-term agent (Phase 4 — full pipeline).
 
   corpus_collection ──(no_data?)──► END
                      └► background_profiling ► shift_detection ► fundamentals_analysis
-                        ► similar_shift_analysis ► synthesis ► reflection ──(loop?)──┐
+                        ► similar_shift_analysis ► deep_analysis ► synthesis ► reflection ──(loop?)──┐
                                                                   │                  │
                                                                   ▼                  │
                                                               risk_gate ► END        │
@@ -15,8 +15,8 @@ from langgraph.graph import StateGraph, END
 from ..state import LongTermAgentState
 from .nodes import (
     corpus_collection_node, background_profiling_node, shift_detection_node,
-    fundamentals_analysis_node, similar_shift_analysis_node, synthesis_node,
-    reflection_node, risk_gate_node,
+    fundamentals_analysis_node, similar_shift_analysis_node, deep_analysis_node,
+    synthesis_node, reflection_node, risk_gate_node,
 )
 
 
@@ -47,6 +47,8 @@ def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager
                lambda s: fundamentals_analysis_node(s, llm_reduce, db_manager, config))
     g.add_node("similar_shift_analysis",
                lambda s: similar_shift_analysis_node(s, db_manager, config))
+    g.add_node("deep_analysis",
+               lambda s: deep_analysis_node(s, llm_reduce, db_manager, neo4j_manager, config))
     g.add_node("synthesis",
                lambda s: synthesis_node(s, llm_reduce, config))
     g.add_node("reflection",
@@ -60,7 +62,8 @@ def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager
     g.add_edge("background_profiling", "shift_detection")
     g.add_edge("shift_detection", "fundamentals_analysis")
     g.add_edge("fundamentals_analysis", "similar_shift_analysis")
-    g.add_edge("similar_shift_analysis", "synthesis")
+    g.add_edge("similar_shift_analysis", "deep_analysis")
+    g.add_edge("deep_analysis", "synthesis")
     g.add_edge("synthesis", "reflection")
     g.add_conditional_edges("reflection", _route_after_reflection, {
         "shift_detection": "shift_detection",

@@ -66,6 +66,15 @@ class LongTermAgentConfig:
     LLM_TEMPERATURE = 0
     LLM_MAX_OUTPUT_TOKENS = int(os.getenv("LT_MAX_OUTPUT_TOKENS", "2048"))
 
+    # --- Deep analysis (Phase 7A: bounded ReAct tool-calling enrichment) ---
+    # Adaptive depth: the LLM chooses what to investigate per company via read-only tools.
+    # OFF in backtest (labels stay deterministic), ON live (richer theses). It enriches the
+    # thesis only — it can never change the deterministic shift label or graded outcome.
+    DEEP_ANALYSIS_ENABLED = os.getenv("LT_DEEP_ANALYSIS", "true").lower() == "true"
+    MAX_TOOL_CALL_ITERATIONS = int(os.getenv("LT_MAX_TOOL_ITERS", "7"))  # same cap as news_agent
+    TOOL_RESULT_MAX_CHARS = int(os.getenv("LT_TOOL_RESULT_MAX_CHARS", "3000"))  # truncate tool blobs
+    DEEP_ANALYSIS_MODEL = LLM_MODEL  # reuse the main reasoning model
+
     # --- Database ---
     DB_CONFIG = {
         "host": os.getenv("DB_HOST"),

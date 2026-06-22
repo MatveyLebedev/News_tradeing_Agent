@@ -82,6 +82,19 @@ class LongTermSignal(BaseModel):
     invalidation_conditions: List[str] = Field(default_factory=list)
 
 
+# --- deep_analysis (Phase 7A): advisory enrichment, never edits the deterministic shift ---
+class DeepAnalysisOutput(BaseModel):
+    findings: List[str] = Field(default_factory=list, description="Grounded, evidence-tagged findings")
+    is_sector_wide: Optional[bool] = Field(None, description="True=sector-wide, False=idiosyncratic")
+    competitor_read: str = ""
+    catalyst_assessment: str = Field("", description="Is the catalyst new or already priced in?")
+    analog_takeaway: str = Field("", description="What the closest past shifts imply")
+    conviction_adjustment: float = Field(
+        0.0, ge=-0.2, le=0.2,
+        description="ADVISORY nudge for synthesis; never changes the deterministic shift label")
+    tools_used: List[str] = Field(default_factory=list)
+
+
 class ReflectionOutput(BaseModel):
     needs_refinement: bool = False
     loop_to: Optional[Literal["shift_detection", "fundamentals_analysis"]] = None

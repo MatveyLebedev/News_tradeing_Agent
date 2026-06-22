@@ -33,6 +33,10 @@ class LongTermAgentState(TypedDict, total=False):
     fundamentals: Dict[str, Any]
     technical_longterm: Dict[str, Any]
     shift_analogs: Dict[str, Any]
+
+    # --- deep_analysis (Phase 7A; advisory tool-calling enrichment, never edits background_shift) ---
+    enriched_analysis: Dict[str, Any]
+
     signal: Dict[str, Any]
 
     # --- reflection / risk ---

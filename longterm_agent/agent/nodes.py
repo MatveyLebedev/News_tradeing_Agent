@@ -8,13 +8,14 @@ background_profiling (LLM map-reduce): summarize each weekly bucket with the che
 model, then merge the summaries into a NewsBackgroundProfile with the main model. This
 profile IS the "news background".
 """
+import json
 import time
 from collections import Counter
 from typing import Any, Dict, List
 
 from ..schemas import (
     PeriodBucketSummary, NewsBackgroundProfile, BackgroundShift, FundamentalsTrend,
-    ShiftAnalogs, LongTermSignal, ReflectionOutput,
+    ShiftAnalogs, LongTermSignal, ReflectionOutput, DeepAnalysisOutput,
 )
 from ..tools.news_corpus_tool import get_company_news_corpus, bucket_by_week
 from ..tools.background_metrics import compute_shift_metrics
@@ -406,6 +407,106 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 4c. deep_analysis (Phase 7A — bounded ReAct enrichment; advisory only)
+# ---------------------------------------------------------------------------
+def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[str, Any]:
+    """Let the LLM CHOOSE what to investigate (read-only tools), bounded to
+    MAX_TOOL_CALL_ITERATIONS with forced finalization. Hard boundary: it writes only
+    `enriched_analysis` (advisory) and NEVER touches `background_shift` — so the deterministic
+    labels the shift_library/backtest depend on stay reproducible. Runs only on a detected
+    shift (no shift → nothing actionable to enrich)."""
+    print("\n=== Deep Analysis (Phase 7A) ===")
+    if not getattr(config, "DEEP_ANALYSIS_ENABLED", False):
+        print("  → disabled (LT_DEEP_ANALYSIS=false); skipping")
+        return state
+    shift = state.get("background_shift", {})
+    if state.get("no_data") or not shift.get("has_shifted"):
+        print("  → no shift / no data; skipping enrichment")
+        return state
+
+    from langchain_core.messages import SystemMessage, ToolMessage
+    from ..tools.analysis_tools import build_deep_analysis_tools
+
+    ticker, as_of = state["ticker"], state["as_of"]
+    trend = (state.get("fundamentals", {}).get("trend") or {})
+    analogs = state.get("shift_analogs", {})
+
+    tools = build_deep_analysis_tools(
+        ticker, as_of, db_manager, neo4j_manager, config,
+        shift=shift, metrics=state.get("background_metrics", {}))
+    if not tools:
+        print("  → no tools available; skipping")
+        return state
+    llm_tools = llm.bind_tools(tools)
+
+    analog_line = (f"{analogs.get('n_analogs')} analogs, median 4w "
+                   f"{analogs.get('median_fwd_return_4w')}, share+ {analogs.get('share_positive')}"
+                   if analogs.get("n_analogs") else "cold start (no graded analogs yet)")
+    seed = (
+        f"You are enriching the trade thesis for {ticker} (as-of {as_of.date()}). The deterministic "
+        f"pass already produced these LABELS — do NOT recompute or contradict them:\n"
+        f"  - background shift: {shift.get('direction')} (z={shift.get('magnitude_z')}, "
+        f"score={shift.get('shift_score')}); catalysts {shift.get('candidate_catalysts')}\n"
+        f"  - fundamentals verdict vs the shift: {trend.get('verdict','unknown')}\n"
+        f"  - analog base rate: {analog_line}\n\n"
+        f"Use the read-only tools to answer ONLY the open questions that would move conviction:\n"
+        f"  1. Is the shift idiosyncratic or sector-wide? (cross-ticker correlation / sector read)\n"
+        f"  2. What is the causal chain, and is the catalyst NEW or already priced in? (novelty)\n"
+        f"  3. Do the closest historical analogs support the directional read?\n"
+        f"  4. Do quarter-level fundamentals confirm or undercut the shift?\n"
+        f"Then finalize DeepAnalysisOutput with concrete, evidence-tagged findings. Your "
+        f"conviction_adjustment is ADVISORY (-0.2..+0.2): it nudges synthesis, it never changes "
+        f"the shift label."
+    )
+    messages = [SystemMessage(content=seed)]
+    max_iter = getattr(config, "MAX_TOOL_CALL_ITERATIONS", 7)
+    trunc = getattr(config, "TOOL_RESULT_MAX_CHARS", 3000)
+    tools_used: List[str] = []
+
+    for i in range(max_iter):
+        if i == max_iter - 1:
+            break  # force structured finalization on the last turn (no infinite loop)
+        resp = llm_tools.invoke(messages)
+        messages.append(resp)
+        calls = getattr(resp, "tool_calls", None)
+        if not calls:
+            break
+        print(f"  → iter {i+1}: {len(calls)} tool call(s)")
+        for call in calls:
+            name, args, cid = call.get("name", ""), call.get("args", {}), call.get("id", "")
+            tools_used.append(name)
+            result = None
+            for t in tools:
+                if t.name == name:
+                    try:
+                        result = t.invoke(args)
+                    except Exception as e:  # graceful: the model sees the error and recovers
+                        result = json.dumps({"error": str(e)})
+                    break
+            if result is None:
+                result = json.dumps({"error": f"tool {name} not found"})
+            result = str(result)
+            if len(result) > trunc:
+                result = result[:trunc] + "…[truncated]"
+            messages.append(ToolMessage(content=result, tool_call_id=cid))
+
+    try:
+        data = _invoke_structured(llm, DeepAnalysisOutput, messages).model_dump()
+    except Exception as e:
+        print(f"  ⚠ deep_analysis finalize failed: {e}")
+        data = DeepAnalysisOutput().model_dump()
+    if not data.get("tools_used"):
+        data["tools_used"] = sorted(set(tools_used))
+    state["enriched_analysis"] = data
+    _msg(state, "deep_analysis",
+         f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
+         {"enriched": data})
+    print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory); "
+          f"tools_used={data.get('tools_used')}")
+    return state
+
+
+# ---------------------------------------------------------------------------
 # 5. synthesis (profile + shift + fundamentals + analogs → LongTermSignal)
 # ---------------------------------------------------------------------------
 def synthesis_node(state, llm, config) -> Dict[str, Any]:
@@ -423,6 +524,20 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
                    f"{analogs.get('median_fwd_return_4w')}, share positive {analogs.get('share_positive')}"
                    if analogs.get("n_analogs") else "no graded analogs yet (cold start)")
 
+    # Phase 7A: fold the deep-analysis enrichment in as ADVISORY context (it never overrides
+    # the matrix or the deterministic shift — see DEEP_ANALYSIS_PLAN.md §1).
+    enriched = state.get("enriched_analysis") or {}
+    enriched_desc = ""
+    if enriched:
+        enriched_desc = (
+            f"DEEP ANALYSIS (advisory): sector_wide={enriched.get('is_sector_wide')}; "
+            f"catalyst={str(enriched.get('catalyst_assessment',''))[:120]}; "
+            f"analog_takeaway={str(enriched.get('analog_takeaway',''))[:120]}; "
+            f"findings={enriched.get('findings', [])[:3]}; advisory conviction_adjustment="
+            f"{enriched.get('conviction_adjustment', 0.0)} (you MAY weigh this ±0.2; it does NOT "
+            f"change the deterministic shift label).\n"
+        )
+
     prompt = (
         f"Form a multi-week trade thesis for {state['ticker']} (as-of {state['as_of'].date()}).\n\n"
         f"NEWS BACKGROUND: {profile.get('summary','')}\n"
@@ -431,7 +546,8 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"  revenue YoY={fund.get('revenue_yoy')}, valuation={ {k: fund.get('valuation',{}).get(k) for k in ('trailingPE','forwardPE')} }, "
         f"expectation_gap={fund.get('expectation_gap')}\n"
         f"  long-term technicals: trend={tech.get('trend')}, window return={tech.get('return_window_pct')}%\n"
-        f"ANALOG BASE RATE: {analog_desc}\n\n"
+        f"ANALOG BASE RATE: {analog_desc}\n"
+        f"{enriched_desc}\n"
         f"Apply the news×fundamentals matrix:\n"
         f"  shift POSITIVE + fundamentals improving → high-conviction LONG\n"
         f"  shift NEGATIVE + fundamentals deteriorating → high-conviction SHORT\n"
