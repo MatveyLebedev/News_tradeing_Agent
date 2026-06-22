@@ -142,13 +142,23 @@ Phased by leverage. Each phase has a deliverable and an acceptance bar. B0–B1 
   (GDELT/known RSS archives/paid archive); load into `news` with correct `published`; re-embed.
   Until this lands, **historical backtest depth is capped at ~8 cohorts**.
 - **Fundamentals**:
-  - *Cheap partial fix:* reconstruct **trailing PE / P/B** at any `as_of` from EDGAR (TTM
-    EPS / book equity) × daily price — removes the worst of the §3.3 asymmetry for free.
-  - *Optional upgrade:* FMP Premium (~$59) / Sharadar SF1 for historical ratios **and** PIT
-    consensus estimates; because the fetcher writes normalized JSONB read by `fundamentals_tool`,
-    swapping the source is a **fetcher-only** change.
-- **Acceptance:** valid-cohort count grows beyond one regime; backtest fundamentals ≈ live
-  fundamentals (no path asymmetry).
+  - ✅ *Cheap partial fix — DONE* (`fundamentals_tool.valuation_pit`): reconstruct **trailing
+    PE / P/B / P/S** at any `as_of` from EDGAR (as-filed TTM) × the daily close. TTM dollar
+    figures are rebuilt from the latest annual + stub quarters − matching prior quarters (the
+    standard FY-anchored roll, so no fake partial year), and diluted shares are implied from one
+    period's `net_income / eps_diluted` (split-immune; ratios go through market cap). Both inputs
+    are point-in-time, so valuation is available at **any** `as_of` — including *before* the first
+    yfinance snapshot — and is recomputed at the analysis date rather than frozen at a fetch date.
+    `read_fundamentals` overlays the PIT keys on the (forward-only) yfinance snapshot; the rest of
+    the snapshot (forwardPE, margins, growth, ROE) stays as supplemental context. **No fetcher
+    change / re-fetch.** Verified: NVDA `as_of=2026-06-21` reconstructed `trailingPE=32.48` vs the
+    live yfinance `32.53` (~0.15%); 5 new tests in `test_fundamentals_pit.py` (sanity, PIT-price,
+    determinism, TTM-vs-manual, asymmetry-fixed) + updated leakage canary; 55 tests pass.
+  - *Optional upgrade (deferred — not now):* FMP Premium (~$59) / Sharadar SF1 for historical
+    ratios **and** PIT consensus estimates; because the fetcher writes normalized JSONB read by
+    `fundamentals_tool`, swapping the source is a **fetcher-only** change.
+- **Acceptance:** valid-cohort count grows beyond one regime *(needs the news archive)*; backtest
+  fundamentals ≈ live fundamentals (no path asymmetry) — **met for valuation** via `valuation_pit`.
 
 ### B3 — Formal walk-forward validation protocol *(medium)*
 - Write the protocol doc + enforce in code: expanding-window walk-forward, weekly cohorts,

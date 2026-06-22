@@ -58,8 +58,10 @@ def test_fundamentals_edgar_filed_le_as_of(db):
 
 
 def test_fundamentals_yfinance_snapshot_not_leaked(db):
-    """At an as_of strictly BEFORE the earliest yfinance snapshot, valuation must be empty —
-    i.e. a future-dated snapshot must not leak backward (the real PIT asymmetry, BACKTEST §3.3)."""
+    """At an as_of strictly BEFORE the earliest yfinance snapshot, no *yfinance-only* valuation
+    field may leak backward (the real PIT asymmetry, BACKTEST §3.3). PIT-reconstructed PE/P/B
+    (EDGAR × price, source='edgar+price') MAY be present — that's the B2 fix and is asserted
+    positively in test_fundamentals_pit.py."""
     rows = _q("SELECT MIN(fetch_date) FROM fundamentals WHERE source='yfinance' AND ticker=%s",
               [TICKER])
     min_fetch = rows[0][0] if rows else None
@@ -67,9 +69,14 @@ def test_fundamentals_yfinance_snapshot_not_leaked(db):
         pytest.skip("no yfinance snapshot for ticker")
     before = datetime.combine(min_fetch - timedelta(days=1), datetime.min.time())
     f = read_fundamentals(db, TICKER, before)
-    assert not f.get("valuation"), (
-        f"yfinance valuation present at as_of {before.date()} which is before the first "
-        f"snapshot {min_fetch} — future fundamentals leaked")
+    yf_only = {"forwardPE", "enterpriseToEbitda", "profitMargins", "grossMargins",
+               "operatingMargins", "revenueGrowth", "earningsGrowth", "returnOnEquity"}
+    leaked = yf_only & set(f.get("valuation", {}))
+    assert not leaked, (
+        f"yfinance-only valuation fields {leaked} present at as_of {before.date()} which is "
+        f"before the first snapshot {min_fetch} — future fundamentals leaked")
+    if f.get("valuation"):  # anything present must be the PIT reconstruction, not a leaked snapshot
+        assert f.get("valuation_pit", {}).get("source") == "edgar+price"
 
 
 def test_technicals_last_bar_le_as_of(db):
