@@ -46,13 +46,15 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 INSERT INTO longterm_agent_results
                     (agent_name, agent_version, ticker, as_of, lookback_days,
                      background_profile, background_shift, fundamentals_summary, shift_analogs,
-                     signal, verdict, traded, risk_flags, conviction, article_count, execution_time_seconds)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     enriched_analysis, signal, verdict, traded, risk_flags, conviction,
+                     article_count, execution_time_seconds)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (agent_version, ticker, as_of) DO UPDATE SET
                     background_profile=EXCLUDED.background_profile,
                     background_shift=EXCLUDED.background_shift,
                     fundamentals_summary=EXCLUDED.fundamentals_summary,
                     shift_analogs=EXCLUDED.shift_analogs,
+                    enriched_analysis=EXCLUDED.enriched_analysis,
                     signal=EXCLUDED.signal, verdict=EXCLUDED.verdict,
                     traded=EXCLUDED.traded, risk_flags=EXCLUDED.risk_flags,
                     conviction=EXCLUDED.conviction, article_count=EXCLUDED.article_count,
@@ -65,6 +67,7 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 Json(state.get("background_shift") or {}),
                 Json(state.get("fundamentals", {}).get("trend") or {}),
                 Json(state.get("shift_analogs") or {}),
+                Json(state.get("enriched_analysis") or {}),
                 Json(filtered or sig or {}),
                 verdict, traded, Json(state.get("risk_flags") or []),
                 sig.get("conviction"), state.get("article_count"),

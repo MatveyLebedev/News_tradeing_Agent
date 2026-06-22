@@ -454,9 +454,10 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
         f"  2. What is the causal chain, and is the catalyst NEW or already priced in? (novelty)\n"
         f"  3. Do the closest historical analogs support the directional read?\n"
         f"  4. Do quarter-level fundamentals confirm or undercut the shift?\n"
-        f"Then finalize DeepAnalysisOutput with concrete, evidence-tagged findings. Your "
-        f"conviction_adjustment is ADVISORY (-0.2..+0.2): it nudges synthesis, it never changes "
-        f"the shift label."
+        f"You MUST call at least one tool before answering — do not finalize from prior "
+        f"knowledge. Then finalize DeepAnalysisOutput with concrete, evidence-tagged findings. "
+        f"Your conviction_adjustment is ADVISORY (-0.2..+0.2): it nudges synthesis, it never "
+        f"changes the shift label."
     )
     messages = [SystemMessage(content=seed)]
     max_iter = getattr(config, "MAX_TOOL_CALL_ITERATIONS", 7)
@@ -495,14 +496,23 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
     except Exception as e:
         print(f"  ⚠ deep_analysis finalize failed: {e}")
         data = DeepAnalysisOutput().model_dump()
-    if not data.get("tools_used"):
-        data["tools_used"] = sorted(set(tools_used))
+    # Trust the loop's record of what ACTUALLY ran, not the model's self-report — it sometimes
+    # declines to call tools and hallucinates tool names. If nothing actually ran, the
+    # enrichment is evidence-free, so zero the advisory nudge: a no-investigation guess must
+    # never sway a trade (observed on GOOGL: 0 findings, fabricated tools_used, baseless +0.05).
+    data["tools_used"] = sorted(set(tools_used))
+    if not tools_used:
+        data["conviction_adjustment"] = 0.0
+        data["note"] = "model finalized without calling tools — enrichment skipped"
+        print("  ⚠ no tools were actually called — advisory nudge zeroed (enrichment skipped)")
     state["enriched_analysis"] = data
     _msg(state, "deep_analysis",
          f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
          {"enriched": data})
-    print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory); "
-          f"tools_used={data.get('tools_used')}")
+    print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory) | "
+          f"sector_wide={data.get('is_sector_wide')} | catalyst: {str(data.get('catalyst_assessment',''))[:90]}")
+    print(f"    analog: {str(data.get('analog_takeaway',''))[:90]} | "
+          f"findings={len(data.get('findings') or [])} | tools_used={data.get('tools_used')}")
     return state
 
 

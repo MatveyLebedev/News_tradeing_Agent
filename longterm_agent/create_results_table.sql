@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS longterm_agent_results (
     background_shift    JSONB,
     fundamentals_summary JSONB,
     shift_analogs       JSONB,
+    enriched_analysis   JSONB,         -- deep_analysis (Phase 7A): findings + advisory conviction_adjustment
     signal              JSONB,         -- final LongTermSignal (direction, conviction, horizon, thesis, invalidation)
 
     verdict         VARCHAR(20),       -- LONG | SHORT | NEUTRAL | NO_DATA (raw direction)
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS longterm_agent_results (
 -- Idempotent column adds (for tables created before Phase 6).
 ALTER TABLE longterm_agent_results ADD COLUMN IF NOT EXISTS traded BOOLEAN DEFAULT FALSE;
 ALTER TABLE longterm_agent_results ADD COLUMN IF NOT EXISTS risk_flags JSONB;
+ALTER TABLE longterm_agent_results ADD COLUMN IF NOT EXISTS enriched_analysis JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_lar_ticker  ON longterm_agent_results(ticker, as_of DESC);
 CREATE INDEX IF NOT EXISTS idx_lar_version ON longterm_agent_results(agent_version);

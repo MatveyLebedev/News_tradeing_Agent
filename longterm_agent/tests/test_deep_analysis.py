@@ -120,3 +120,30 @@ def test_tools_smoke():
     names = {t.name for t in tools}
     assert {"get_fundamentals_detail", "get_long_term_technicals",
             "search_company_news", "find_historical_analogs"} <= names
+
+
+class FakeLLMNoTools:
+    """Declines to call tools and finalizes immediately with a hallucinated tools_used —
+    reproduces the GOOGL failure mode (LLM answers from prior knowledge, no investigation)."""
+    def bind_tools(self, tools):
+        return self
+
+    def invoke(self, messages):
+        return AIMessage(content="analysis without tools")  # no tool_calls → loop breaks
+
+    def with_structured_output(self, schema, **kwargs):
+        return SimpleNamespace(invoke=lambda m: schema(
+            findings=[], conviction_adjustment=0.1,
+            tools_used=["cross-ticker_correlation", "analog_validation"]))  # fabricated
+
+
+def test_no_tools_called_zeros_adjustment(monkeypatch):
+    """If the model finalizes without running any tool, the evidence-free nudge is zeroed and
+    tools_used reflects reality (empty) — a no-investigation guess must not sway a trade."""
+    monkeypatch.setattr("longterm_agent.tools.analysis_tools.build_deep_analysis_tools",
+                        lambda *a, **k: [probe])
+    out = nodes.deep_analysis_node(_state(), FakeLLMNoTools(), None, None, _cfg())
+    enr = out["enriched_analysis"]
+    assert enr["conviction_adjustment"] == 0.0     # baseless nudge neutralized
+    assert enr["tools_used"] == []                  # honest: nothing actually ran
+    assert "skipped" in enr.get("note", "")
