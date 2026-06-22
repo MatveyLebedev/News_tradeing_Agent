@@ -20,6 +20,7 @@ COPY bloomberg_news_fetcher/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
+COPY model_config.py .
 COPY bloomberg_news_fetcher/config.py .
 COPY bloomberg_news_fetcher/logger.py .
 COPY bloomberg_news_fetcher/embeddings.py .

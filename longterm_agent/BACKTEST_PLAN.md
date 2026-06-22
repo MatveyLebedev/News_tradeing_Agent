@@ -123,19 +123,27 @@ Phased by leverage. Each phase has a deliverable and an acceptance bar. B0–B1 
   confirmed the per-bucket map/reduce calls go `STORE → HIT` with identical prompt hashes. 46 unit
   tests pass incl. the canary.
 
-### B1 — Consolidated harness + real metrics *(small/medium)*
-- **One walk-forward driver** (`backtest.py`): expanding-window, configurable universe / cohort
-  step / horizons, **writing to a separate `backtest_runs` table** namespaced by a `backtest_id`
-  — so backtests never pollute the live `longterm_agent_results` / forward paper-trade stats.
-- **Proper report** (extend `backtest_report.py`):
+### B1 — Consolidated harness + real metrics *(small/medium)* — ✅ **DONE**
+- ✅ **One walk-forward driver** (`backtest.py`): expanding-window, configurable universe /
+  cohort step / horizons, **writing to the separate `backtest_runs` table**
+  (`create_backtest_runs_table.sql`) namespaced by a `backtest_id` — so backtests never pollute
+  the live `longterm_agent_results` / forward paper-trade stats. Stamps `provenance` (B0) per row;
+  the pipeline runs once per `(ticker, as_of)` and writes a row per horizon (+2/+4/+12w graded
+  independently). Resumable (skips recorded cohorts) and reproducible via the B0 LLM cache. A
+  separate grading pass fills realized outcome + regime (`_ret` vs SPY).
+- ✅ **Report** + a pure, unit-tested metrics module (`backtest_metrics.py`):
   - hit-rate **by conviction bucket** → a **calibration/reliability curve** (is conviction
     predictive? — directly tests the §3.1 concern);
-  - excess-return **distribution** (mean/median/IQR), not just the mean;
-  - **information ratio / Sharpe** of the signal portfolio; max drawdown; turnover/exposure;
-  - splits by **direction**, **shift vs no-shift**, and **regime**;
-  - **bootstrap confidence intervals** + prominent **n** and a min-n gate before any verdict.
-- **Acceptance:** a single command produces a versioned report with CIs; `n` and regime caveats
-  are unmissable.
+  - excess-return **distribution** (mean/median/IQR/min/max), not just the mean;
+  - **Sharpe / information ratio** of the per-cohort equity curve + **max drawdown**;
+  - splits by **direction**, **shift vs no-shift**, and **regime** (SPY trailing return);
+  - **percentile bootstrap CIs** (deterministic, seeded) for win-rate and mean excess, with a
+    prominent **n** and a **min-n gate** (n<30 ⇒ "ESTIMATE — harness check, not a verdict").
+- ✅ **Acceptance verified:** a single command
+  (`python -m longterm_agent.backtest --backtest-id <id> --tickers … --start … --end … --horizons …`)
+  runs → grades → prints a versioned report with CIs to `backtest_runs` (isolated from live).
+  End-to-end exercised against real prices (grading + regime + all metrics render, min-n gate
+  fires); 8 metrics unit tests; **64 tests pass**.
 
 ### B2 — Data depth *(the real unlock; larger)*
 - **News archive import** — the gating dependency for pre-2026-02 backtesting. Evaluate sources
@@ -207,14 +215,15 @@ as the current scripts already print.
 ## 7. Effort & sequencing
 
 ```
-B0 reproducibility + canary   ▓▓        small   ← do first (unblocks trust in every later number)
-B1 harness + metrics          ▓▓▓       small/med
+B0 reproducibility + canary   ▓▓        small   ✅ DONE
+B1 harness + metrics          ▓▓▓       small/med ✅ DONE
 B4 forward paper-testing      ▓         (already running; formalize)   ← parallel, from today
-B2 news archive + fund. PIT   ▓▓▓▓▓▓    large   ← the real unlock for historical depth
+B2 news archive + fund. PIT   ▓▓▓▓▓▓    large   ← fundamentals PIT ✅; news archive = the real unlock
 B3 walk-forward protocol      ▓▓▓       medium  ← after B0–B2
 ```
 
-**Bottom line:** the expensive, correct part (no-lookahead architecture) is done. The cheap,
-high-value next step is **B0 (reproducibility)** — without it no backtest number can be trusted
-or compared. Deep historical backtesting is gated on **B2 (a news archive)**; until that exists,
-**forward paper-testing (B4) is the honest validation path**, and it's already accumulating.
+**Bottom line:** the expensive, correct part (no-lookahead architecture) is done, and the
+reproducibility + harness/metrics + PIT-fundamentals foundation (**B0, B1, B2-valuation**) is now
+in place — every backtest number is reproducible, isolated from live, and ships with CIs and a
+min-n gate. Deep historical backtesting is still gated on **B2 (a news archive)**; until that
+exists, **forward paper-testing (B4) is the honest validation path**, and it's already accumulating.
