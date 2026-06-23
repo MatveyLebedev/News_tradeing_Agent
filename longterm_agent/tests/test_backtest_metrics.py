@@ -60,6 +60,12 @@ def test_calibration_curve_buckets():
     assert by[(0.85, 1.01)]["n"] == 0 and by[(0.85, 1.01)]["win_rate"] is None
 
 
+def test_cumulative():
+    assert M.cumulative([0.1, 0.2, -0.05]) == [0.1, 0.30000000000000004, 0.25000000000000006]
+    assert M.cumulative([]) == []
+    assert M.cumulative([0.1, None, 0.2]) == [0.1, 0.1, 0.30000000000000004]  # None → 0
+
+
 def test_bootstrap_ci_deterministic_and_brackets():
     vals = [0.01, 0.02, 0.03, 0.04, 0.05]
     lo1, hi1 = M.bootstrap_ci(vals, lambda s: M.distribution(s)["mean"])

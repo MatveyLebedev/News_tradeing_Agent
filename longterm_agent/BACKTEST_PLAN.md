@@ -190,11 +190,19 @@ Phased by leverage. Each phase has a deliverable and an acceptance bar. B0–B1 
   trusted as a sizing input.
 - **Acceptance:** a documented, repeatable protocol; results reported OOS with CIs.
 
-### B4 — Forward paper-testing *(primary path — runs from today, ~80% built)*
+### B4 — Forward paper-testing *(primary path — runs from today)* — ✅ **DONE (formalized)**
 Given thin history, the **statistically honest** validation is forward accumulation, which Phase 6
 already does: the weekly batch writes every signal to `longterm_agent_results`, `grade_results`
-fills outcomes as horizons mature. Formalize it: an **equity curve / cumulative excess** in the
-report and the `/trades` bot view; cohort-maturity tracker.
+fills outcomes as horizons mature. Formalized in `forward_report.py`:
+- ✅ **Equity curve / cumulative excess** over the live graded trades, **reusing the B1 metrics**
+  (`backtest_metrics`) so forward and backtest speak the same language: per-cohort mean excess →
+  cumulative curve, Sharpe/IR, max drawdown, win-rate + mean with **bootstrap CIs**, distribution,
+  conviction calibration, direction/shift splits, and the min-n gate.
+- ✅ **Cohort-maturity tracker** (`cohort_maturity`): matured vs pending counts, next-maturity date,
+  and an "matured-but-ungraded" nudge — so "we don't have the numbers yet" is explicit, not hidden.
+- ✅ **`/trades` bot view** shows a compact forward block (`forward_report.bot_summary`): cumulative
+  excess · Sharpe · max DD · pending + next maturity. Verified against live (1 pending, next
+  ~2026-07-20) and a populated synthetic path (equity curve, Sharpe, CIs render); 65 tests pass.
 - **Timeline:** first +4w numbers ~1 month out (~4 fresh cohorts); meaningful +4w stats + first
   +12w reads ~1 quarter out; conviction **calibration** realistically needs a full quarter.
 
@@ -231,9 +239,9 @@ as the current scripts already print.
 ```
 B0 reproducibility + canary   ▓▓        small   ✅ DONE
 B1 harness + metrics          ▓▓▓       small/med ✅ DONE
-B4 forward paper-testing      ▓         (already running; formalize)   ← parallel, from today
-B2 news archive + fund. PIT   ▓▓▓▓▓▓    large   ← fundamentals PIT ✅; news archive = the real unlock
-B3 walk-forward protocol      ▓▓▓       medium  ← after B0–B2
+B4 forward paper-testing      ▓         ✅ DONE (formalized; now accumulating from today)
+B2 news archive + fund. PIT   ▓▓▓▓▓▓    large   ← fundamentals PIT ✅; news archive spike done (depth-yes/parity-no)
+B3 walk-forward protocol      ▓▓▓       medium  ← the remaining piece (after a paid/decided news source)
 ```
 
 **Bottom line:** the expensive, correct part (no-lookahead architecture) is done, and the

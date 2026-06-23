@@ -87,6 +87,16 @@ def max_drawdown(per_period_returns: Sequence[Number]) -> Optional[float]:
     return mdd
 
 
+def cumulative(returns: Sequence[Number]) -> List[float]:
+    """Running additive sum of per-period returns — the equity-curve points (Nones treated as 0).
+    Additive because per-cohort excess returns aggregate additively in this report."""
+    out, c = [], 0.0
+    for r in returns:
+        c += (r or 0.0)
+        out.append(c)
+    return out
+
+
 def calibration_curve(
     trades: Sequence[Dict],
     edges: Sequence[float] = (0.55, 0.65, 0.75, 0.85, 1.01),

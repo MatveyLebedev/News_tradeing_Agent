@@ -32,6 +32,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent import stats
+from longterm_agent import forward_report
 
 _cfg = LongTermAgentConfig()
 ALLOWED_IDS = {int(x) for x in _cfg.TELEGRAM_ALLOWED_USER_IDS.split(",") if x.strip().isdigit()}
@@ -114,13 +115,17 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized
 async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tr = await asyncio.to_thread(stats.trades_summary)
+    tr, fwd = await asyncio.gather(
+        asyncio.to_thread(stats.trades_summary),
+        asyncio.to_thread(forward_report.bot_summary),
+    )
     wr = tr["win_rate"]
     text = (
         f"💼 <b>Trades</b> (actionable, last {tr['days']}d)\n"
         f"total {tr['total_trades']} · graded {tr['graded']} · pending {tr['pending']}\n"
         f"win rate: <b>{f'{wr:.0%}' if wr is not None else '—'}</b> ({tr['wins']}/{tr['graded']})\n"
         f"excess vs SPY — mean {_pct(tr['mean_excess'])}, median {_pct(tr['median_excess'])}\n\n"
+        f"{fwd}\n\n"
         f"<i>A trade = a directional signal that passed the risk gate. "
         f"Win = beat SPY over 4 weeks. Pending = horizon not matured yet.</i>"
     )
