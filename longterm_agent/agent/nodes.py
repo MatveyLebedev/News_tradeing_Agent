@@ -439,25 +439,49 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
         return state
     llm_tools = llm.bind_tools(tools)
 
+    profile = state.get("background_profile", {})
+    news_summary = (profile.get("summary") or "").strip()
+    fund = state.get("fundamentals", {})
+    # Resolve peers deterministically so cross-company research always has concrete targets
+    # (don't depend on the model discovering them via a tool call).
+    peers = []
+    try:
+        from news_agent.tools.sector_competitor_tool import get_industry_competitors
+        peers = get_industry_competitors(fund.get("sector"), fund.get("industry"), ticker.upper())[:4]
+    except Exception:
+        peers = []
+    peer_line = ", ".join(peers) if peers else "(use the sector tool to find them)"
     analog_line = (f"{analogs.get('n_analogs')} analogs, median 4w "
                    f"{analogs.get('median_fwd_return_4w')}, share+ {analogs.get('share_positive')}"
                    if analogs.get("n_analogs") else "cold start (no graded analogs yet)")
     seed = (
-        f"You are enriching the trade thesis for {ticker} (as-of {as_of.date()}). The deterministic "
-        f"pass already produced these LABELS — do NOT recompute or contradict them:\n"
-        f"  - background shift: {shift.get('direction')} (z={shift.get('magnitude_z')}, "
-        f"score={shift.get('shift_score')}); catalysts {shift.get('candidate_catalysts')}\n"
+        f"You are a research analyst investigating a detected news-background SHIFT in {ticker} "
+        f"(as-of {as_of.date()}). Your job: research the news AND fundamentals of {ticker} and of "
+        f"its peer/competitor companies to extract concrete INSIGHTS about this shift — whether it "
+        f"is real, whether it is specific to {ticker} or sector-wide, whether the numbers support "
+        f"it, and whether the catalyst is new or already priced in.\n\n"
+        f"WHAT THE DETERMINISTIC PASS ALREADY ESTABLISHED (do NOT recompute or contradict these):\n"
+        f"  - shift: {shift.get('direction')} (z={shift.get('magnitude_z')}, score={shift.get('shift_score')}); "
+        f"catalysts {shift.get('candidate_catalysts')}\n"
+        f"  - news background: {news_summary or '(unavailable)'}\n"
         f"  - fundamentals verdict vs the shift: {trend.get('verdict','unknown')}\n"
+        f"  - sector / industry: {fund.get('sector')} / {fund.get('industry')}\n"
+        f"  - PEERS to compare against: {peer_line}\n"
         f"  - analog base rate: {analog_line}\n\n"
-        f"Use the read-only tools to answer ONLY the open questions that would move conviction:\n"
-        f"  1. Is the shift idiosyncratic or sector-wide? (cross-ticker correlation / sector read)\n"
-        f"  2. What is the causal chain, and is the catalyst NEW or already priced in? (novelty)\n"
-        f"  3. Do the closest historical analogs support the directional read?\n"
-        f"  4. Do quarter-level fundamentals confirm or undercut the shift?\n"
-        f"You MUST call at least one tool before answering — do not finalize from prior "
-        f"knowledge. Then finalize DeepAnalysisOutput with concrete, evidence-tagged findings. "
-        f"Your conviction_adjustment is ADVISORY (-0.2..+0.2): it nudges synthesis, it never "
-        f"changes the shift label."
+        f"HOW TO RESEARCH — you MUST call the read-only tools (do not answer from prior knowledge):\n"
+        f"  1. PEERS: research the peers above — pass each peer's ticker to get_fundamentals_detail, "
+        f"search_company_news and get_long_term_technicals — and judge whether they are moving and "
+        f"deteriorating WITH {ticker} (→ sector-wide) or not (→ idiosyncratic); confirm with the "
+        f"cross-ticker correlation and sector tools.\n"
+        f"  2. CAUSE & NOVELTY: trace the causal chain behind the shift and score novelty (genuinely "
+        f"new vs already priced in).\n"
+        f"  3. FUNDAMENTALS: drill {ticker}'s quarter-level fundamentals and CONTRAST them against a "
+        f"key peer's, to see whether the numbers confirm or contradict the shift.\n"
+        f"  4. ANALOGS & NEWS: check whether the closest past shifts support the directional read, "
+        f"and re-query the company news for the specific thread when needed.\n\n"
+        f"THEN report what you found: concrete evidence-tagged `findings` (note which company each "
+        f"came from), a short written `summary` of the key cross-company insights, and an ADVISORY "
+        f"`conviction_adjustment` (-0.2..+0.2) that only nudges synthesis and never changes the shift label."
     )
     messages = [SystemMessage(content=seed)]
     max_iter = getattr(config, "MAX_TOOL_CALL_ITERATIONS", 7)
@@ -513,6 +537,7 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
           f"sector_wide={data.get('is_sector_wide')} | catalyst: {str(data.get('catalyst_assessment',''))[:90]}")
     print(f"    analog: {str(data.get('analog_takeaway',''))[:90]} | "
           f"findings={len(data.get('findings') or [])} | tools_used={data.get('tools_used')}")
+    print(f"    summary: {str(data.get('summary',''))[:140]}")
     return state
 
 
@@ -541,6 +566,7 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
     if enriched:
         enriched_desc = (
             f"DEEP ANALYSIS (advisory): sector_wide={enriched.get('is_sector_wide')}; "
+            f"insight summary={str(enriched.get('summary',''))[:300]}; "
             f"catalyst={str(enriched.get('catalyst_assessment',''))[:120]}; "
             f"analog_takeaway={str(enriched.get('analog_takeaway',''))[:120]}; "
             f"findings={enriched.get('findings', [])[:3]}; advisory conviction_adjustment="

@@ -89,6 +89,7 @@ class DeepAnalysisOutput(BaseModel):
     competitor_read: str = ""
     catalyst_assessment: str = Field("", description="Is the catalyst new or already priced in?")
     analog_takeaway: str = Field("", description="What the closest past shifts imply")
+    summary: str = Field("", description="Short written summary of the key insights found")
     conviction_adjustment: float = Field(
         0.0, ge=-0.2, le=0.2,
         description="ADVISORY nudge for synthesis; never changes the deterministic shift label")
