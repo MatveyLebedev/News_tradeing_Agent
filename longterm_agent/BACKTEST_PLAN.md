@@ -182,13 +182,22 @@ Phased by leverage. Each phase has a deliverable and an acceptance bar. B0–B1 
 - **Acceptance:** valid-cohort count grows beyond one regime *(needs the news archive)*; backtest
   fundamentals ≈ live fundamentals (no path asymmetry) — **met for valuation** via `valuation_pit`.
 
-### B3 — Formal walk-forward validation protocol *(medium)*
-- Write the protocol doc + enforce in code: expanding-window walk-forward, weekly cohorts,
-  +2/+4/+12w horizons, SPY **and** sector-ETF benchmarks, **out-of-sample discipline** (config is
-  frozen on the test window — no tuning on it), multiple-testing awareness, per-regime reporting.
-- **Calibration target:** conviction reliability curve must be monotonic before conviction is
-  trusted as a sizing input.
-- **Acceptance:** a documented, repeatable protocol; results reported OOS with CIs.
+### B3 — Formal walk-forward validation protocol *(medium)* — ✅ **DONE**
+- ✅ **Protocol doc** (`WALK_FORWARD_PROTOCOL.md`): expanding-window walk-forward, weekly cohorts,
+  +2/+4/+12w horizons, SPY **and** sector-ETF benchmarks, out-of-sample discipline, multiple-testing,
+  calibration gate, per-regime reporting, the repeatable command, and a 6-point verdict bar.
+- ✅ **Enforced in code** (`backtest.py` report + `backtest_metrics`):
+  - **OOS discipline** — the report fails if a `backtest_id` carries >1 `provenance` stamp (config
+    changed mid-sweep ⇒ not out-of-sample); one frozen config per id.
+  - **Multiple-testing** — per-ticker one-sided bootstrap p-value (H0: mean excess ≤ 0) +
+    **Benjamini–Hochberg FDR at 5%**; reports survivors, not raw positives.
+  - **Calibration gate** — `is_monotonic` on the conviction reliability curve →
+    "sizing-trustworthy: YES/NO" before conviction is used to size.
+  - **Benchmark configurable** (`--benchmark`, default SPY) — sector-ETF leg ready; *data-gated*
+    (only SPY is in `stock_prices_daily` today).
+  - New pure helpers (`is_monotonic`, `bootstrap_pvalue`, `benjamini_hochberg`) are unit-tested.
+- ✅ **Acceptance:** documented, repeatable protocol; results reported OOS with CIs and the three
+  gates (OOS / FDR / calibration). Verified end-to-end on seeded data; 74 tests pass.
 
 ### B4 — Forward paper-testing *(primary path — runs from today)* — ✅ **DONE (formalized)**
 Given thin history, the **statistically honest** validation is forward accumulation, which Phase 6
@@ -241,11 +250,14 @@ B0 reproducibility + canary   ▓▓        small   ✅ DONE
 B1 harness + metrics          ▓▓▓       small/med ✅ DONE
 B4 forward paper-testing      ▓         ✅ DONE (formalized; now accumulating from today)
 B2 news archive + fund. PIT   ▓▓▓▓▓▓    large   ← fundamentals PIT ✅; news archive spike done (depth-yes/parity-no)
-B3 walk-forward protocol      ▓▓▓       medium  ← the remaining piece (after a paid/decided news source)
+B3 walk-forward protocol      ▓▓▓       ✅ DONE (doc + OOS/FDR/calibration gates enforced in code)
 ```
 
-**Bottom line:** the expensive, correct part (no-lookahead architecture) is done, and the
-reproducibility + harness/metrics + PIT-fundamentals foundation (**B0, B1, B2-valuation**) is now
-in place — every backtest number is reproducible, isolated from live, and ships with CIs and a
-min-n gate. Deep historical backtesting is still gated on **B2 (a news archive)**; until that
-exists, **forward paper-testing (B4) is the honest validation path**, and it's already accumulating.
+**Bottom line:** the whole methodology stack is now built — **B0** (reproducibility), **B1**
+(harness + metrics), **B2-valuation** (PIT fundamentals), **B3** (walk-forward protocol with
+OOS/FDR/calibration gates), and **B4** (forward paper-testing). Every number is reproducible,
+isolated from live, ships with CIs + a min-n gate, and is checked for out-of-sample discipline,
+multiple-testing, and calibration. The **one remaining unlock is data depth** — a news-archive
+backfill (the spike found GDELT gives depth but not source parity, so it needs a paid archive for
+a clean historical sample). Until that lands, **forward paper-testing (B4) is the honest
+validation path**, and it's already accumulating from today.

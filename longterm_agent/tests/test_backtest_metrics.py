@@ -66,6 +66,36 @@ def test_cumulative():
     assert M.cumulative([0.1, None, 0.2]) == [0.1, 0.1, 0.30000000000000004]  # None → 0
 
 
+def test_is_monotonic():
+    assert M.is_monotonic([0.3, 0.5, 0.5, 0.7]) is True       # weakly increasing
+    assert M.is_monotonic([0.3, 0.6, 0.4]) is False           # dips
+    assert M.is_monotonic([0.7, 0.5, 0.3], increasing=False) is True
+    assert M.is_monotonic([0.5]) is None                      # too few points
+    assert M.is_monotonic([None, 0.4, None, 0.6]) is True     # Nones skipped
+
+
+def test_bootstrap_pvalue():
+    # strongly positive sample → small p that mean>0; strongly negative → large p
+    assert M.bootstrap_pvalue([0.05, 0.06, 0.04, 0.05], side="greater") < 0.05
+    assert M.bootstrap_pvalue([-0.05, -0.06, -0.04], side="greater") > 0.5
+    assert M.bootstrap_pvalue([0.01], side="greater") is None
+    # deterministic
+    assert M.bootstrap_pvalue([0.02, -0.01, 0.03]) == M.bootstrap_pvalue([0.02, -0.01, 0.03])
+
+
+def test_benjamini_hochberg():
+    # one clearly-significant, rest null
+    pv = [0.001, 0.20, 0.50, 0.80]
+    reject, crit = M.benjamini_hochberg(pv, alpha=0.05)
+    assert reject[0] is True and reject[1:] == [False, False, False]
+    # all null → none rejected
+    rej2, _ = M.benjamini_hochberg([0.9, 0.8, 0.7], alpha=0.05)
+    assert rej2 == [False, False, False]
+    # None p-values never reject
+    rej3, _ = M.benjamini_hochberg([0.001, None], alpha=0.05)
+    assert rej3[1] is False
+
+
 def test_bootstrap_ci_deterministic_and_brackets():
     vals = [0.01, 0.02, 0.03, 0.04, 0.05]
     lo1, hi1 = M.bootstrap_ci(vals, lambda s: M.distribution(s)["mean"])

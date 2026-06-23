@@ -118,6 +118,58 @@ def calibration_curve(
     return out
 
 
+def is_monotonic(values: Sequence[Optional[float]], increasing: bool = True, tol: float = 1e-9):
+    """True if the non-None values are weakly monotonic. The conviction-calibration gate (B3):
+    win-rate must rise with conviction before conviction is trusted as a sizing input. Returns
+    None if fewer than 2 comparable points (can't judge)."""
+    xs = [v for v in values if v is not None]
+    if len(xs) < 2:
+        return None
+    for a, b in zip(xs, xs[1:]):
+        if increasing and b < a - tol:
+            return False
+        if not increasing and b > a + tol:
+            return False
+    return True
+
+
+def bootstrap_pvalue(values: Sequence[Number], side: str = "greater",
+                     n_boot: int = 2000, seed: int = 1234) -> Optional[float]:
+    """One-sided bootstrap p-value that the mean differs from 0: fraction of bootstrap means on
+    the null side of 0 (side='greater' tests mean>0; 'less' tests mean<0). Deterministic by seed."""
+    xs = [v for v in values if v is not None]
+    if len(xs) < 2:
+        return None
+    rng = random.Random(seed)
+    n = len(xs)
+    wrong = 0
+    for _ in range(n_boot):
+        m = sum(xs[rng.randrange(n)] for _ in range(n)) / n
+        if (side == "greater" and m <= 0) or (side == "less" and m >= 0):
+            wrong += 1
+    return wrong / n_boot
+
+
+def benjamini_hochberg(pvalues: Sequence[Optional[float]], alpha: float = 0.05):
+    """Benjamini-Hochberg FDR control across the multiple per-ticker tests (B3 multiple-testing
+    awareness). Returns (reject[list[bool] aligned to input], threshold). None p-values never
+    reject. Controls the expected false-discovery rate at `alpha`."""
+    indexed = sorted(((p, i) for i, p in enumerate(pvalues) if p is not None))
+    reject = [False] * len(pvalues)
+    if not indexed:
+        return reject, None
+    m = len(indexed)
+    thresh_k = 0
+    for rank, (p, _) in enumerate(indexed, start=1):
+        if p <= rank / m * alpha:
+            thresh_k = rank
+    for rank, (p, i) in enumerate(indexed, start=1):
+        if rank <= thresh_k:
+            reject[i] = True
+    crit = (thresh_k / m * alpha) if thresh_k else 0.0
+    return reject, crit
+
+
 def bootstrap_ci(
     values: Sequence[Number],
     stat_fn: Callable[[Sequence[Number]], Optional[float]],

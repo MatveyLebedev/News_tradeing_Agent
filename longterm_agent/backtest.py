@@ -144,7 +144,9 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
 
 
 # --------------------------------------------------------------------------- grade
-def grade(cfg, backtest_id, asof_today=None):
+def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
+    """Fill realized outcome + regime for matured rows. `benchmark` is the comparison index
+    (B3 calls for SPY *and* a sector ETF — sector ETFs need price data; SPY is the default)."""
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
     cur = conn.cursor()
@@ -157,7 +159,7 @@ def grade(cfg, backtest_id, asof_today=None):
         if as_of + timedelta(days=horizon) > today:
             continue  # horizon not matured yet
         fwd = _ret(cur, ticker, as_of, horizon)
-        bench = _ret(cur, "SPY", as_of, horizon)
+        bench = _ret(cur, benchmark, as_of, horizon)
         if fwd is None:
             continue  # missing prices; retry next run
         ex = trade_excess(direction, fwd, bench) if direction in ("LONG", "SHORT") else None
@@ -192,8 +194,9 @@ def report(cfg, backtest_id):
                 [backtest_id])
     rows = [dict(zip(("horizon", "ticker", "as_of", "direction", "conviction", "traded",
                       "shift_flag", "regime", "excess"), r)) for r in cur.fetchall()]
-    cur.execute("SELECT provenance FROM backtest_runs WHERE backtest_id=%s LIMIT 1", [backtest_id])
-    prov = (cur.fetchone() or [None])[0]
+    cur.execute("""SELECT DISTINCT provenance::text FROM backtest_runs WHERE backtest_id=%s""",
+                [backtest_id])
+    prov_stamps = [r[0] for r in cur.fetchall()]
     conn.close()
 
     print("\n" + "=" * 74)
@@ -205,9 +208,16 @@ def report(cfg, backtest_id):
     horizons = sorted({r["horizon"] for r in rows})
     cohorts = sorted({r["as_of"] for r in rows})
     tickers = sorted({r["ticker"] for r in rows})
-    print(f"provenance: {prov}")
+    print(f"provenance: {prov_stamps[0] if prov_stamps else None}")
     print(f"universe={len(tickers)}  cohorts={len(cohorts)} ({cohorts[0]}..{cohorts[-1]})  "
           f"horizons={horizons}")
+    # B3 — out-of-sample discipline: the config must be FROZEN across a walk-forward sweep. More
+    # than one provenance stamp means knobs/model/code changed mid-protocol → results are not OOS.
+    if len(prov_stamps) > 1:
+        print(f"  ⚠ OOS DISCIPLINE VIOLATED: {len(prov_stamps)} distinct provenance stamps under "
+              f"this backtest_id — config was not frozen; re-run under a fresh --backtest-id.")
+    else:
+        print("  ✓ config frozen (single provenance stamp) — OOS discipline holds")
 
     for h in horizons:
         hr = [r for r in rows if r["horizon"] == h]
@@ -234,8 +244,9 @@ def report(cfg, backtest_id):
         print(f"  Sharpe/IR    : {('  n/a' if M.sharpe(series) is None else f'{M.sharpe(series):.2f}')} "
               f"(per-cohort)   max drawdown {_pct(M.max_drawdown(series))}")
 
+        cal = M.calibration_curve(graded)
         print("  conviction calibration (is conviction predictive?):")
-        for b in M.calibration_curve(graded):
+        for b in cal:
             if b["n"]:
                 print(f"    conv {b['lo']:.2f}-{b['hi']:.2f}: n={b['n']:2d}  "
                       f"win {b['win_rate']:.0%}  mean {_pct(b['mean_excess'])}")
@@ -256,7 +267,33 @@ def report(cfg, backtest_id):
                 sub = [r["excess"] for r in graded if r["regime"] == v]
                 line.append(f"{v}: n={len(sub)} mean {_pct(M.distribution(sub)['mean'])}")
             print(f"  by regime   : " + "   ".join(line))
+        _protocol_checks(graded, cal)
     print("\n" + "=" * 74)
+
+
+def _protocol_checks(graded, cal):
+    """B3 gates on a horizon's graded trades: conviction-calibration monotonicity (is conviction
+    trustworthy as a sizing input?) and multiple-testing FDR control across per-ticker tests."""
+    print("  B3 protocol checks:")
+    mono = M.is_monotonic([b["win_rate"] for b in cal if b["n"]])
+    verdict = {True: "YES — monotonic", False: "NO — non-monotonic (do not size by conviction)",
+               None: "insufficient buckets"}[mono]
+    print(f"    calibration monotonic (sizing-trustworthy): {verdict}")
+    # multiple-testing: per-ticker H0 = mean excess ≤ 0; BH-control the false-discovery rate.
+    by_tk = {}
+    for r in graded:
+        by_tk.setdefault(r["ticker"], []).append(r["excess"])
+    testable = {tk: ex for tk, ex in by_tk.items() if len(ex) >= 3}
+    if not testable:
+        print("    multiple-testing: no ticker has ≥3 graded trades yet — not testable")
+        return
+    names = sorted(testable)
+    pvals = [M.bootstrap_pvalue(testable[tk], side="greater") for tk in names]
+    reject, crit = M.benjamini_hochberg(pvals, alpha=0.05)
+    survivors = [names[i] for i in range(len(names)) if reject[i]]
+    print(f"    multiple-testing (per-ticker H0: mean excess ≤ 0, {len(names)} tested): "
+          f"{len(survivors)} survive BH FDR 5%"
+          + (f" — {survivors}" if survivors else " (none — no per-ticker edge survives correction)"))
 
 
 # --------------------------------------------------------------------------- cli
@@ -271,6 +308,7 @@ def main():
     ap.add_argument("--force", action="store_true", help="re-run cohorts already recorded")
     ap.add_argument("--report-only", action="store_true", help="skip run+grade, just print")
     ap.add_argument("--no-grade", action="store_true", help="skip grading")
+    ap.add_argument("--benchmark", default="SPY", help="benchmark ticker (B3: SPY or a sector ETF)")
     ap.add_argument("--asof-today", help="override 'today' for grading (YYYY-MM-DD)")
     args = ap.parse_args()
 
@@ -281,7 +319,7 @@ def main():
                               datetime.strptime(args.end, "%Y-%m-%d"), args.step)
             run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id, args.force)
         if not args.no_grade:
-            grade(cfg, args.backtest_id, args.asof_today)
+            grade(cfg, args.backtest_id, args.asof_today, args.benchmark)
     report(cfg, args.backtest_id)
 
 
