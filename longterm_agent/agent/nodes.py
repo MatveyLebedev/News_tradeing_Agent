@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from ..schemas import (
     PeriodBucketSummary, NewsBackgroundProfile, BackgroundShift, FundamentalsTrend,
-    ShiftAnalogs, LongTermSignal, ReflectionOutput, DeepAnalysisOutput,
+    ShiftAnalogs, LongTermSignal, ReflectionOutput, DeepAnalysisOutput, DeepAnalysisFinding,
 )
 from ..tools.news_corpus_tool import get_company_news_corpus, bucket_by_week
 from ..tools.background_metrics import compute_shift_metrics
@@ -407,15 +407,59 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 4c. deep_analysis (Phase 7A — bounded ReAct enrichment; advisory only)
+# 4c. deep_analysis (Phase 7A — map-reduce cross-company research; advisory only)
 # ---------------------------------------------------------------------------
-def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[str, Any]:
-    """Let the LLM CHOOSE what to investigate (read-only tools), bounded to
-    MAX_TOOL_CALL_ITERATIONS with forced finalization. Hard boundary: it writes only
-    `enriched_analysis` (advisory) and NEVER touches `background_shift` — so the deterministic
-    labels the shift_library/backtest depend on stay reproducible. Runs only on a detected
-    shift (no shift → nothing actionable to enrich)."""
-    print("\n=== Deep Analysis (Phase 7A) ===")
+# Isolation, not truncation: each research thread runs in its OWN small context (a focused
+# bounded tool loop) and returns a short finding. No single context accumulates every tool
+# result, so the reduce can't be starved/truncated (the Mode-3 problem) — mirrors the
+# background_profiling map-reduce. Hard boundary unchanged: writes only `enriched_analysis`,
+# never `background_shift`.
+_MAP_MAX_ITERS = 3      # keep each isolated thread context tiny
+_MAP_TRUNC = 1200       # per-result cap inside a map thread
+
+
+def _exec_tool(tools, name, args):
+    for t in tools:
+        if t.name == name:
+            try:
+                return str(t.invoke(args))
+            except Exception as e:  # graceful: the model sees the error and can adapt
+                return json.dumps({"error": str(e)})
+    return json.dumps({"error": f"tool {name} not found"})
+
+
+def _run_map_thread(llm_map, tools, seed, max_iter=_MAP_MAX_ITERS, trunc=_MAP_TRUNC):
+    """Run ONE focused bounded tool loop in its own context; return (finding_dict, tools_used).
+    The transcript never exceeds ~max_iter rounds, so the map finalize can't truncate."""
+    from langchain_core.messages import SystemMessage, ToolMessage
+    messages = [SystemMessage(content=seed)]
+    llm_tools = llm_map.bind_tools(tools)
+    used: List[str] = []
+    for i in range(max_iter):
+        if i == max_iter - 1:
+            break
+        resp = llm_tools.invoke(messages)
+        messages.append(resp)
+        calls = getattr(resp, "tool_calls", None)
+        if not calls:
+            break
+        for call in calls:
+            name, args, cid = call.get("name", ""), call.get("args", {}), call.get("id", "")
+            used.append(name)
+            messages.append(ToolMessage(content=_exec_tool(tools, name, args)[:trunc], tool_call_id=cid))
+    try:
+        finding = _invoke_structured(llm_map, DeepAnalysisFinding, messages).model_dump()
+    except Exception:
+        finding = DeepAnalysisFinding().model_dump()
+    return finding, used
+
+
+def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, config) -> Dict[str, Any]:
+    """Map-reduce cross-company research. MAP: a focused tool-using call per research thread,
+    each in an isolated small context → a short finding. REDUCE: the main model folds the
+    findings into DeepAnalysisOutput (summary + advisory conviction_adjustment). Advisory only:
+    never edits `background_shift`. Runs only on a detected shift."""
+    print("\n=== Deep Analysis (Phase 7A, map-reduce) ===")
     if not getattr(config, "DEEP_ANALYSIS_ENABLED", False):
         print("  → disabled (LT_DEEP_ANALYSIS=false); skipping")
         return state
@@ -424,12 +468,14 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
         print("  → no shift / no data; skipping enrichment")
         return state
 
-    from langchain_core.messages import SystemMessage, ToolMessage
     from ..tools.analysis_tools import build_deep_analysis_tools
 
     ticker, as_of = state["ticker"], state["as_of"]
     trend = (state.get("fundamentals", {}).get("trend") or {})
     analogs = state.get("shift_analogs", {})
+    fund = state.get("fundamentals", {})
+    profile = state.get("background_profile", {})
+    news_summary = (profile.get("summary") or "").strip()
 
     tools = build_deep_analysis_tools(
         ticker, as_of, db_manager, neo4j_manager, config,
@@ -437,13 +483,8 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
     if not tools:
         print("  → no tools available; skipping")
         return state
-    llm_tools = llm.bind_tools(tools)
 
-    profile = state.get("background_profile", {})
-    news_summary = (profile.get("summary") or "").strip()
-    fund = state.get("fundamentals", {})
-    # Resolve peers deterministically so cross-company research always has concrete targets
-    # (don't depend on the model discovering them via a tool call).
+    # Resolve peers deterministically so every thread has concrete comparison targets.
     peers = []
     try:
         from news_agent.tools.sector_competitor_tool import get_industry_competitors
@@ -454,89 +495,82 @@ def deep_analysis_node(state, llm, db_manager, neo4j_manager, config) -> Dict[st
     analog_line = (f"{analogs.get('n_analogs')} analogs, median 4w "
                    f"{analogs.get('median_fwd_return_4w')}, share+ {analogs.get('share_positive')}"
                    if analogs.get("n_analogs") else "cold start (no graded analogs yet)")
-    seed = (
-        f"You are a research analyst investigating a detected news-background SHIFT in {ticker} "
-        f"(as-of {as_of.date()}). Your job: research the news AND fundamentals of {ticker} and of "
-        f"its peer/competitor companies to extract concrete INSIGHTS about this shift — whether it "
-        f"is real, whether it is specific to {ticker} or sector-wide, whether the numbers support "
-        f"it, and whether the catalyst is new or already priced in.\n\n"
-        f"WHAT THE DETERMINISTIC PASS ALREADY ESTABLISHED (do NOT recompute or contradict these):\n"
-        f"  - shift: {shift.get('direction')} (z={shift.get('magnitude_z')}, score={shift.get('shift_score')}); "
+
+    # Shared context every map thread sees — just the small deterministic labels.
+    context = (
+        f"{ticker} (as-of {as_of.date()}) — detected news-background SHIFT.\n"
+        f"  shift: {shift.get('direction')} (z={shift.get('magnitude_z')}, score={shift.get('shift_score')}); "
         f"catalysts {shift.get('candidate_catalysts')}\n"
-        f"  - news background: {news_summary or '(unavailable)'}\n"
-        f"  - fundamentals verdict vs the shift: {trend.get('verdict','unknown')}\n"
-        f"  - sector / industry: {fund.get('sector')} / {fund.get('industry')}\n"
-        f"  - PEERS to compare against: {peer_line}\n"
-        f"  - analog base rate: {analog_line}\n\n"
-        f"HOW TO RESEARCH — you MUST call the read-only tools (do not answer from prior knowledge):\n"
-        f"  1. PEERS: research the peers above — pass each peer's ticker to get_fundamentals_detail, "
-        f"search_company_news and get_long_term_technicals — and judge whether they are moving and "
-        f"deteriorating WITH {ticker} (→ sector-wide) or not (→ idiosyncratic); confirm with the "
-        f"cross-ticker correlation and sector tools.\n"
-        f"  2. CAUSE & NOVELTY: trace the causal chain behind the shift and score novelty (genuinely "
-        f"new vs already priced in).\n"
-        f"  3. FUNDAMENTALS: drill {ticker}'s quarter-level fundamentals and CONTRAST them against a "
-        f"key peer's, to see whether the numbers confirm or contradict the shift.\n"
-        f"  4. ANALOGS & NEWS: check whether the closest past shifts support the directional read, "
-        f"and re-query the company news for the specific thread when needed.\n\n"
-        f"THEN report what you found: concrete evidence-tagged `findings` (note which company each "
-        f"came from), a short written `summary` of the key cross-company insights, and an ADVISORY "
-        f"`conviction_adjustment` (-0.2..+0.2) that only nudges synthesis and never changes the shift label."
+        f"  news background: {news_summary or '(unavailable)'}\n"
+        f"  fundamentals verdict vs shift: {trend.get('verdict','unknown')}\n"
+        f"  sector/industry: {fund.get('sector')} / {fund.get('industry')}\n"
+        f"  PEERS: {peer_line}\n"
+        f"  analog base rate: {analog_line}\n"
+        f"Do NOT recompute or contradict these deterministic labels.\n"
     )
-    messages = [SystemMessage(content=seed)]
-    max_iter = getattr(config, "MAX_TOOL_CALL_ITERATIONS", 7)
-    trunc = getattr(config, "TOOL_RESULT_MAX_CHARS", 3000)
-    tools_used: List[str] = []
 
-    for i in range(max_iter):
-        if i == max_iter - 1:
-            break  # force structured finalization on the last turn (no infinite loop)
-        resp = llm_tools.invoke(messages)
-        messages.append(resp)
-        calls = getattr(resp, "tool_calls", None)
-        if not calls:
-            break
-        print(f"  → iter {i+1}: {len(calls)} tool call(s)")
-        for call in calls:
-            name, args, cid = call.get("name", ""), call.get("args", {}), call.get("id", "")
-            tools_used.append(name)
-            result = None
-            for t in tools:
-                if t.name == name:
-                    try:
-                        result = t.invoke(args)
-                    except Exception as e:  # graceful: the model sees the error and recovers
-                        result = json.dumps({"error": str(e)})
-                    break
-            if result is None:
-                result = json.dumps({"error": f"tool {name} not found"})
-            result = str(result)
-            if len(result) > trunc:
-                result = result[:trunc] + "…[truncated]"
-            messages.append(ToolMessage(content=result, tool_call_id=cid))
+    # The research threads — each runs in isolation (its own context) as one MAP unit.
+    threads = [
+        ("sector_breadth",
+         f"FOCUSED TASK: decide whether this shift is SECTOR-WIDE or IDIOSYNCRATIC. Research the "
+         f"peers ({peer_line}) — pass each peer's ticker to get_fundamentals_detail / "
+         f"get_long_term_technicals — and use cross-ticker correlation + the sector tool. Are peers "
+         f"moving/deteriorating with {ticker} or not?"),
+        ("cause_novelty",
+         "FOCUSED TASK: trace the CAUSAL CHAIN behind the shift and judge whether the catalyst is "
+         "genuinely NEW or already PRICED IN (use the causal-chain, events and novelty tools)."),
+        ("fundamentals",
+         f"FOCUSED TASK: drill {ticker}'s quarter-level FUNDAMENTALS and contrast them with a key "
+         f"peer's — do the numbers CONFIRM or CONTRADICT the shift?"),
+        ("analogs",
+         "FOCUSED TASK: check whether the closest historical ANALOGS support the directional read; "
+         "report their base rate (find_historical_analogs)."),
+    ]
 
+    findings, all_used = [], []
+    for name, task in threads:
+        seed = (
+            f"You are researching ONE focused question for a multi-week trade thesis.\n\n{context}\n"
+            f"{task}\nYou MUST call at least one tool — do not answer from prior knowledge. Then "
+            f"return a 1-3 sentence evidence-tagged `finding` and a short `signal` label "
+            f"(e.g. sector-wide / idiosyncratic / confirms / contradicts / novel / priced-in)."
+        )
+        finding, used = _run_map_thread(llm_map, tools, seed)
+        finding["thread"] = name
+        findings.append(finding)
+        all_used += used
+        print(f"  → map[{name}]: {len(used)} tool call(s) | {str(finding.get('finding',''))[:80]}")
+
+    # REDUCE — fold the short findings (a few hundred tokens total) into the structured output.
+    digest = "\n".join(
+        f"- [{f.get('thread')}] {f.get('finding','')} (signal: {f.get('signal','')})" for f in findings)
+    reduce_prompt = (
+        f"{context}\nRESEARCH FINDINGS (from focused tool-using passes):\n{digest}\n\n"
+        f"Synthesize a DeepAnalysisOutput: `findings` (the concrete points, noting the company), a "
+        f"short `summary` of the cross-company insights, `is_sector_wide`, `catalyst_assessment` "
+        f"(new vs priced-in), `analog_takeaway`, and an ADVISORY `conviction_adjustment` "
+        f"(-0.2..+0.2) that nudges synthesis but NEVER changes the shift label."
+    )
     try:
-        data = _invoke_structured(llm, DeepAnalysisOutput, messages).model_dump()
+        data = _invoke_structured(llm_reduce, DeepAnalysisOutput, reduce_prompt).model_dump()
     except Exception as e:
-        print(f"  ⚠ deep_analysis finalize failed: {e}")
+        print(f"  ⚠ deep_analysis reduce failed: {e}")
         data = DeepAnalysisOutput().model_dump()
-    # Trust the loop's record of what ACTUALLY ran, not the model's self-report — it sometimes
-    # declines to call tools and hallucinates tool names. If nothing actually ran, the
-    # enrichment is evidence-free, so zero the advisory nudge: a no-investigation guess must
-    # never sway a trade (observed on GOOGL: 0 findings, fabricated tools_used, baseless +0.05).
-    data["tools_used"] = sorted(set(tools_used))
-    if not tools_used:
+
+    # Honest tools_used = what ACTUALLY ran across threads. If nothing ran, the enrichment is
+    # evidence-free → zero the advisory nudge so a no-investigation guess can't sway a trade.
+    data["tools_used"] = sorted(set(all_used))
+    if not all_used:
         data["conviction_adjustment"] = 0.0
-        data["note"] = "model finalized without calling tools — enrichment skipped"
-        print("  ⚠ no tools were actually called — advisory nudge zeroed (enrichment skipped)")
+        data["note"] = "no tools were called across map threads — enrichment skipped"
+        print("  ⚠ no tools ran across threads — advisory nudge zeroed (enrichment skipped)")
+
     state["enriched_analysis"] = data
     _msg(state, "deep_analysis",
          f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
          {"enriched": data})
     print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory) | "
-          f"sector_wide={data.get('is_sector_wide')} | catalyst: {str(data.get('catalyst_assessment',''))[:90]}")
-    print(f"    analog: {str(data.get('analog_takeaway',''))[:90]} | "
-          f"findings={len(data.get('findings') or [])} | tools_used={data.get('tools_used')}")
+          f"sector_wide={data.get('is_sector_wide')} | findings={len(data.get('findings') or [])}")
     print(f"    summary: {str(data.get('summary',''))[:140]}")
     return state
 

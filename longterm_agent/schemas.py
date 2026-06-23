@@ -83,6 +83,12 @@ class LongTermSignal(BaseModel):
 
 
 # --- deep_analysis (Phase 7A): advisory enrichment, never edits the deterministic shift ---
+class DeepAnalysisFinding(BaseModel):
+    """One focused map-thread result (isolated-context research) — the MAP step output."""
+    finding: str = Field("", description="1-3 sentence evidence-tagged finding")
+    signal: str = Field("", description="short label: sector-wide/idiosyncratic/confirms/contradicts/novel/priced-in")
+
+
 class DeepAnalysisOutput(BaseModel):
     findings: List[str] = Field(default_factory=list, description="Grounded, evidence-tagged findings")
     is_sector_wide: Optional[bool] = Field(None, description="True=sector-wide, False=idiosyncratic")

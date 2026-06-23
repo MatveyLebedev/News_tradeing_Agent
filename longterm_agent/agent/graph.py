@@ -48,7 +48,7 @@ def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager
     g.add_node("similar_shift_analysis",
                lambda s: similar_shift_analysis_node(s, db_manager, config))
     g.add_node("deep_analysis",
-               lambda s: deep_analysis_node(s, llm_reduce, db_manager, neo4j_manager, config))
+               lambda s: deep_analysis_node(s, llm_map, llm_reduce, db_manager, neo4j_manager, config))
     g.add_node("synthesis",
                lambda s: synthesis_node(s, llm_reduce, config))
     g.add_node("reflection",
