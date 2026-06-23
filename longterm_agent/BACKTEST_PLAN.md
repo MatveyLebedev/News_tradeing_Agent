@@ -146,9 +146,23 @@ Phased by leverage. Each phase has a deliverable and an acceptance bar. B0–B1 
   fires); 8 metrics unit tests; **64 tests pass**.
 
 ### B2 — Data depth *(the real unlock; larger)*
-- **News archive import** — the gating dependency for pre-2026-02 backtesting. Evaluate sources
-  (GDELT/known RSS archives/paid archive); load into `news` with correct `published`; re-embed.
-  Until this lands, **historical backtest depth is capped at ~8 cohorts**.
+- **News archive import** — the gating dependency for pre-2026-02 backtesting. Until this lands,
+  **historical backtest depth is capped at ~8 cohorts**.
+  - ✅ *Source-evaluation spike done* (`news_archive_spike.py`): GDELT DOC 2.0 (free, no key,
+    browser-UA + ≥7s pacing required) vs the live `news` feed. **Verdict: depth-yes, parity-no.**
+    - *Depth:* GDELT supplies ~140–250 on-topic articles/quarter/ticker for Sep–Dec 2025 where our
+      table has **0** — the pre-feed gap is fillable.
+    - *Parity (the catch):* GDELT's mix is **CNBC-heavy** (e.g. NVDA cnbc 234 : bloomberg 16) while
+      the live feed is **Bloomberg-dominant** (~23k bloomberg : ~3k cnbc) — the source
+      distributions are essentially **inverted**, creating a seam at the 2026-02 boundary. URL
+      overlap with our RSS in a shared window is low (AAPL 23%, JPM/TSLA 6–7%): GDELT samples a
+      *different* stream. And GDELT returns url+title+date only (no summary/full_text); Bloomberg
+      is paywalled, so full-text backfill mostly fails → title-only embeddings.
+  - *Implication:* a naive GDELT backfill unlocks depth but biases backtest-vs-live comparisons
+    (source-mix shift). Sound options: (a) backfill but **tag `source='gdelt'`** + flag a
+    source-era caveat in the B1 report (and prefer fetchable CNBC/MarketWatch full text); or
+    (b) a **paid archive** (Event Registry / NewsAPI.ai — full text + better Bloomberg coverage),
+    which is the news analog of the deferred FMP/Sharadar upgrade. Decision pending.
 - **Fundamentals**:
   - ✅ *Cheap partial fix — DONE* (`fundamentals_tool.valuation_pit`): reconstruct **trailing
     PE / P/B / P/S** at any `as_of` from EDGAR (as-filed TTM) × the daily close. TTM dollar
