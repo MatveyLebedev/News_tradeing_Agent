@@ -76,6 +76,28 @@ FETCH_FUNDAMENTALS = os.getenv("FETCH_FUNDAMENTALS", "false").lower() == "true"
 FUNDAMENTALS_FETCH_WEEKDAY = os.getenv("FUNDAMENTALS_FETCH_WEEKDAY", "saturday").lower()
 FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, off-market
 
+# Graph maintenance (Neo4j story lifecycle + pgvector retention)
+# Without these, the news->graph fan-out grows unbounded: stale Stories are never
+# closed, duplicate Stories never merged, and graph_event_embeddings has no TTL.
+# Runs off-market on a daily/weekly cadence (mirrors the fundamentals schedule).
+GRAPH_MAINTENANCE_ENABLED = os.getenv("GRAPH_MAINTENANCE_ENABLED", "true").lower() == "true"
+GRAPH_CLEANUP_TIME = os.getenv("GRAPH_CLEANUP_TIME", "04:00")          # daily, ET (close stale + purge)
+GRAPH_MERGE_WEEKDAY = os.getenv("GRAPH_MERGE_WEEKDAY", "sunday").lower()  # weekly dedup merge
+GRAPH_MERGE_TIME = os.getenv("GRAPH_MERGE_TIME", "04:30")               # ET
+# graph_event_embeddings retention in days (0 = keep all, disables the purge)
+EVENT_EMBEDDING_RETENTION_DAYS = int(os.getenv("EVENT_EMBEDDING_RETENTION_DAYS", "365"))
+
+# Startup DB maintenance — one-time disk-reclaim runbook applied at boot (drop
+# legacy JSONB embedding columns + GIN indexes, drop redundant price indexes,
+# tune autovacuum, reclaim heap). The pgvector migration is already complete, so
+# this is OFF by default. Set DB_MAINTENANCE_ON_START=true to run the (idempotent)
+# cleanup once more. See disk_cleanup_runbook.sql for the manual form.
+DB_MAINTENANCE_ON_START = os.getenv("DB_MAINTENANCE_ON_START", "false").lower() == "true"
+# VACUUM FULL holds a brief ACCESS EXCLUSIVE lock on `news` and needs ~1x free
+# disk. It runs automatically the first time legacy columns are dropped; set this
+# true to force it on a later boot.
+DB_VACUUM_FULL_ON_START = os.getenv("DB_VACUUM_FULL_ON_START", "false").lower() == "true"
+
 # Price fetching configuration
 FETCH_PRICES = True  # Enable/disable price fetching
 PRICE_FETCH_PERIOD = '1d'  # Period for price data: '1d', '5d', '1mo'

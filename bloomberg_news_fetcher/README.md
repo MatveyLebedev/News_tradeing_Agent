@@ -17,19 +17,24 @@ Automated Bloomberg technology news fetcher that runs every 5 minutes, fetches a
 
 ## Database Setup
 
-**For new installation:**
+**For a new installation** — this is the only script needed; it creates the
+`news` table *and* the pgvector `embedding` column + HNSW index:
 
 ```bash
-psql -h YOUR_DB_HOST -U admin -d trade_agent -f create_table.sql
+psql -h <db-host> -U <user> -d trade_agent -f create_table.sql
 ```
 
-**If upgrading from old `bloomberg_news` table:**
+**Only when upgrading an older DB** that stored embeddings as JSONB
+(`title_summary_vector`) — backfill into the pgvector column (safe no-op on a
+fresh DB):
 
 ```bash
-psql -h YOUR_DB_HOST -U admin -d trade_agent -f migrate_table.sql
+psql -h <db-host> -U <user> -d trade_agent -f migrate_embedding_to_target_column.sql
 ```
 
-Or connect manually and run the SQL in `create_table.sql` or `migrate_table.sql`.
+Also run the other `create_*.sql` scripts for the log, price, and fundamentals
+tables. Legacy JSONB columns are dropped automatically by `db_maintenance.py` at
+startup (see `disk_cleanup_runbook.sql`).
 
 ## Configuration
 
@@ -138,14 +143,14 @@ The `news` table contains:
 - `auto_news_fetcher.py` - Scheduler and CLI interface
 - `embeddings.py` - Vector embedding generation using Vertex AI
 - `search_similar_news.py` - Semantic similarity search
-- `logger.py` - Database logging with 5000 record limit
+- `logger.py` - Database logging, capped at `LOG_MAX_RECORDS` rows (default 5000)
 - `view_logs.py` - Script to view and analyze logs
 - `db_report.py` - Script to generate database report
+- `db_maintenance.py` - Idempotent startup DB maintenance (see `disk_cleanup_runbook.sql`)
 - `Dockerfile.news` - Container definition
 - `create_table.sql` - Database schema for news articles
-- `add_vector_columns.sql` - Add vector columns to existing table
+- `migrate_embedding_to_target_column.sql` - Add pgvector `embedding` column + HNSW index
 - `create_log_table.sql` - Database schema for logs
-- `migrate_table.sql` - Migration script from old schema
 
 ## Logging
 

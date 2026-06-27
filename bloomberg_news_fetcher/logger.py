@@ -1,15 +1,20 @@
 import logging
+import os
 import psycopg2
 from datetime import datetime
 import json
 from config import DB_CONFIG
 
+# Hard cap on rows kept in news_parser_log. Bounds DB-side log growth so logging
+# can never consume unbounded disk. Override via LOG_MAX_RECORDS env var.
+LOG_MAX_RECORDS = int(os.getenv("LOG_MAX_RECORDS", "5000"))
+
 
 class DatabaseLogger:
-    """Logger that writes to news_parser_log table with 5000 record limit"""
-    
+    """Logger that writes to news_parser_log table, capped at LOG_MAX_RECORDS rows."""
+
     def __init__(self):
-        self.max_records = 5000
+        self.max_records = LOG_MAX_RECORDS
     
     def _get_connection(self):
         """Get database connection"""

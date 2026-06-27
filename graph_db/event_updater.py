@@ -851,6 +851,38 @@ def close_stale_stories(neo4j_mgr: Neo4jManager | None = None, pg_conn=None):
         logger.info("Closed %d stale stories", len(keys))
 
 
+def purge_old_event_embeddings(retention_days: int = 365, pg_conn=None) -> int:
+    """
+    Delete event embeddings older than `retention_days` to bound graph_event_embeddings
+    growth (≈6 KB/row, no TTL otherwise — the dominant ongoing-disk line item).
+    retention_days <= 0 disables the purge. Intended to run daily alongside
+    close_stale_stories(). Returns the number of rows deleted.
+    """
+    if retention_days <= 0:
+        return 0
+    if pg_conn is None:
+        pg_conn = _get_pg_conn()
+    try:
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM graph_event_embeddings "
+                "WHERE event_date < (CURRENT_DATE - %s::int)",
+                (retention_days,),
+            )
+            deleted = cur.rowcount
+        pg_conn.commit()
+        if deleted:
+            logger.info(
+                "purge_old_event_embeddings: deleted %d rows older than %d days",
+                deleted, retention_days,
+            )
+        return deleted
+    except Exception as exc:
+        logger.warning("purge_old_event_embeddings failed: %s", exc)
+        pg_conn.rollback()
+        return 0
+
+
 # ── Story consolidation (merge duplicates) ────────────────────────────────────
 
 def _llm_confirm_story_merges(

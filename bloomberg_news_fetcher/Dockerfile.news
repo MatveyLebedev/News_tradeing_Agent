@@ -24,6 +24,7 @@ COPY model_config.py .
 COPY bloomberg_news_fetcher/config.py .
 COPY bloomberg_news_fetcher/logger.py .
 COPY bloomberg_news_fetcher/embeddings.py .
+COPY bloomberg_news_fetcher/db_maintenance.py .
 COPY bloomberg_news_fetcher/news_fetcher.py .
 COPY bloomberg_news_fetcher/price_fetcher.py .
 COPY bloomberg_news_fetcher/auto_news_fetcher.py .

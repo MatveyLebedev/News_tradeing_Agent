@@ -4,6 +4,22 @@ Automated daily fetcher for 1-minute stock price data. Runs at 10 PM ET (6 hours
 
 ## Remote Access & Deployment
 
+### 0. Disk & Log Safety — do this FIRST on any new/rebuilt server
+
+Docker's default `json-file` log driver has **no size limit**, and Postgres/Neo4j
+run outside compose, so a single uncapped container log once grew to 18 GB and
+filled the disk. Before deploying, install the global log cap:
+
+```bash
+sudo cp deploy/daemon.json /etc/docker/daemon.json   # caps EVERY container's logs
+sudo systemctl restart docker
+docker compose up -d --force-recreate                # recreate so the cap applies
+```
+
+Full procedure, Postgres logging config, monitoring cron, and emergency recovery:
+**[deploy/DISK_SAFETY.md](deploy/DISK_SAFETY.md)**. Every `docker run` below already
+passes `--log-opt max-size`; keep it on any container you add.
+
 ### 1. Login to Remote Server
 To access your remote server via SSH:
 ```bash

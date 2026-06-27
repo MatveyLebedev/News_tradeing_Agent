@@ -112,12 +112,11 @@ def create_ticker_table(ticker):
             volume BIGINT,
             fetch_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-        
-        CREATE INDEX IF NOT EXISTS idx_{table_name}_timestamp 
-            ON {table_name}(timestamp DESC);
-        CREATE INDEX IF NOT EXISTS idx_{table_name}_fetch_time 
-            ON {table_name}(fetch_time DESC);
-            
+
+        -- No extra timestamp index: the UNIQUE(timestamp) constraint above already
+        -- creates a btree that serves range/ORDER BY queries. A separate
+        -- idx_..._timestamp was redundant, and idx_..._fetch_time was never queried
+        -- (fetch_time is insert-only) — both dropped to cut index disk + insert cost.
         COMMENT ON TABLE {table_name} IS '1-minute historical price data for {ticker}';
         """
         

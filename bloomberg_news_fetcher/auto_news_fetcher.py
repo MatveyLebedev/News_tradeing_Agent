@@ -9,7 +9,17 @@ from config import BLOOMBERG_CATEGORIES, ENABLE_EXTERNAL_RSS
 from price_fetcher import fetch_all_tickers, TOP_50_TICKERS
 from config import FETCH_PRICES, PRICE_FETCH_PERIOD, VERBOSE, FETCH_FULL_TEXT
 from config import FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME
-from graph_db import update_price_movements
+from config import (
+    GRAPH_MAINTENANCE_ENABLED, GRAPH_CLEANUP_TIME,
+    GRAPH_MERGE_WEEKDAY, GRAPH_MERGE_TIME, EVENT_EMBEDDING_RETENTION_DAYS,
+)
+from graph_db import (
+    update_price_movements,
+    close_stale_stories,
+    merge_duplicate_stories,
+    purge_old_event_embeddings,
+)
+from db_maintenance import run_startup_db_maintenance
 
 # US Eastern Time zone
 ET_TIMEZONE = pytz.timezone('America/New_York')
@@ -93,6 +103,44 @@ def scheduled_fundamentals_fetch(verbose=True):
         print(f"❌ Fundamentals fetch failed: {e}")
 
 
+def scheduled_graph_cleanup(verbose=True):
+    """Daily graph maintenance: close stale Stories + purge old event embeddings.
+
+    Bounds the two main ongoing-disk drivers from the news->graph fan-out:
+    unbounded Neo4j Story growth and the no-TTL graph_event_embeddings table.
+    """
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"DAILY GRAPH CLEANUP - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    try:
+        close_stale_stories()
+        if verbose:
+            print("✓ Closed stale stories")
+    except Exception as e:
+        print(f"❌ close_stale_stories failed: {e}")
+    try:
+        deleted = purge_old_event_embeddings(EVENT_EMBEDDING_RETENTION_DAYS)
+        if verbose:
+            print(f"✓ Purged {deleted} event embeddings older than {EVENT_EMBEDDING_RETENTION_DAYS}d")
+    except Exception as e:
+        print(f"❌ purge_old_event_embeddings failed: {e}")
+
+
+def scheduled_graph_merge(verbose=True):
+    """Weekly graph maintenance: merge near-duplicate active Stories."""
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"WEEKLY GRAPH MERGE - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    try:
+        merge_duplicate_stories()
+        if verbose:
+            print("✓ Merged duplicate stories")
+    except Exception as e:
+        print(f"❌ merge_duplicate_stories failed: {e}")
+
+
 def scheduled_fetch(verbose=True):
     """
     Fetch news and prices, save to database
@@ -157,9 +205,22 @@ def run_scheduler(verbose=True):
         except Exception as e:
             print(f"⚠️  Could not schedule fundamentals fetch: {e}")
 
+    # Graph maintenance (off-market): daily close-stale + embedding purge, weekly dedup merge.
+    # These bound the news->graph fan-out that otherwise grows unbounded.
+    if GRAPH_MAINTENANCE_ENABLED:
+        try:
+            schedule.every().day.at(GRAPH_CLEANUP_TIME).do(lambda: scheduled_graph_cleanup(verbose=verbose))
+            merge_job = getattr(schedule.every(), GRAPH_MERGE_WEEKDAY)
+            merge_job.at(GRAPH_MERGE_TIME).do(lambda: scheduled_graph_merge(verbose=verbose))
+            print(f"✓ Graph maintenance scheduled: daily {GRAPH_CLEANUP_TIME} (close+purge), "
+                  f"{GRAPH_MERGE_WEEKDAY} {GRAPH_MERGE_TIME} (merge)")
+        except Exception as e:
+            print(f"⚠️  Could not schedule graph maintenance: {e}")
+
     et_now = datetime.now(ET_TIMEZONE)
 
     _init_graph_tables()
+    run_startup_db_maintenance(verbose=verbose)
     _test_embedding_api()
 
     print("=" * 80)

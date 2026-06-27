@@ -4,6 +4,7 @@ Uses OpenAI embeddings via Open Router
 """
 import os
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 from openai import OpenAI
@@ -42,20 +43,36 @@ class EmbeddingGenerator:
         self._client = _get_client()
         print(f"Initialized embedding model: {model_name} ({output_dimensionality} dims)")
 
+    def _embed_with_retry(self, inputs: List[str], max_retries: int = 4):
+        """Call the embeddings endpoint, retrying transient failures.
+
+        OpenRouter's embedding endpoint intermittently returns an empty payload
+        ("No embedding data received"). Without retries those articles silently
+        lose their embedding, which is the main source of NULL-embedding rows.
+        """
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._client.embeddings.create(
+                    input=inputs,
+                    model=self.model_name,
+                    dimensions=self.output_dimensionality,
+                )
+                if resp.data:
+                    return resp
+                last_err = RuntimeError("No embedding data received")
+            except Exception as e:
+                last_err = e
+            if attempt < max_retries:
+                time.sleep(min(2 ** (attempt - 1), 4))  # 1s, 2s, 4s, 4s
+        print(f"Error generating embedding after {max_retries} attempts: {last_err}")
+        raise RuntimeError(str(last_err)) from last_err
+
     def generate_embedding(self, text: str) -> Optional[List[float]]:
         if not text or text.strip() == '' or text == 'N/A':
             return None
-        try:
-            text = text[:20000]
-            response = self._client.embeddings.create(
-                input=[text],
-                model=self.model_name,
-                dimensions=self.output_dimensionality,
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            print(f"Error generating embedding: {e}")
-            raise RuntimeError(str(e)) from e
+        resp = self._embed_with_retry([text[:20000]])
+        return resp.data[0].embedding
 
     def generate_embeddings_batch(self, texts: List[str], batch_size: int = 5) -> List[Optional[List[float]]]:
         results = []
@@ -65,17 +82,9 @@ class EmbeddingGenerator:
             if not valid:
                 results.extend([None] * len(batch))
                 continue
-            try:
-                response = self._client.embeddings.create(
-                    input=[t for _, t in valid],
-                    model=self.model_name,
-                    dimensions=self.output_dimensionality,
-                )
-                emb_map = {idx: response.data[i].embedding for i, (idx, _) in enumerate(valid)}
-                results.extend(emb_map.get(j) for j in range(len(batch)))
-            except Exception as e:
-                print(f"Error in batch embedding: {e}")
-                raise RuntimeError(str(e)) from e
+            response = self._embed_with_retry([t for _, t in valid])
+            emb_map = {idx: response.data[i].embedding for i, (idx, _) in enumerate(valid)}
+            results.extend(emb_map.get(j) for j in range(len(batch)))
         return results
 
     def embed_title_summary(self, title: str, summary: str) -> Optional[List[float]]:
