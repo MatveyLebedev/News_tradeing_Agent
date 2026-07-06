@@ -261,3 +261,28 @@ multiple-testing, and calibration. The **one remaining unlock is data depth** �
 backfill (the spike found GDELT gives depth but not source parity, so it needs a paid archive for
 a clean historical sample). Until that lands, **forward paper-testing (B4) is the honest
 validation path**, and it's already accumulating from today.
+
+---
+
+## 8. First execution (2026-07-01) — what running it revealed
+
+The harness was **run end-to-end for the first time**: `backtest_id=wf_2026q2_v0.1`, 72 cohorts
+(8 tickers × 9 weekly dates 2026-04-24…06-19), horizons 14/28/84d. Full write-up in
+**[VALIDATION_REPORT.md](VALIDATION_REPORT.md)**. Confirmed: the machinery works (OOS check passes,
+FDR/calibration gates fire, min-n gate flags ESTIMATE, reproducible). The result is **not a verdict**
+(single bull regime, n<30, edge concentrated in AMD/MSFT, conviction non-monotonic).
+
+Running it also surfaced a **new blocker not in the plan above — a stalled data pipeline** (a distinct
+issue from B2 data *depth*):
+
+- **Stale outcome prices.** `stock_prices_daily` froze at 2026-06-15, so any trade whose horizon ends
+  after 06-15 was graded over a *truncated* window → **contaminated excess** for later cohorts. Grading
+  cannot advance past the latest price date.
+- **Stale fundamentals.** The yfinance forward snapshot exists only for 06-15/06-22, so 8 of 9 cohort
+  dates ran **EDGAR-only** (no `expectation_gap`/forwardPE) — backtest fundamentals ≠ live.
+- **Root cause:** the weekly `scheduled_fundamentals_fetch` (daily-price top-up + EDGAR + yfinance) is
+  gated by `FETCH_FUNDAMENTALS`, which defaults **false** and is unset; `SEC_EDGAR_USER_AGENT` is also
+  unset. So neither daily prices nor fundamentals refresh.
+
+**Prerequisite for any trustworthy re-run:** restore the pipeline (enable `FETCH_FUNDAMENTALS`, set
+`SEC_EDGAR_USER_AGENT`, one-off catch-up of prices + fundamentals to today), then re-run the sweep.

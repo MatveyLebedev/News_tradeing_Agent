@@ -127,14 +127,19 @@ LT_MAX_REFLECTION=0 python -m longterm_agent.full_signal_backtest \
 
 ## 6. Testing & observability
 
-- **Tests** (`tests/`, run `pytest longterm_agent/tests/` — 35 passing): EDGAR normalization
+- **Tests** (`tests/`, run `pytest longterm_agent/tests/` — **74 passing**): EDGAR normalization
   (PIT, restatement-ignore, dedup), corpus word-boundary regex + bucketing, the
   `_has_usable_fundamentals` guard, shift metrics (synthetic series), risk-gate guard,
-  shift-library leakage/version filters, grade math, the retry/fallback helpers. Pure-logic
-  tests need no DB; integration tests skip cleanly if the DB is unreachable.
-- **LangSmith** — `--trace` (or `LongTermAgentConfig.enable_tracing()`) sends full LangGraph
-  traces to project `longterm-trading-agent`. Note: tracing **exports prompts** (news,
-  financials, model reasoning) to the LangSmith cloud.
+  shift-library leakage/version filters, grade math, walk-forward stats helpers
+  (`is_monotonic`, bootstrap CI/p-value, Benjamini–Hochberg), and the retry/fallback helpers.
+  Pure-logic tests need no DB; integration tests skip cleanly if the DB is unreachable.
+- **First executed walk-forward** (2026-07-01, `backtest_id=wf_2026q2_v0.1`): 72 cohorts
+  (8 tickers × 9 weekly dates) run → graded → reported end-to-end. Full write-up, metrics, and
+  caveats in **[VALIDATION_REPORT.md](VALIDATION_REPORT.md)** — machinery ✅, strategy unproven.
+- **LangSmith** — tracing is **on by default** in `run_longterm_agent` (`--no-trace` to disable);
+  `LongTermAgentConfig.enable_tracing()` sends full LangGraph traces to project
+  `longterm-trading-agent`. Note: tracing **exports prompts** (news, financials, model reasoning)
+  to the LangSmith cloud. Backtests stay **untraced** (reproducibility).
 
 ---
 
@@ -142,10 +147,16 @@ LT_MAX_REFLECTION=0 python -m longterm_agent.full_signal_backtest \
 
 - ✅ Built & verified: the full pipeline, data layer, tests, tracing, and **Phase 6 ops** —
   weekly scheduler, Telegram alerts + read-only stats bot, Docker/compose ([DEPLOY.md](DEPLOY.md)).
-- 🟡 Smoke-tested only: the detection backtest and full-signal backtest **ran** but the
-  results are **n=17 single-regime noise** — they validate the *machinery and behavior*,
-  not the *strategy*. A real verdict needs forward accumulation across regimes. The `/trades`
-  win-rate only becomes meaningful after a quarter of graded forward cohorts.
+- 🟡 Smoke-tested only: the walk-forward harness has now **run end-to-end** (72 cohorts,
+  `wf_2026q2_v0.1`, 2026-07-01) — machinery ✅ (reproducible, OOS-clean, FDR/calibration gates
+  fire), but the **numbers are ESTIMATE**: n<30, a single bull regime, edge concentrated in a
+  few names (AMD/MSFT), conviction uncalibrated, and outcome grading **contaminated by stale
+  prices**. Not a strategy verdict — that needs forward accumulation across regimes.
+  See [VALIDATION_REPORT.md](VALIDATION_REPORT.md).
+- ⚠️ Data pipeline (2026-07-01): only the news parser is live; **daily prices froze at 2026-06-15**
+  and the **fundamentals/daily-price weekly job is disabled** (`FETCH_FUNDAMENTALS=false`,
+  `SEC_EDGAR_USER_AGENT` unset). So backtests can't be graded past 06-15 and 8/9 cohorts ran
+  EDGAR-only. **Restore the pipeline before trusting any new backtest** (VALIDATION_REPORT §6/§8).
 - ⏳ Deferred: full-universe replay, conviction calibration, the `deep_analysis` tool node
   (7A), and the Deep Agents harness (7B).
 
@@ -192,8 +203,8 @@ longterm_agent/
 ├── Dockerfile                 image for scheduler + bot
 ├── requirements.txt           ops deps
 ├── create_*.sql               shift_library / bucket_cache / results / oplog / llm_cache DDL
-├── README.md / SCHEMAS.md / DEPLOY.md / DEEP_ANALYSIS_PLAN.md / BACKTEST_PLAN.md
-└── tests/                     pytest suite (46)
+├── README / SCHEMAS / DEPLOY / DEEP_ANALYSIS_PLAN / BACKTEST_PLAN / WALK_FORWARD_PROTOCOL / VALIDATION_REPORT .md
+└── tests/                     pytest suite (74)
 ```
 Data fetchers live in `../bloomberg_news_fetcher/` (`edgar_fetcher.py`,
 `fundamentals_fetcher.py`, `daily_price_fetcher.py`, and their `create_*.sql`).

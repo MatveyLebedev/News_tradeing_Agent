@@ -26,8 +26,9 @@ def main():
     ap.add_argument("--lookback", type=int, default=None)
     ap.add_argument("--json", action="store_true", help="Print the background profile as JSON")
     ap.add_argument("--no-persist", action="store_true", help="Skip writing to the results/shift tables")
-    ap.add_argument("--trace", action="store_true",
-                    help="Enable LangSmith tracing (exports prompts to LangSmith cloud)")
+    ap.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
+                    help="LangSmith tracing (default: ON; exports prompts to the LangSmith cloud). "
+                         "Use --no-trace to disable, e.g. for offline/reproducible runs.")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
