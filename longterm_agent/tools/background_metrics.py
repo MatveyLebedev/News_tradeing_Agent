@@ -66,6 +66,7 @@ def compute_shift_metrics(
     ticker: str,
     z_threshold: float = 1.0,
     min_abs_delta: float = 0.2,
+    attention_spike_ratio: float = 2.0,
     neo4j_manager: Any = None,
 ) -> Dict[str, Any]:
     # align summaries with raw buckets by index
@@ -144,7 +145,7 @@ def compute_shift_metrics(
     # alone but isn't a tradeable shift (the steady-negative case). Turnover is reported as
     # supporting context but does NOT auto-trigger the flag (even tokenized it's noisy).
     sentiment_break = (abs(z) >= z_threshold) and (abs(delta) >= min_abs_delta)
-    attention_break = bool(spike_ratio) and spike_ratio >= 2.0
+    attention_break = bool(spike_ratio) and spike_ratio >= attention_spike_ratio
     shift_flag = sentiment_break or attention_break
 
     # Continuous shift strength (0-1), deterministic — synthesis weights this instead of

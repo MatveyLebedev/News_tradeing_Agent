@@ -30,14 +30,14 @@ def main():
     cur.execute("""SELECT direction, fwd_return_4w, benchmark_return_4w, magnitude_z, shift_window_days
                    FROM shift_library
                    WHERE agent_version=%s AND outcome_filled_at IS NOT NULL AND fwd_return_4w IS NOT NULL""",
-                [cfg.AGENT_VERSION])
+                [cfg.DETECTION_VERSION])
     rows = cur.fetchall()
-    cur.execute("SELECT count(*) FROM shift_library WHERE agent_version=%s", [cfg.AGENT_VERSION])
+    cur.execute("SELECT count(*) FROM shift_library WHERE agent_version=%s", [cfg.DETECTION_VERSION])
     total = cur.fetchone()[0]
     conn.close()
 
     print("=" * 70)
-    print(f"SHIFT BACKTEST (detection-only)  agent_version={cfg.AGENT_VERSION}")
+    print(f"SHIFT BACKTEST (detection-only)  agent_version={cfg.DETECTION_VERSION}")
     print("=" * 70)
     print(f"shift_library rows: {total} total, {len(rows)} graded (4w matured)")
     if not rows:

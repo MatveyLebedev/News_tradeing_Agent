@@ -58,6 +58,25 @@ def _fallback_profile(summaries, sent_timeline):
     }
 
 
+def _analog_desc(analogs: Dict[str, Any]) -> str:
+    """Render the analog base rate HONESTLY for prompts (Phase 3): below MIN_ANALOGS the
+    rate is suppressed with an explicit do-not-weigh instruction (an LLM anchors on any
+    number it sees), and above it `share_positive` carries its Wilson 95% CI so small-n
+    uncertainty is visible instead of a false point estimate."""
+    analogs = analogs or {}
+    n = analogs.get("n_analogs") or 0
+    if not n:
+        return f"no graded analogs yet ({analogs.get('fundamentals_matched_note') or 'cold start'})"
+    if analogs.get("insufficient"):
+        note = analogs.get("fundamentals_matched_note") or f"insufficient analogs (n={n})"
+        return f"{note}. DO NOT weigh analog base rates in this decision."
+    ci = analogs.get("share_positive_ci")
+    ci_txt = f" (95% CI {ci[0]:.0%}–{ci[1]:.0%})" if ci else ""
+    return (f"{n} past analogs, median 4w return {analogs.get('median_fwd_return_4w')}, "
+            f"median excess vs SPY {analogs.get('median_excess_4w')}, "
+            f"share positive {analogs.get('share_positive')}{ci_txt}")
+
+
 def _has_usable_fundamentals(fund: Dict[str, Any]) -> bool:
     """True only if income-side fundamentals are actually present (not just balance-sheet rows).
 
@@ -246,6 +265,8 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
         bucket_days=config.BUCKET_DAYS,
         ticker=state["ticker"],
         z_threshold=config.SENTIMENT_SHIFT_Z_THRESHOLD,
+        min_abs_delta=config.MIN_ABS_DELTA,
+        attention_spike_ratio=config.ATTENTION_SPIKE_RATIO,
         neo4j_manager=neo4j_manager,
     )
     state["background_metrics"] = metrics
@@ -264,6 +285,9 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
 
     catalysts, reasoning, inflection = [], "", metrics["inflection_week"]
     if has_shifted and characterize:
+        # Consume reviewer critique on a reflection loop-back, then clear it (Phase 3).
+        critique = state.pop("reflection_advice", "") if state.get("loop_to") == "shift_detection" else ""
+        critique_line = f"\nREVIEWER CRITIQUE TO ADDRESS: {critique}\n" if critique else ""
         prompt = (
             f"The news background for {state['ticker']} HAS shifted {direction} "
             f"(z={sm['z']}, score={metrics['shift_score']}). Do NOT re-decide whether it shifted — "
@@ -271,7 +295,8 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
             f"Background summary: {profile.get('summary','')}\n"
             f"Per-week sentiment (old→new): {profile.get('sentiment_timeline', [])}\n"
             f"Candidate inflection week: {metrics['inflection_week']}\n"
-            f"New stories in recent window: {[s.get('label') for s in metrics['new_stories']][:5]}\n\n"
+            f"New stories in recent window: {[s.get('label') for s in metrics['new_stories']][:5]}\n"
+            f"{critique_line}\n"
             f"Set has_shifted=true, direction={direction}. Give the inflection_date, list candidate "
             f"catalysts grounded in the summary/new-stories, and explain the shift concisely."
         )
@@ -332,8 +357,12 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
     shift_desc = (f"{shift.get('direction')} shift (z={shift.get('magnitude_z')})"
                   if shift.get("has_shifted") else "no significant news shift")
     margins = fund["margin_series"]
+    # Consume reviewer critique on a reflection loop-back to this node, then clear it (Phase 3).
+    critique = state.pop("reflection_advice", "") if state.get("loop_to") == "fundamentals_analysis" else ""
+    critique_line = f"REVIEWER CRITIQUE TO ADDRESS: {critique}\n\n" if critique else ""
     prompt = (
         f"You judge whether {ticker}'s FUNDAMENTALS confirm, ignore, or contradict the news-background shift.\n\n"
+        f"{critique_line}"
         f"News-background shift: {shift_desc}. {shift.get('reasoning','')}\n\n"
         f"Fundamentals (as-of {fund['as_of']}, point-in-time):\n"
         f"  revenue YoY={fund['revenue_yoy']}, QoQ={fund['revenue_qoq']}\n"
@@ -379,14 +408,17 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
 
     causal = [s.get("label") for s in metrics.get("new_stories", [])][:8]
     analogs = find_similar_shifts(
-        db_manager, state["ticker"], state["as_of"], config.AGENT_VERSION,
+        db_manager, state["ticker"], state["as_of"], config.DETECTION_VERSION,
         direction=shift.get("direction"), target_z=shift.get("magnitude_z"),
-        causal_types=causal, k=6,
+        causal_types=causal, k=6, min_analogs=config.MIN_ANALOGS,
     )
     state["shift_analogs"] = analogs
     if analogs["n_analogs"]:
+        ci = analogs.get("share_positive_ci")
+        suffix = " [INSUFFICIENT — not weighed]" if analogs.get("insufficient") else (
+            f" (95% CI {ci[0]:.0%}–{ci[1]:.0%})" if ci else "")
         print(f"  → {analogs['n_analogs']} analogs | median 4w return={analogs['median_fwd_return_4w']} "
-              f"| share positive={analogs['share_positive']}")
+              f"| share positive={analogs['share_positive']}{suffix}")
     else:
         print(f"  → {analogs['fundamentals_matched_note']}")
     _msg(state, "similar_shift_analysis",
@@ -402,7 +434,7 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
 # result, so the reduce can't be starved/truncated (the Mode-3 problem) — mirrors the
 # background_profiling map-reduce. Hard boundary unchanged: writes only `enriched_analysis`,
 # never `background_shift`.
-_MAP_MAX_ITERS = 3      # keep each isolated thread context tiny
+_MAP_MAX_ITERS = 2      # tool ROUNDS per isolated thread (finalize is a separate call)
 _MAP_TRUNC = 1200       # per-result cap inside a map thread
 
 
@@ -423,9 +455,9 @@ def _run_map_thread(llm_map, tools, seed, max_iter=_MAP_MAX_ITERS, trunc=_MAP_TR
     messages = [SystemMessage(content=seed)]
     llm_tools = llm_map.bind_tools(tools)
     used: List[str] = []
-    for i in range(max_iter):
-        if i == max_iter - 1:
-            break
+    # Literal semantics (Phase 3 fix): exactly ≤ max_iter tool rounds, then the caller's
+    # separate structured finalize. The old loop broke one round early, so "3" delivered 2.
+    for _ in range(max_iter):
         resp = llm_tools.invoke(messages)
         messages.append(resp)
         calls = getattr(resp, "tool_calls", None)
@@ -480,9 +512,7 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
     except Exception:
         peers = []
     peer_line = ", ".join(peers) if peers else "(use the sector tool to find them)"
-    analog_line = (f"{analogs.get('n_analogs')} analogs, median 4w "
-                   f"{analogs.get('median_fwd_return_4w')}, share+ {analogs.get('share_positive')}"
-                   if analogs.get("n_analogs") else "cold start (no graded analogs yet)")
+    analog_line = _analog_desc(analogs)
 
     # Shared context every map thread sees — just the small deterministic labels.
     context = (
@@ -577,9 +607,7 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
 
     shift_desc = (f"{shift.get('direction')} (score={shift.get('shift_score')}, z={shift.get('magnitude_z')})"
                   if shift.get("has_shifted") else "no significant shift")
-    analog_desc = (f"{analogs.get('n_analogs')} past analogs, median 4w return "
-                   f"{analogs.get('median_fwd_return_4w')}, share positive {analogs.get('share_positive')}"
-                   if analogs.get("n_analogs") else "no graded analogs yet (cold start)")
+    analog_desc = _analog_desc(analogs)
 
     # Phase 7A: fold the deep-analysis enrichment in as ADVISORY context (it never overrides
     # the matrix or the deterministic shift — see DEEP_ANALYSIS_PLAN.md §1).
@@ -665,6 +693,11 @@ def reflection_node(state, llm, config) -> Dict[str, Any]:
 
     state["needs_refinement"] = bool(ref_d.get("needs_refinement"))
     state["loop_to"] = ref_d.get("loop_to") or "synthesis"
+    # Feed the critique into the re-run (Phase 3): without this the loop re-executes on
+    # IDENTICAL inputs — a wasted LLM call, since the deterministic shift label can't move.
+    # The targeted node injects this into its prompt and clears it. (Label stays fixed;
+    # only the LLM CHARACTERIZATION / fundamentals verdict can be refined.)
+    state["reflection_advice"] = ref_d.get("advice", "") if state["needs_refinement"] else ""
     _msg(state, "reflection", f"needs_refinement={state['needs_refinement']} loop_to={state.get('loop_to')}: "
          f"{ref_d.get('advice','')[:140]}", {"reflection": ref_d})
     print(f"  → needs_refinement={state['needs_refinement']} "
@@ -725,13 +758,13 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     if priced.get("available") and direction in ("LONG", "SHORT"):
         mv = priced["window_move_pct"]
         same_way = (direction == "LONG" and mv > 0) or (direction == "SHORT" and mv < 0)
-        if same_way and abs(mv) >= 8.0:
+        if same_way and abs(mv) >= config.PRICED_IN_MOVE_PCT:
             flags.append(f"priced-in: {mv:+.1f}% already moved {direction} over the window")
-            sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - 0.2), 2)
+            sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - config.PRICED_IN_PENALTY), 2)
 
     if earn.get("flag"):
         flags.append(f"earnings within {config.EARNINGS_RISK_DAYS}d ({earn['upcoming']}) — binary-event risk")
-        sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - 0.1), 2)
+        sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - config.EARNINGS_PENALTY), 2)
 
     if state.get("article_count", 0) < config.MIN_ARTICLES_FOR_BACKGROUND * 2:
         flags.append(f"thin coverage ({state.get('article_count')} articles)")

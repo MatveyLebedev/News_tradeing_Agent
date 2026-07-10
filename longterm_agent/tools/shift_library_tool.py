@@ -14,6 +14,7 @@ Similarity (v1, no embeddings yet): same direction, ranked by |Δ magnitude_z| +
     overlap. The pgvector embedding column is reserved for a later upgrade.
 """
 import os
+from math import sqrt
 from statistics import median
 from typing import Any, Dict
 from datetime import datetime, timedelta
@@ -22,6 +23,19 @@ import psycopg2
 from psycopg2.extras import Json
 
 HORIZON_DAYS = 28  # 4-week outcome window for the leakage cutoff / base rate
+DEFAULT_MIN_ANALOGS = 5  # below this, a base rate is noise dressed as evidence
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96):
+    """Wilson score 95% CI for a binomial proportion — honest for the tiny n here
+    (k≤6), where the naive p±... interval is nonsense. Returns (low, high) or None."""
+    if n <= 0:
+        return None
+    p = successes / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    margin = (z / denom) * sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (round(max(0.0, center - margin), 2), round(min(1.0, center + margin), 2))
 
 
 def _conn(db_manager):
@@ -109,8 +123,12 @@ def _date_or_none(s):
 
 
 def find_similar_shifts(db_manager, ticker, as_of, agent_version, direction,
-                        target_z, causal_types, k=6) -> Dict[str, Any]:
-    """Return base-rate stats over the k nearest graded analogs (leakage-safe)."""
+                        target_z, causal_types, k=6, min_analogs=DEFAULT_MIN_ANALOGS) -> Dict[str, Any]:
+    """Return base-rate stats over the k nearest graded analogs (leakage-safe).
+
+    Honesty (Phase 3): below `min_analogs` graded neighbours the base rate is set
+    `insufficient=True` (synthesis is told not to weigh it); at/above, `share_positive`
+    ships with a Wilson 95% CI so its uncertainty is explicit rather than a false point."""
     cutoff = (as_of - timedelta(days=HORIZON_DAYS)).date().isoformat()
     if not ensure_table(db_manager):
         return _empty("table unavailable")
@@ -148,17 +166,23 @@ def find_similar_shifts(db_manager, ticker, as_of, agent_version, direction,
     nearest = sorted(rows, key=dist)[:k]
     rets = [r[5] for r in nearest if r[5] is not None]
     excess = [(r[5] - (r[6] or 0.0)) for r in nearest if r[5] is not None]
+    n = len(rets)
     pos = sum(1 for x in rets if x > 0)
+    insufficient = n < min_analogs
     return {
         "n_analogs": len(nearest),
         "median_fwd_return_4w": round(median(rets), 4) if rets else None,
         "median_excess_4w": round(median(excess), 4) if excess else None,
-        "share_positive": round(pos / len(rets), 2) if rets else None,
-        "fundamentals_matched_note": "",
+        "share_positive": round(pos / n, 2) if n else None,
+        "share_positive_ci": wilson_interval(pos, n) if n else None,
+        "insufficient": insufficient,
+        "fundamentals_matched_note": (f"insufficient analogs (n={n} < {min_analogs}) — do not weigh"
+                                      if insufficient else ""),
         "nearest_cases": [f"{r[0]} {r[1]} {r[2]} ret4w={r[5]:+.2%}" for r in nearest if r[5] is not None][:5],
     }
 
 
 def _empty(note):
     return {"n_analogs": 0, "median_fwd_return_4w": None, "median_excess_4w": None,
-            "share_positive": None, "fundamentals_matched_note": note, "nearest_cases": []}
+            "share_positive": None, "share_positive_ci": None, "insufficient": True,
+            "fundamentals_matched_note": note, "nearest_cases": []}

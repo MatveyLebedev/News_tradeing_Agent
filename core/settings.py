@@ -58,10 +58,21 @@ class Settings(BaseSettings):
     neo4j_password: str = ""
 
     # --- LLM roles (OpenRouter). Same three roles as the old model_config.py ---
+    # REPRODUCIBILITY: the model id is part of the LLM-cache key and the backtest
+    # provenance stamp — changing a model invalidates cache comparability and means two
+    # runs are no longer like-for-like. Prefer PINNED, non-`-preview` ids in .env for any
+    # run whose results you intend to compare over time (`-preview` endpoints get
+    # deprecated under you). These defaults are fallbacks only; live values come from .env.
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    llm_model: str = "google/gemini-3-flash-preview"                 # main reasoning
-    graph_llm_model: str = "google/gemini-3.1-flash-lite-preview"    # graph extraction / map steps
+    # main reasoning — no non-preview alias of gemini-3-flash on OpenRouter yet
+    # (checked 2026-07-10); a generation jump (e.g. gemini-3.5-flash) would be an
+    # eval-gated model change, not a pin — revisit when Google promotes it.
+    llm_model: str = "google/gemini-3-flash-preview"
+    # graph extraction / map steps — pinned to the stable alias (was -preview).
+    # This role feeds the map step whose sentiments feed detection: set it explicitly
+    # in the live .env and treat any change as label-affecting (DETECTION_VERSION bump).
+    graph_llm_model: str = "google/gemini-3.1-flash-lite"
     embedding_model: str = "google/gemini-embedding-001"
     embedding_dimensions: int = 1536
 

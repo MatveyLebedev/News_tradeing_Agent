@@ -92,7 +92,7 @@ def main():
                     stats["no_data"] += 1
                     continue
                 if shift and shift.get("has_shifted"):
-                    write_shift_row(db, ticker, as_of, cfg.AGENT_VERSION, shift, {}, state.get("background_metrics", {}))
+                    write_shift_row(db, ticker, as_of, cfg.DETECTION_VERSION, shift, {}, state.get("background_metrics", {}))
                     stats["shifts"] += 1
                     print(f"  [{as_of.date()}] {ticker}: SHIFT {shift.get('direction')} "
                           f"(score={shift.get('shift_score')})")

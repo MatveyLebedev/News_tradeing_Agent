@@ -16,14 +16,28 @@ from model_config import (
     OPENROUTER_BASE_URL as _OPENROUTER_BASE_URL,
 )
 
-AGENT_VERSION = "0.1.0"
+# --- Versioning (Phase 3): split what used to be one AGENT_VERSION ---
+# DETECTION_VERSION gates DETECTION ARTIFACTS — the shift_library case base and the
+#   bucket_summary_cache. Bump ONLY on a change that can alter shift membership / labels
+#   (Phase 5); a bump requires re-running backfill_shift_library. Analog lookups filter on
+#   it, so a stable DETECTION_VERSION is what keeps the library from being orphaned.
+# PIPELINE_VERSION identifies the overall build for provenance/display. Advisory-only
+#   changes (reflection wiring, analog CI, deep-analysis) bump THIS and ship freely.
+# Migration: existing DB rows carry "0.1.0" in their `agent_version` column → that value
+#   IS the detection version, so AGENT_VERSION stays an alias of DETECTION_VERSION for
+#   backward compat (results identity + grading queries unchanged, no schema migration).
+DETECTION_VERSION = "0.1.0"
+PIPELINE_VERSION = "0.1.1"   # Phase 3: reflection wiring, analog CI, config-ified risk knobs
+AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 
 class LongTermAgentConfig:
     """Config for the long-term news-background + fundamentals agent."""
 
     AGENT_NAME = "longterm_agent"
-    AGENT_VERSION = AGENT_VERSION
+    DETECTION_VERSION = DETECTION_VERSION
+    PIPELINE_VERSION = PIPELINE_VERSION
+    AGENT_VERSION = AGENT_VERSION  # == DETECTION_VERSION
 
     # --- Windows (see plan §8: start at 60d, raise to 90d as news history accrues) ---
     LOOKBACK_DAYS_BACKGROUND = int(os.getenv("LT_LOOKBACK_DAYS", "60"))
@@ -37,6 +51,18 @@ class LongTermAgentConfig:
     EARNINGS_RISK_DAYS = int(os.getenv("LT_EARNINGS_RISK_DAYS", "10"))
     LONGTERM_CONFIDENCE_THRESHOLD = float(os.getenv("LT_CONF_THRESHOLD", "0.55"))
     MAX_REFLECTION_ITERATIONS = int(os.getenv("LT_MAX_REFLECTION", "1"))
+
+    # --- Risk-gate / detection knobs (Phase 3: were magic numbers in nodes/metrics).
+    # Env-overridable + stamped into provenance() so a backtest records the knobs it used.
+    # DETECTION knobs (ATTENTION_SPIKE_RATIO, MIN_ABS_DELTA) feed compute_shift_metrics —
+    # changing them alters labels, so treat a change as a detection release (bump above).
+    ATTENTION_SPIKE_RATIO = float(os.getenv("LT_ATTENTION_SPIKE_RATIO", "2.0"))
+    MIN_ABS_DELTA = float(os.getenv("LT_MIN_ABS_DELTA", "0.2"))
+    PRICED_IN_MOVE_PCT = float(os.getenv("LT_PRICED_IN_MOVE_PCT", "8.0"))
+    PRICED_IN_PENALTY = float(os.getenv("LT_PRICED_IN_PENALTY", "0.2"))
+    EARNINGS_PENALTY = float(os.getenv("LT_EARNINGS_PENALTY", "0.1"))
+    # Analog honesty (Phase 3): min graded neighbours before a base rate is trustworthy.
+    MIN_ANALOGS = int(os.getenv("LT_MIN_ANALOGS", "5"))
     # This agent's edge is detecting background SHIFTS. With no shift the matrix has no cell
     # and synthesis conviction is unstable run-to-run, so a "trade" there is not reproducible.
     # When true, no-shift signals are capped below the trade threshold (deterministic
@@ -108,14 +134,28 @@ class LongTermAgentConfig:
         except Exception:
             pass
         return {
-            "agent_version": cls.AGENT_VERSION,
+            "detection_version": cls.DETECTION_VERSION,
+            "pipeline_version": cls.PIPELINE_VERSION,
+            "agent_version": cls.AGENT_VERSION,  # == detection_version (back-compat)
             "git_revision": rev,
+            # A model change (or these knobs) shifts prompts/labels and invalidates
+            # LLM-cache comparability — stamped so two runs are only compared like-for-like.
             "model": cls.LLM_MODEL,
             "map_model": cls.MAP_MODEL,
             "temperature": cls.LLM_TEMPERATURE,
             "reflection_iters": cls.MAX_REFLECTION_ITERATIONS,
             "llm_cache": cls.LLM_CACHE,
             "lookback_days": cls.LOOKBACK_DAYS_BACKGROUND,
+            "knobs": {
+                "attention_spike_ratio": cls.ATTENTION_SPIKE_RATIO,
+                "min_abs_delta": cls.MIN_ABS_DELTA,
+                "priced_in_move_pct": cls.PRICED_IN_MOVE_PCT,
+                "priced_in_penalty": cls.PRICED_IN_PENALTY,
+                "earnings_penalty": cls.EARNINGS_PENALTY,
+                "min_analogs": cls.MIN_ANALOGS,
+                "shift_z": cls.SENTIMENT_SHIFT_Z_THRESHOLD,
+                "conf_threshold": cls.LONGTERM_CONFIDENCE_THRESHOLD,
+            },
         }
 
     @classmethod

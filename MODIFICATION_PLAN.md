@@ -270,6 +270,26 @@ Acceptance: full-pipeline run on one ticker shows (a) loop-back prompts containi
 critique, (b) analog line with CI or suppression. `PIPELINE_VERSION` bumped to 0.1.1;
 `DETECTION_VERSION` unchanged at 0.1.0 — old shift library remains valid.
 
+**Status 2026-07-10 — done:**
+- ✅ Version split with a **no-migration alias**: `AGENT_VERSION == DETECTION_VERSION`
+  (existing DB rows carry "0.1.0" = the detection identity), `PIPELINE_VERSION=0.1.1`
+  lives in provenance. Shift-library-facing code (persistence, backfill, backtest_report,
+  analog lookups) now names `DETECTION_VERSION` explicitly.
+- ✅ Reflection critique consumed: `reflection_node` → `state["reflection_advice"]`;
+  shift characterization + fundamentals prompts inject "REVIEWER CRITIQUE TO ADDRESS"
+  targeted by `loop_to` and clear it after use.
+- ✅ Analog honesty: `wilson_interval`, `min_analogs=5` (`LT_MIN_ANALOGS`), `insufficient`
+  flag; `_analog_desc` renders CI when sufficient and SUPPRESSES the numbers with an
+  explicit do-not-weigh instruction when not (LLMs anchor on any number shown).
+- ✅ Magic numbers → config + provenance `knobs{}` (priced-in %, penalties, spike ratio,
+  min_abs_delta, min_analogs; label-affecting ones flagged in README table).
+- ✅ Model pinning: map/graph role → stable `gemini-3.1-flash-lite`; main model has no
+  same-gen stable alias on OpenRouter (checked live 2026-07-10) — documented; generation
+  jumps are eval-gated changes, not pins.
+- ✅ Deep-analysis loop off-by-one fixed (literal `max_iter` tool rounds, `_MAP_MAX_ITERS=2`
+  preserves effective behavior).
+- ✅ 111 tests green (8 new in test_phase3.py), ruff clean.
+
 ---
 
 ## Phase 4 — Offline eval harness (before touching detection)

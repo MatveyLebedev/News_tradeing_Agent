@@ -81,6 +81,12 @@ All via env (`.env`). Models come from the repo-root `model_config.py` (OpenRout
 | `LT_CONF_THRESHOLD` | 0.55 | min conviction to pass the risk gate |
 | `LT_MAX_REFLECTION` | 1 | reflection loops (0 for backtests) |
 | `LT_AFFECTS_MIN_CONF` | 0.5 | Neo4j AFFECTS confidence floor |
+| `LT_MIN_ABS_DELTA` | 0.2 | min absolute sentiment move for a shift (label-affecting ⚠) |
+| `LT_ATTENTION_SPIKE_RATIO` | 2.0 | attention-spike shift trigger (label-affecting ⚠) |
+| `LT_PRICED_IN_MOVE_PCT` | 8.0 | move % that counts as already priced in |
+| `LT_PRICED_IN_PENALTY` | 0.2 | conviction cut when priced-in |
+| `LT_EARNINGS_PENALTY` | 0.1 | conviction cut near earnings |
+| `LT_MIN_ANALOGS` | 5 | below this, analog base rates are suppressed in synthesis |
 | `LT_DEEP_ANALYSIS` | (7A) | enable the deep_analysis node (off in backtest) |
 | `DB_HOST/NAME/USER/PASSWORD/PORT` | — | Postgres |
 | `OPENROUTER_API_KEY` | — | LLM |

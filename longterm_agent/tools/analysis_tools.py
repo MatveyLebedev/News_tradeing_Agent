@@ -181,9 +181,9 @@ def build_deep_analysis_tools(
             return json.dumps({"n_analogs": 0, "note": "no shift → no analog lookup"})
         causal = [x.get("label") for x in (metrics or {}).get("new_stories", [])][:8]
         res = find_similar_shifts(
-            db_manager, tk, as_of, config.AGENT_VERSION,
+            db_manager, tk, as_of, config.DETECTION_VERSION,
             direction=s.get("direction"), target_z=s.get("magnitude_z"),
-            causal_types=causal, k=6)
+            causal_types=causal, k=6, min_analogs=getattr(config, "MIN_ANALOGS", 5))
         return json.dumps(res, default=str)
 
     tools: List[Any] = [

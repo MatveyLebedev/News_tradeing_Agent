@@ -63,7 +63,8 @@ class FakeLLMNoTools:
 
 
 def _cfg(**over):
-    base = dict(DEEP_ANALYSIS_ENABLED=True, AGENT_VERSION="test",
+    base = dict(DEEP_ANALYSIS_ENABLED=True, AGENT_VERSION="test", DETECTION_VERSION="test",
+                MIN_ANALOGS=5,
                 LOOKBACK_DAYS_TECHNICAL_LT=180, LOOKBACK_DAYS_BACKGROUND=60,
                 AFFECTS_MIN_CONFIDENCE=0.5)
     base.update(over)

@@ -61,7 +61,10 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                     execution_time_seconds=EXCLUDED.execution_time_seconds,
                     run_timestamp=NOW()
             """, [
-                config.AGENT_NAME, config.AGENT_VERSION, ticker.upper(), as_of.date(),
+                # Results identity = DETECTION_VERSION (see config.py migration note):
+                # existing rows carry "0.1.0" and grading/stats filter on this column, so
+                # pipeline bumps must NOT re-key rows. Pipeline version → provenance only.
+                config.AGENT_NAME, config.DETECTION_VERSION, ticker.upper(), as_of.date(),
                 state.get("lookback_days"),
                 Json(state.get("background_profile") or {}),
                 Json(state.get("background_shift") or {}),
@@ -82,7 +85,7 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
     # Append the shift fingerprint (forward-accumulating case base) when a shift fired.
     if not no_data and state.get("background_shift", {}).get("has_shifted"):
         write_shift_row(
-            db_manager, ticker, as_of, config.AGENT_VERSION,
+            db_manager, ticker, as_of, config.DETECTION_VERSION,
             state["background_shift"], state.get("fundamentals", {}), state.get("background_metrics", {}),
         )
     return True

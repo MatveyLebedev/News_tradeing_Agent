@@ -66,7 +66,10 @@ class ValuationContext(BaseModel):
 class ShiftAnalogs(BaseModel):
     n_analogs: int = 0
     median_fwd_return_4w: Optional[float] = None
+    median_excess_4w: Optional[float] = None
     share_positive: Optional[float] = None
+    share_positive_ci: Optional[List[float]] = None   # Wilson 95% CI (low, high)
+    insufficient: bool = False                         # n < MIN_ANALOGS → don't weigh
     fundamentals_matched_note: str = ""
     nearest_cases: List[str] = Field(default_factory=list)
 
