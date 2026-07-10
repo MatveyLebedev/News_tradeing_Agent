@@ -37,6 +37,21 @@ def _ret(cur, ticker, entry_date: date, horizon_days: int):
     return None
 
 
+def _has_data_through(cur, ticker, target: date, cache: dict) -> bool:
+    """True if the ticker's daily series actually REACHES `target` (Phase 2 guard).
+
+    `_close_on_or_before`'s 7-day tolerance silently grades against a FROZEN series
+    (the 2026-06-15 SPY incident: exits within 7d of the freeze got the stale close).
+    A weekend/holiday target resolves 1-2 days later once the next trading day lands —
+    a small grading delay, never a wrong grade.
+    """
+    if ticker not in cache:
+        cur.execute("SELECT max(date) FROM stock_prices_daily WHERE ticker=%s", [ticker.upper()])
+        r = cur.fetchone()
+        cache[ticker] = r[0] if r else None
+    return cache[ticker] is not None and cache[ticker] >= target
+
+
 def main():
     ap = argparse.ArgumentParser(description="Grade matured shift_library rows")
     ap.add_argument("--asof-today", default=None, help="override 'today' (YYYY-MM-DD) for testing")
@@ -52,28 +67,37 @@ def main():
     rows = cur.fetchall()
     print(f"{len(rows)} ungraded rows; today={today}")
 
-    graded = 0
+    graded, pending = 0, 0
+    max_dates = {}
     for rid, ticker, as_of in rows:
+        t4 = as_of + timedelta(days=28)
+        if t4 > today:
+            continue  # primary horizon not matured yet
+        # pending_data guard: BOTH the stock and the SPY benchmark series must reach
+        # the 4w exit date before the row is filled; otherwise retry on a later run.
+        if not (_has_data_through(cur, ticker, t4, max_dates)
+                and _has_data_through(cur, BENCHMARK, t4, max_dates)):
+            pending += 1
+            continue
         updates, vals = [], []
         for col, days in HORIZONS.items():
-            if as_of + timedelta(days=days) <= today:
+            target = as_of + timedelta(days=days)
+            if target <= today and _has_data_through(cur, ticker, target, max_dates):
                 r = _ret(cur, ticker, as_of, days)
                 if r is not None:
                     updates.append(f"{col}=%s"); vals.append(round(r, 4))
         # benchmark for the 4w window (the primary checkpoint)
-        if as_of + timedelta(days=28) <= today:
-            b = _ret(cur, BENCHMARK, as_of, 28)
-            if b is not None:
-                updates.append("benchmark_return_4w=%s"); vals.append(round(b, 4))
-        # only mark filled once the 4w (primary) horizon is gradable
-        if as_of + timedelta(days=28) <= today and updates:
+        b = _ret(cur, BENCHMARK, as_of, 28)
+        if b is not None:
+            updates.append("benchmark_return_4w=%s"); vals.append(round(b, 4))
+        if updates:
             updates.append("outcome_filled_at=%s"); vals.append(today)
             cur.execute(f"UPDATE shift_library SET {', '.join(updates)} WHERE id=%s", vals + [rid])
             graded += 1
 
     conn.commit()
     conn.close()
-    print(f"Graded {graded} rows (4w horizon matured).")
+    print(f"Graded {graded} rows (4w horizon matured); {pending} pending_data (price series not caught up).")
 
 
 if __name__ == "__main__":

@@ -58,7 +58,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/signals [N] — latest directional signals\n"
         "/trades — trade outcomes &amp; win rate\n"
         "/errors [N] — recent errors\n"
-        "/ticker SYM — latest call for a ticker",
+        "/ticker SYM — latest call for a ticker\n"
+        "/freshness — data-source freshness (news/prices/SPY/fundamentals)",
+        parse_mode="HTML")
+
+
+@authorized
+async def cmd_freshness(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core.freshness import check_freshness, format_report
+    rep = await asyncio.to_thread(check_freshness)
+    icon = "❌" if rep["any_stale"] else "✅"
+    await update.message.reply_text(
+        f"{icon} <b>Data freshness</b>\n<pre>{escape(format_report(rep))}</pre>",
         parse_mode="HTML")
 
 
@@ -191,6 +202,7 @@ def main():
     app.add_handler(CommandHandler("trades", cmd_trades))
     app.add_handler(CommandHandler("errors", cmd_errors))
     app.add_handler(CommandHandler("ticker", cmd_ticker))
+    app.add_handler(CommandHandler("freshness", cmd_freshness))
     print(f"Starting long-term stats bot (auth: {len(ALLOWED_IDS) or 'OPEN'} ids)…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

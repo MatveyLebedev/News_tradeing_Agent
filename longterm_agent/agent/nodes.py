@@ -700,6 +700,17 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
             flags.append("no usable income fundamentals (news-only) — conviction capped below threshold")
         sig["conviction"] = round(max(0.0, capped), 2)
 
+    # STALE-DATA GATE (Phase 2): entry points stamp `data_freshness` for live runs only
+    # (backtests replay historical data by construction and are never stamped). A signal
+    # computed on frozen sources looks normal and is silently wrong — cap it below the
+    # trade threshold so it degrades to FILTERED, with the reason visible in the flags.
+    fresh = state.get("data_freshness")
+    if fresh and fresh.get("any_stale"):
+        capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
+        if capped < sig.get("conviction", 0.0):
+            flags.append(f"stale data sources {fresh.get('stale')} — conviction capped below threshold")
+        sig["conviction"] = round(max(0.0, capped), 2)
+
     # NO-SHIFT GATE: this agent trades background SHIFTS. With no detected shift the matrix has
     # no cell and synthesis conviction is unstable run-to-run, so a "trade" here is not
     # reproducible. Cap conviction below the threshold so no-shift signals degrade to FILTERED

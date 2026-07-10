@@ -172,3 +172,32 @@ prices (contamination was confined to the wf_2026q2 backtest report, already mar
 Known cosmetic issue: `SQ` (Block → ticker now XYZ) is delisted and fails in every fetch;
 remove/replace it when the universe list is next touched (label-affecting — bundle with a
 detection release).
+
+## 9. Security hardening runbook (Phase 2)
+
+Current exposure: Postgres and Neo4j listen on public non-default ports. Non-default
+ports are **not** access control. Do these on the server, in order:
+
+1. **Network**: either WireGuard/Tailscale (preferred — DBs then bind to the VPN
+   interface only), or at minimum a firewall allowlist:
+   ```bash
+   ufw default deny incoming
+   ufw allow OpenSSH
+   ufw allow from <YOUR_HOME_IP> to any port <PG_EXT_PORT> proto tcp
+   ufw allow from <YOUR_HOME_IP> to any port <NEO4J_EXT_PORT> proto tcp
+   ufw enable
+   ```
+   (Containers on the host reach the DBs via the docker network — the allowlist only
+   affects off-server clients.)
+2. **SSH**: create a non-root deploy user; disable root + password login:
+   ```bash
+   adduser deploy && usermod -aG docker,sudo deploy
+   # copy your key: ssh-copy-id deploy@<SERVER_IP>
+   # /etc/ssh/sshd_config: PermitRootLogin no, PasswordAuthentication no → systemctl restart sshd
+   ```
+3. **Rotate** everything that ever appeared in git history or tracked files: DB password,
+   Neo4j password, Telegram tokens, any API keys. The server IP itself was in tracked
+   docs until 2026-07-10 (now scrubbed); history still contains it — rotation + firewall
+   is the practical mitigation (history rewrite optional).
+4. Verify from an *unlisted* network: `psql`/`cypher-shell` connection attempts must
+   time out; SSH as root must be refused.

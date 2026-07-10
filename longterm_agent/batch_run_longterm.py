@@ -44,7 +44,7 @@ def _previous_verdict(cfg, ticker, as_of) -> str:
         return None
 
 
-def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert=True):
+def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert=True, freshness=None):
     graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
     stats = {"runs": 0, "signals": 0, "trades": 0, "no_data": 0, "errors": 0}
     oplog.info("BATCH_START", f"weekly batch: {len(tickers)} tickers",
@@ -56,7 +56,10 @@ def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert
         try:
             init = {"ticker": ticker.upper(), "as_of": as_of,
                     "lookback_days": cfg.LOOKBACK_DAYS_BACKGROUND,
-                    "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": []}
+                    "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": [],
+                    # Defense-in-depth behind the preflight: risk_gate caps conviction
+                    # when any source is stale (only relevant with --skip-freshness).
+                    "data_freshness": freshness}
             t0 = time.time()
             final = graph.invoke(init)
             elapsed = time.time() - t0
@@ -111,6 +114,8 @@ def main():
     ap.add_argument("--lookback", type=int, default=None)
     ap.add_argument("--no-alert", action="store_true", help="do not send Telegram alerts")
     ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
+    ap.add_argument("--skip-freshness", action="store_true",
+                    help="bypass the stale-data preflight (deliberate replays only)")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
@@ -121,6 +126,24 @@ def main():
         cfg.LOOKBACK_DAYS_BACKGROUND = args.lookback
     as_of = datetime.strptime(args.as_of, "%Y-%m-%d")
     tickers = args.tickers or cfg.get_universe()
+
+    # FRESHNESS PREFLIGHT (Phase 2): a live batch on frozen sources produces results
+    # that look normal and are silently wrong (the 2026-06-15 SPY freeze) — refuse to
+    # start instead. Enforced only for live as_of (historical as_of = deliberate replay).
+    # Prices get a tight threshold (2 weekdays): the batch runs the morning after the
+    # Saturday fetch, so "fresh" here means "the Saturday fetch actually happened".
+    freshness = None
+    if (datetime.now() - as_of).days <= 7 and not args.skip_freshness:
+        from core.freshness import check_freshness, format_report
+        freshness = check_freshness(db_config=cfg.get_db_config(),
+                                    thresholds={"prices": 2, "prices_spy": 2})
+        if freshness["any_stale"]:
+            msg = f"stale sources {freshness['stale']} — batch ABORTED\n{format_report(freshness)}"
+            print(f"❌ preflight: {msg}")
+            oplog.error("PREFLIGHT_STALE", msg, as_of=as_of, details=freshness)
+            if not args.no_alert:
+                TelegramNotifier().notify_error("batch preflight", msg)
+            return
 
     db = DBManager(db_config=cfg.get_db_config(), min_conn=1, max_conn=5)
     neo = None
@@ -138,7 +161,7 @@ def main():
           f"(alerts {'OFF' if args.no_alert else 'ON' if notifier.enabled else 'unconfigured'})")
     t0 = time.time()
     stats = run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce,
-                      notifier, alert=not args.no_alert)
+                      notifier, alert=not args.no_alert, freshness=freshness)
     print(f"\nBatch complete in {time.time()-t0:.0f}s: {stats}")
     if neo:
         neo.close()

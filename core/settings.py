@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     langchain_endpoint: str = "https://api.smith.langchain.com"
     langchain_project: str = "longterm-trading-agent"
 
+    # --- Data-freshness thresholds (core.freshness; cadences in DEPLOY.md §8) ---
+    # prices land WEEKLY (Sat 03:00 ET), so by Friday their age is legitimately
+    # 5 weekdays — the default must not false-alarm midweek. The Sunday batch
+    # preflight overrides this to 2 ("the Saturday fetch must have just happened").
+    fresh_news_max_days: int = 2                # parser runs every 5 min
+    fresh_prices_max_trading_days: int = 5      # weekly cadence, no midweek false alarms
+    fresh_fundamentals_max_days: int = 14       # weekly job + slack for one miss
+
     @field_validator(
         "llm_model", "graph_llm_model", "embedding_model", "embedding_dimensions",
         "db_host", "db_name", "db_user", "db_port", mode="before")

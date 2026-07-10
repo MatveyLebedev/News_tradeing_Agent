@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, date
 import psycopg2
 
 from longterm_agent.config import LongTermAgentConfig
-from longterm_agent.grade_shifts import _ret  # reuse the close-on-or-before return helper
+from longterm_agent.grade_shifts import _ret, _has_data_through  # shared grading helpers
 
 BENCHMARK = "SPY"
 HORIZON_DAYS = 28  # 4 weeks (the primary checkpoint)
@@ -36,23 +36,33 @@ def main():
     rows = cur.fetchall()
     print(f"{len(rows)} ungraded directional rows; today={today}")
 
-    graded = 0
+    graded, pending = 0, 0
+    max_dates = {}
     for rid, ticker, as_of in rows:
-        if as_of + timedelta(days=HORIZON_DAYS) > today:
+        target = as_of + timedelta(days=HORIZON_DAYS)
+        if target > today:
             continue  # horizon not matured yet
+        # pending_data guard (Phase 2): both series must actually reach the exit date,
+        # and the benchmark is REQUIRED — the trade's score IS excess-vs-SPY, so a row
+        # graded without it could never be scored. Ungraded rows retry next run.
+        if not (_has_data_through(cur, ticker, target, max_dates)
+                and _has_data_through(cur, BENCHMARK, target, max_dates)):
+            pending += 1
+            continue
         r = _ret(cur, ticker, as_of, HORIZON_DAYS)
         b = _ret(cur, BENCHMARK, as_of, HORIZON_DAYS)
-        if r is None:
-            continue  # missing price data; try again next run
+        if r is None or b is None:
+            pending += 1
+            continue
         cur.execute("""
             UPDATE longterm_agent_results
             SET fwd_return_4w=%s, benchmark_return_4w=%s, outcome_filled_at=%s WHERE id=%s
-        """, [round(r, 4), round(b, 4) if b is not None else None, today, rid])
+        """, [round(r, 4), round(b, 4), today, rid])
         graded += 1
 
     conn.commit()
     conn.close()
-    print(f"Graded {graded} rows (4w horizon matured).")
+    print(f"Graded {graded} rows (4w horizon matured); {pending} pending_data (price series not caught up).")
     return graded
 
 

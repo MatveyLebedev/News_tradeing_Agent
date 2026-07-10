@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run this ON THE SERVER (YOUR_SERVER_IP) over SSH to diagnose PostgreSQL connection issues.
+# Run this ON THE SERVER (<SERVER_IP>) over SSH to diagnose PostgreSQL connection issues.
 
 echo "=== 1. Docker container status ==="
 docker ps -a --filter "name=postgres" 2>/dev/null || echo "Docker not available"

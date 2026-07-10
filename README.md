@@ -23,7 +23,7 @@ passes `--log-opt max-size`; keep it on any container you add.
 ### 1. Login to Remote Server
 To access your remote server via SSH:
 ```bash
-ssh root@YOUR_SERVER_IP
+ssh <deploy-user>@<SERVER_IP>
 ```
 
 ### 2. Build and Push to Remote
@@ -60,7 +60,7 @@ docker run -d \
   -e TZ=America/New_York \
   -e FETCH_INTERVAL_MIN=5 \
   -e FETCH_PRICES=true \
-  -e DB_HOST="YOUR_SERVER_IP" \
+  -e DB_HOST="<SERVER_IP>" \
   -e DB_NAME="trade_agent" \
   -e DB_USER="news" \
   -e DB_PORT="5432" \
@@ -70,7 +70,7 @@ docker run -d \
   -e VERBOSE=false \
   -e FETCH_FULL_TEXT=false \
   -e GRAPH_LLM_MODEL="google/gemini-3.1-flash-lite-preview" \
-  -e NEO4J_URI="bolt://YOUR_SERVER_IP:7687" \
+  -e NEO4J_URI="bolt://<SERVER_IP>:7687" \
   -e NEO4J_USER="neo4j" \
   -e NEO4J_PASSWORD="pass" \
   -e OPENROUTER_API_KEY="your_openrouter_key" \

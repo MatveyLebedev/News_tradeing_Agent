@@ -209,6 +209,26 @@ Acceptance:
 - Grader on an immature/priceless cohort produces `pending_data`, not a grade.
 - `git grep` for the server IP → empty; DEPLOY.md documents the VPN/firewall setup.
 
+**Status 2026-07-10 — code done; server-side hardening is the user's ops task:**
+- ✅ `core/freshness.py`: pure `evaluate_freshness` + DB `check_freshness` (fail-closed on
+  query errors), weekday-based price age, partial threshold overrides. Defaults in
+  `core.settings` (news ≤2d, prices ≤5 weekdays — weekly cadence, no midweek false
+  alarms; fundamentals ≤14d).
+- ✅ Wired in all three places: batch preflight aborts + alerts + oplogs on stale (tight
+  prices≤2 override — "the Saturday fetch must have happened"; `--skip-freshness` escape
+  hatch; only enforced for live as_of); `risk_gate_node` caps conviction on a stale stamp
+  (entry points stamp live runs only — backtests never gated); graders now require BOTH
+  the stock and SPY series to REACH the exit date (closes the 7-day-tolerance hole that
+  let the 06-15 freeze grade against stale closes) and report `pending_data` counts;
+  `grade_results` now requires the benchmark (excess-vs-SPY IS the score).
+- ✅ Stats bot: `/freshness` command.
+- ✅ Server IP scrubbed from all tracked files (`git grep` → 0); DEPLOY.md §9 = hardening
+  runbook (firewall/VPN, non-root SSH, rotation checklist).
+- ✅ 103 tests green (8 new: freshness logic + graders' pending guard); live check: all
+  sources currently fresh under both default and preflight thresholds.
+- ⚠ Open (ops, not code): actually apply §9 on the server — firewall/VPN, deploy user,
+  credential rotation.
+
 ---
 
 ## Phase 3 — Agent quick wins (no detection-label changes)

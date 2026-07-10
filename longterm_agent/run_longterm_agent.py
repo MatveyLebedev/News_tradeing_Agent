@@ -49,8 +49,18 @@ def main():
 
     graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
 
+    # Live runs (as_of ≈ today) get a freshness stamp: risk_gate caps conviction when a
+    # source is frozen. Historical as_of = deliberate replay → no stamp, no gating.
+    freshness = None
+    if (datetime.now() - as_of).days <= 7:
+        from core.freshness import check_freshness
+        freshness = check_freshness(db_config=cfg.get_db_config())
+        if freshness["any_stale"]:
+            print(f"⚠ stale data sources: {freshness['stale']} — signal will be capped by risk gate")
+
     init = {"ticker": args.ticker.upper(), "as_of": as_of, "lookback_days": lookback,
-            "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": []}
+            "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": [],
+            "data_freshness": freshness}
     t0 = time.time()
     final = graph.invoke(init)
     elapsed = time.time() - t0
