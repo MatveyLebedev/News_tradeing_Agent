@@ -12,7 +12,6 @@ CLI:
 """
 import os
 import time
-from datetime import datetime
 
 import pytz
 import yfinance as yf

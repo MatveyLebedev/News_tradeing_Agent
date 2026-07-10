@@ -1,7 +1,6 @@
 import logging
 import os
 import psycopg2
-from datetime import datetime
 import json
 from config import DB_CONFIG
 

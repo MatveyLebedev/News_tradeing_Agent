@@ -18,14 +18,10 @@ finds the bot (fine for a private bot, but set it).
 
     python -m longterm_agent.stats_bot
 """
-import os
-import sys
 import asyncio
 from functools import wraps
 from html import escape
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes

@@ -3,12 +3,9 @@
 Covers: read execution + $as_of binding + always-rollback, write/DDL rejection, procedure-CALL
 rejection (the SSRF surface), row cap, and output truncation.
 """
-import os
-import sys
 import json
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from longterm_agent.tools.analysis_tools import make_graph_query_tool
 

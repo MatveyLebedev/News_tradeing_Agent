@@ -7,8 +7,7 @@ logging failure never crashes a run (falls back to console). Self-contained psyc
 it can be used from any of the ops scripts (batch, scheduler, grading).
 """
 import os
-import json
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
 
 import psycopg2

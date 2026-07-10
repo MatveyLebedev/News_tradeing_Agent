@@ -4,7 +4,6 @@ Helper script to update all tools and nodes to use Pydantic schemas
 This provides a checklist and validation helper
 """
 
-import os
 from pathlib import Path
 from typing import List, Tuple
 

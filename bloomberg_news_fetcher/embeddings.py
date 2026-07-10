@@ -116,7 +116,7 @@ if __name__ == "__main__":
     embedding = generator.generate_embedding(test_text)
 
     if embedding:
-        print(f"✓ Successfully generated embedding")
+        print("✓ Successfully generated embedding")
         print(f"  Text: {test_text}")
         print(f"  Vector dimensions: {len(embedding)}")
         print(f"  First 5 values: {embedding[:5]}")

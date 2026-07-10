@@ -1,0 +1,23 @@
+# CI: lint + both test suites. DB-integration tests self-skip when no DB is reachable.
+# Dormant until the repo gets a GitHub remote — kept in-tree so it activates on first push.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[agents,fetcher,bots,dev]"
+      - name: Lint (crash-level rules only for now)
+        run: ruff check core longterm_agent news_agent graph_db bloomberg_news_fetcher telegram_bot
+      - name: Tests
+        run: pytest

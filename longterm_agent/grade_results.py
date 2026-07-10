@@ -6,14 +6,11 @@ as the benchmark. Decisions used data ≤ as_of; only the *outcome* is measured 
 
     python -m longterm_agent.grade_results
 """
-import sys
 import argparse
 from datetime import datetime, timedelta, date
-from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _ret  # reuse the close-on-or-before return helper
 

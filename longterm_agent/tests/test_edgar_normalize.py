@@ -10,6 +10,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Deliberate path hack (the only one left in the repo): fetcher modules use FLAT
+# imports for the container layout (see bloomberg_news_fetcher/__init__.py), so
+# edgar_fetcher must be imported flat with its siblings resolvable. Remove when the
+# news-fetcher container switches to `-m` module execution.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "bloomberg_news_fetcher"))
 from edgar_fetcher import extract_statements
 

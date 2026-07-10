@@ -4,15 +4,12 @@ Verifies: each map thread runs an isolated bounded loop (tool execution + per-re
 the reduce folds findings into DeepAnalysisOutput, the enable/no-shift gates, the no-tools
 guard (advisory nudge zeroed), and the hard determinism boundary (background_shift untouched).
 """
-import os
-import sys
 from datetime import datetime
 from types import SimpleNamespace
 
 from langchain_core.tools import tool
 from langchain_core.messages import AIMessage, ToolMessage
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from longterm_agent.agent import nodes
 from longterm_agent.agent.nodes import _MAP_TRUNC

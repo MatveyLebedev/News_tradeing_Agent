@@ -3,7 +3,6 @@ Integration tests for all non-graph agent tools.
 Tests use real DB data auto-discovered by conftest fixtures.
 Assertions are structural: correct keys, correct types, sane values.
 """
-import json
 import pandas as pd
 import pytest
 

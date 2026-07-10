@@ -1,37 +1,16 @@
+"""DEPRECATED shim — import from core.settings instead.
+
+Kept so legacy root scripts (run_agent_with_langsmith.py, simple_agent/…) keep working.
+NOTE: DB_NAME now defaults to `trade_agent` (the live DB) via core.settings; the old
+default here was `news`, which silently pointed scripts at the wrong database.
 """
-Configuration file - loads from .env file for secure secret storage
-"""
-import os
-from pathlib import Path
+from core.settings import get_settings
 
-# Load .env file if it exists
-try:
-    from dotenv import load_dotenv
-    env_path = Path(__file__).parent / '.env'
-    if env_path.exists():
-        load_dotenv(env_path)
-        print(f"✓ Loaded environment variables from {env_path}")
-    else:
-        # Try root directory
-        root_env = Path(__file__).parent / '.env'
-        if root_env.exists():
-            load_dotenv(root_env)
-            print(f"✓ Loaded environment variables from {root_env}")
-except ImportError:
-    print("⚠️  python-dotenv not installed. Install with: pip install python-dotenv")
-except Exception as e:
-    print(f"⚠️  Could not load .env file: {e}")
+_s = get_settings()
 
-# Database configuration - from environment variables
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "database": os.getenv("DB_NAME", "news"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "port": os.getenv("DB_PORT", "5432")
-}
+DB_CONFIG = _s.db_config()
 
-# LangSmith Configuration
+# LangSmith (names preserved verbatim for existing importers)
 LANGCHAIN_TRACING_V2 = False
-LANGCHAIN_ENDPOINT = "https://api.smith.langchain.com"
-LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
+LANGCHAIN_ENDPOINT = _s.langchain_endpoint
+LANGCHAIN_API_KEY = _s.langchain_api_key

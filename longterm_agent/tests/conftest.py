@@ -1,5 +1,4 @@
 """Shared fixtures: a DB manager that skips integration tests when the DB is unreachable."""
-import os
 import pytest
 
 from longterm_agent.config import LongTermAgentConfig

@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trade-agents"
+version = "0.1.0"
+description = "News-driven trading research: data fetchers, knowledge graph, intraday + long-term LLM agents"
+requires-python = ">=3.12"
+# Base = what `core/` and package imports need everywhere. Heavy stacks live in extras.
+dependencies = [
+    "psycopg2-binary>=2.9,<3",
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pytz>=2024.1",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+# news/price/fundamentals fetchers + graph extraction (the news-fetcher container)
+fetcher = [
+    "feedparser>=6.0.10",
+    "beautifulsoup4>=4.12",
+    "yfinance==0.2.66",
+    "schedule>=1.2",
+    "neo4j>=5.0",
+    "openai>=1.0",
+    "langchain-openai>=0.1",
+    "numpy>=1.24",
+    "pandas>=2.0",
+]
+# LangGraph agents (intraday news_agent + longterm_agent) and their tools/backtests
+agents = [
+    "langchain>=0.1",
+    "langchain-core>=0.1",
+    "langchain-openai>=0.1",
+    "langgraph>=0.0.20",
+    "langsmith>=0.1",
+    "openai>=1.0",
+    "neo4j>=5.0",
+    "pgvector>=0.2.4",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "yfinance==0.2.66",
+    "schedule>=1.2",
+    "tabulate>=0.9",
+]
+# Telegram bots (stats bot + intraday bot)
+bots = ["python-telegram-bot>=20.0"]
+dev = ["pytest>=8", "ruff>=0.4"]
+
+[tool.setuptools]
+# Root-level legacy shims kept importable until call sites migrate to core.settings.
+py-modules = ["config", "model_config"]
+
+[tool.setuptools.packages.find]
+include = [
+    "core*",
+    "longterm_agent*",
+    "news_agent*",
+    "graph_db*",
+    "bloomberg_news_fetcher*",
+]
+
+[tool.pytest.ini_options]
+# Both suites; pure-logic tests run without a DB, integration tests self-skip.
+testpaths = ["news_agent/tests", "longterm_agent/tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+# Start pragmatic: correctness + import hygiene only; widen once the base is clean.
+select = ["E9", "F"]
+# F841: pre-existing dead locals in news_agent tools — clean up separately, not in CI's way.
+ignore = ["F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py re-exports are the public API, not dead imports.
+"__init__.py" = ["F401"]

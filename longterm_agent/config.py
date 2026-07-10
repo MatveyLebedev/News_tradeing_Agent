@@ -1,23 +1,13 @@
 """Configuration for the long-term agent. Reuses model_config.py (single point for models)."""
 import os
-import sys
 from pathlib import Path
 
 import pytz
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[1]  # for provenance() git lookup
 
-try:
-    from dotenv import load_dotenv
-    for p in (_REPO_ROOT / ".env", Path(__file__).parent / ".env"):
-        if p.exists():
-            load_dotenv(p)
-            break
-except ImportError:
-    pass
-
+# model_config is a shim over core.settings, whose import also load_dotenv()s the
+# repo-root .env — so the os.getenv(LT_*) reads below see the file values.
 from model_config import (
     LLM_MODEL as _LLM_MODEL,
     GRAPH_LLM_MODEL as _GRAPH_LLM_MODEL,
@@ -161,29 +151,11 @@ class LongTermAgentConfig:
 
     @classmethod
     def make_llm(cls, model: str = None, max_tokens: int = None):
-        """Build a ChatOpenAI client on OpenRouter (same pattern as news_agent).
-
-        max_tokens must leave room for reasoning models (Gemini/o-series burn
-        'reasoning_tokens' before any output) — the reduce/synthesis steps need
-        several thousand or structured output gets truncated mid-reasoning.
-
-        Structured output is forced to method="function_calling" (see _StructuredFnChatOpenAI):
-        the native json_schema path stashes a non-serializable parsed object in
-        additional_kwargs, which breaks the LLM response cache (Backtest Plan B0). Tool calls
-        serialize cleanly, so the cache round-trips and backtests are reproducible. Live and
-        backtest use the same method, so cached replays match live decisions.
-        """
-        from langchain_openai import ChatOpenAI
-
-        class _StructuredFnChatOpenAI(ChatOpenAI):
-            def with_structured_output(self, schema, **kwargs):
-                kwargs.setdefault("method", "function_calling")
-                return super().with_structured_output(schema, **kwargs)
-
-        return _StructuredFnChatOpenAI(
-            api_key=cls.OPENROUTER_API_KEY,
-            base_url=cls.OPENROUTER_BASE_URL,
+        """Build a ChatOpenAI client on OpenRouter — shared factory in core.llm
+        (function_calling-forced structured output; see rationale there)."""
+        from core.llm import make_llm
+        return make_llm(
             model=model or cls.LLM_MODEL,
+            max_tokens=max_tokens or cls.LLM_MAX_OUTPUT_TOKENS,
             temperature=cls.LLM_TEMPERATURE,
-            max_tokens=min(max_tokens or cls.LLM_MAX_OUTPUT_TOKENS, 8192),
         )

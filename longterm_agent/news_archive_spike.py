@@ -16,17 +16,14 @@ It answers two questions, per ticker:
 This is an evaluation tool, not an importer. It only READS GDELT (public data) and our `news`
 table. Run:  python -m longterm_agent.news_archive_spike
 """
-import sys
 import time
 import json
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import quote
 
 import requests
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 
 GDELT = "https://api.gdeltproject.org/api/v2/doc/doc"

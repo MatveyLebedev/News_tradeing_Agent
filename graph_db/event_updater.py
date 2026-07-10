@@ -20,7 +20,7 @@ import logging
 import psycopg2
 import numpy as np
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Единая точка конфигурации моделей — корень репозитория на sys.path

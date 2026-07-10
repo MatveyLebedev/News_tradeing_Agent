@@ -18,7 +18,6 @@ Pattern matches price_fetcher.py / news_fetcher.py: fetchers write, the agent re
 """
 import os
 import math
-import json
 from datetime import datetime, date
 
 import pytz

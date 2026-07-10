@@ -14,16 +14,13 @@ reflection off (set LT_MAX_REFLECTION=0) to keep cost down.
     LT_MAX_REFLECTION=0 python -m longterm_agent.full_signal_backtest \
         --tickers NVDA AAPL MSFT TSLA AMD JPM AMZN META --start 2026-04-30 --end 2026-05-18
 """
-import sys
 import argparse
 import statistics
 from collections import Counter
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph
 from longterm_agent.grade_shifts import _ret

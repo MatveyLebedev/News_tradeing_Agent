@@ -4,9 +4,8 @@ Processing nodes for the trading agent graph - Message-Based Architecture
 All nodes work with message-based state and LLM orchestration
 """
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 from langsmith import traceable
-from langchain_core.messages import SystemMessage, ToolMessage, AIMessage
+from langchain_core.messages import SystemMessage, ToolMessage
 import json
 import re
 
@@ -15,14 +14,12 @@ from .context_builder import (
     add_message,
     format_plan_for_llm
 )
-from ..llm_errors import raise_if_infra, LLMInfraError
+from ..llm_errors import raise_if_infra
 from ..schemas import PlanningOutput, MainAnalysisOutput, ReflectionOutput, SignificanceOutput, SimilarNewsTickerExtraction, PrimaryTickerExtraction
 from ..tools import (
     get_recent_news_items,
-    validate_tickers_batch,
     get_historical_prices,
     calculate_technical_indicators,
-    analyze_sector_and_competitors,
     assess_risk,
     create_find_similar_news_tool,
     create_find_similar_news_with_price_tool,
@@ -38,7 +35,7 @@ from ..tools import (
     create_graph_tools,
 )
 from ..tools.find_similar_news_tool import find_similar_news, enrich_similar_news_with_reaction, find_similar_news_with_price_impact, compute_typical_move_pct
-from ..tools.pre_news_movement_tool import check_pre_news_movement, check_multiple_tickers_pre_news, create_get_pre_news_movement_tool
+from ..tools.pre_news_movement_tool import check_multiple_tickers_pre_news, create_get_pre_news_movement_tool
 
 
 # --- Tradability gate -------------------------------------------------------
@@ -508,7 +505,6 @@ def macro_context_node(state: TradingAgentState, neo4j_manager: Any) -> TradingA
 
     timestamp = state["timestamp"]
     pub_iso = timestamp.isoformat()
-    import json
 
     try:
         type_dist = neo4j_manager.query("""
@@ -1025,7 +1021,7 @@ After gathering all necessary information, provide your complete analysis."""
                 continue
             else:
                 # No tool calls - LLM is ready for final analysis
-                print(f"  → No more tool calls needed, getting structured output...")
+                print("  → No more tool calls needed, getting structured output...")
                 llm_structured = llm.with_structured_output(MainAnalysisOutput)
                 final_analysis = llm_structured.invoke(messages_to_send)
                 break
@@ -1257,7 +1253,7 @@ Current iteration: {reflection_count + 1}/{max_iterations}"""
     
     # Safety: Don't loop forever
     if state["reflection_count"] >= max_iterations:
-        print(f"⚠️  Max iterations reached, forcing proceed")
+        print("⚠️  Max iterations reached, forcing proceed")
         state["needs_refinement"] = False
     
     return state

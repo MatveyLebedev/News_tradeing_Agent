@@ -3,14 +3,11 @@ CLI for the long-term agent (Phase 1: prints a company's news-background profile
 
     python -m longterm_agent.run_longterm_agent --ticker NVDA --as-of 2026-06-12 --lookback 60
 """
-import sys
 import json
 import time
 import argparse
 from datetime import datetime
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph

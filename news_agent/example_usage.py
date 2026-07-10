@@ -82,7 +82,7 @@ def example_batch_analysis():
     all_signals = agent.batch_analyze(news_items)
     
     # Display summary
-    print(f"\nBatch Analysis Summary:")
+    print("\nBatch Analysis Summary:")
     print(f"Total news items: {len(news_items)}")
     print(f"Total signals generated: {sum(len(signals) for signals in all_signals)}")
     
@@ -109,7 +109,7 @@ def example_custom_config():
     config.ATR_MULTIPLIER = 2.5  # Wider stop loss
     config.RISK_REWARD_RATIO = 3.0  # Higher risk-reward ratio
     
-    print(f"Custom Configuration:")
+    print("Custom Configuration:")
     print(f"  Confidence Threshold: {config.CONFIDENCE_THRESHOLD}")
     print(f"  ATR Multiplier: {config.ATR_MULTIPLIER}")
     print(f"  Risk-Reward Ratio: {config.RISK_REWARD_RATIO}")
@@ -153,10 +153,10 @@ def example_data_leakage_protection():
     try:
         signals = agent.run(news_text=news_text, timestamp=future_timestamp)
     except ValueError as e:
-        print(f"✓ Data leakage protection worked!")
+        print("✓ Data leakage protection worked!")
         print(f"  Error: {e}")
-        print(f"\nThis prevents the agent from accessing future data that wouldn't")
-        print(f"have been available at the time of news publication.")
+        print("\nThis prevents the agent from accessing future data that wouldn't")
+        print("have been available at the time of news publication.")
     
     agent.close()
 

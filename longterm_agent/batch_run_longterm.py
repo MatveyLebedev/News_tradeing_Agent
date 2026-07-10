@@ -10,16 +10,13 @@ Telegram alert for every new or flipped directional signal plus a run summary.
 Designed to be called by the scheduler (auto_longterm_agent.py) or run by hand. Each ticker
 is isolated: a failure is logged + (optionally) alerted, and the batch continues.
 """
-import sys
 import time
 import argparse
 import traceback
 from datetime import datetime
-from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph

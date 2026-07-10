@@ -1,17 +1,14 @@
 import requests
 import feedparser
 from datetime import datetime
-import json
 import re
 from bs4 import BeautifulSoup
 import time
 import psycopg2
-from psycopg2.extras import execute_values
 import os
 import pytz
 from config import (
     DB_CONFIG,
-    RSS_FEED_URL,
     VERBOSE,
     BLOOMBERG_CATEGORIES,
     BLOOMBERG_RSS_BASE_URL,
@@ -191,7 +188,7 @@ def save_to_database(article, verbose=True):
         # Check if article already exists
         if article_exists(article['link'], verbose=verbose):
             if verbose:
-                print(f"  ⚠ Article already exists in database, skipping")
+                print("  ⚠ Article already exists in database, skipping")
             logger.info('DB_SKIP', f"Skipped existing article: {article['title']}", 
                        article_link=article['link'])
             return 'skipped'
@@ -201,7 +198,7 @@ def save_to_database(article, verbose=True):
         
         # Generate embedding from title + summary (only vector stored)
         if verbose:
-            print(f"  🔄 Generating embedding...")
+            print("  🔄 Generating embedding...")
         title_summary_vec = None
         try:
             title_summary_vec = embedding_generator.embed_title_summary(
@@ -255,7 +252,7 @@ def save_to_database(article, verbose=True):
         else:
             # ON CONFLICT DO NOTHING resulted in no insert (race condition)
             if verbose:
-                print(f"  ⚠ Article was inserted by another process")
+                print("  ⚠ Article was inserted by another process")
             return 'skipped'
         
     except Exception as e:
@@ -437,7 +434,7 @@ def fetch_and_save_news_from_category(category, fetch_full_text=True, verbose=Tr
             
             if fetch_full_text:
                 if verbose:
-                    print(f"  Fetching full article text...")
+                    print("  Fetching full article text...")
                 raw_full_text = fetch_full_article_text(article['link'], max_retries=1, verbose=False)
 
                 # If we can't fetch full text, store empty string (so downstream logic can rely on that).
@@ -463,7 +460,7 @@ def fetch_and_save_news_from_category(category, fetch_full_text=True, verbose=Tr
                     )
                 else:
                     if verbose:
-                        print(f"  ⚠ Full text unavailable")
+                        print("  ⚠ Full text unavailable")
                     logger.warning(
                         'ARTICLE_PARTIAL',
                         f"Partial/no full text for: {article['title']}",
@@ -478,12 +475,12 @@ def fetch_and_save_news_from_category(category, fetch_full_text=True, verbose=Tr
             if result == 'skipped':
                 skipped_count += 1
                 if verbose:
-                    print(f"  ⚠ Already exists, skipped")
+                    print("  ⚠ Already exists, skipped")
                 continue
             elif isinstance(result, int):
                 saved_count += 1
                 if verbose:
-                    print(f"  ✓ Saved to database")
+                    print("  ✓ Saved to database")
                 try:
                     from graph_db.event_updater import process_article_events
                     process_article_events(article, result)
@@ -492,7 +489,7 @@ def fetch_and_save_news_from_category(category, fetch_full_text=True, verbose=Tr
             else:
                 error_count += 1
                 if verbose:
-                    print(f"  ✗ Failed to save")
+                    print("  ✗ Failed to save")
             
             if verbose:
                 print()
@@ -535,7 +532,7 @@ def fetch_and_save_news(fetch_full_text=True, verbose=True, categories=None, art
         print("=" * 80)
         print(f"Categories: {', '.join(categories)}")
         print(f"Articles per category: {articles_per_category}")
-        print(f"⏰ Using timezone: US Eastern Time (America/New_York)\n")
+        print("⏰ Using timezone: US Eastern Time (America/New_York)\n")
     
     total_saved = 0
     total_skipped = 0

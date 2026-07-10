@@ -2,8 +2,8 @@
 Tool for comprehensive ticker analysis with similar news and price impact
 Provides historical patterns and recent context for a specific ticker
 """
-from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from typing import Dict, Any
+from datetime import datetime
 from langchain_core.tools import tool
 import pytz
 import statistics
@@ -48,7 +48,7 @@ def analyze_ticker_with_similar_news(
         
         # 1. Find similar historical news with price impacts
         print(f"\n=== Analyzing {ticker} ===")
-        print(f"  → Finding similar historical news...")
+        print("  → Finding similar historical news...")
         
         similar_news = find_similar_news_with_price_impact(
             ticker=ticker,

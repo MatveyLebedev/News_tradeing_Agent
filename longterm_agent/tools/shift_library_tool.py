@@ -14,9 +14,8 @@ Similarity (v1, no embeddings yet): same direction, ranked by |Δ magnitude_z| +
     overlap. The pgvector embedding column is reserved for a later upgrade.
 """
 import os
-import json
 from statistics import median
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from datetime import datetime, timedelta
 
 import psycopg2

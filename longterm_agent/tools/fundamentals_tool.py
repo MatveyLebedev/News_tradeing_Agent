@@ -11,7 +11,7 @@ The fetcher stores normalized values only; all derived metrics (growth, margins,
 debt, expectation gap) are computed HERE at read time, so definitions can change without
 re-backfilling.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from datetime import datetime, date, timedelta
 
 import psycopg2

@@ -12,12 +12,9 @@ Outcomes are filled later by grade_shifts.py.
 
     python -m longterm_agent.backfill_shift_library --start 2026-04-30 --end 2026-05-18 --step 7
 """
-import sys
 import argparse
 from datetime import datetime, timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.nodes import (

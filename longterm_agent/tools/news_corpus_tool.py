@@ -240,10 +240,8 @@ def bucket_by_week(
 if __name__ == "__main__":
     # Coverage measurement (Phase 0 deliverable): per-ticker article counts by source.
     import os
-    import sys
     import argparse
 
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from news_agent.database.db_manager import DBManager
     from graph_db.neo4j_manager import Neo4jManager
 

@@ -4,7 +4,7 @@ Tool for analyzing sector and competitor stocks
 Note: Functions in this module are NOT decorated with @tool.
 They are called directly by wrapper functions in nodes.py that have @lc_tool decorator.
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import yfinance as yf
 from datetime import datetime
 from langchain_core.tools import tool

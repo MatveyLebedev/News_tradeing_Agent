@@ -4,7 +4,6 @@ Context management utilities for the trading agent - Message-Based Architecture
 Handles message-based state and context accumulation using LangChain message format
 """
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 import json
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
 

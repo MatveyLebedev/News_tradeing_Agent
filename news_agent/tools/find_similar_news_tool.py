@@ -70,7 +70,7 @@ def find_similar_news(
         )
         
         if not similar_news:
-            print(f"No similar historical news found")
+            print("No similar historical news found")
             return []
         
         # Format results
@@ -99,7 +99,7 @@ def find_similar_news(
         if results:
             print(f"✓ Found {len(results)} similar historical news items")
         else:
-            print(f"No similar historical news found")
+            print("No similar historical news found")
         
         return results
         

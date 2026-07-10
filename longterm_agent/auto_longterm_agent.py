@@ -12,17 +12,14 @@ Run the weekly batch *after* the news/fundamentals fetchers have updated the DB 
     python -m longterm_agent.auto_longterm_agent --now     # run one batch immediately, then schedule
     python -m longterm_agent.auto_longterm_agent --grade-now
 """
-import sys
 import time
 import argparse
 import traceback
 from datetime import datetime
-from pathlib import Path
 
 import pytz
 import schedule
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent import oplog

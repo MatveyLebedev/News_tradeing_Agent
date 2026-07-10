@@ -155,6 +155,24 @@ Acceptance:
   `uv sync && pip install -e .`.
 - All existing docker services build and start exactly as before.
 
+**Status 2026-07-10 — core done; hygiene sweep deferred:**
+- ✅ `pyproject.toml` (packages, extras `[fetcher|agents|bots|dev]`, pytest + ruff config)
+  + committed `uv.lock` (79 packages). `pytest.ini` deleted; one `pytest` runs both suites
+  (95 passed), warnings no longer suppressed.
+- ✅ `core/` shipped: settings (pydantic-settings; canonical DB_NAME=`trade_agent`),
+  db (keepalives + retry), llm (`make_llm` + `invoke_structured`), notify (Telegram).
+  Root `config.py` / `model_config.py` and `longterm_agent/notifier.py` are now shims.
+- ✅ 17 `sys.path.insert` hacks removed; ruff `--fix` cleaned 112 orphaned imports.
+  One deliberate hack remains (test_edgar_normalize — flat fetcher imports, commented).
+  Regression caught & fixed: ruff dropped the side-effect `psycopg2.pool` import in
+  news_agent's DBManager (restored as explicit `import psycopg2.pool`).
+- ✅ CI workflow (`.github/workflows/ci.yml`) — dormant until the repo gets a remote.
+- ✅ Container compat: `Dockerfile.news` now COPYs `core/`; pydantic-settings added to
+  fetcher/telegram/longterm requirements (root shims import core).
+- ⏳ Deferred to a follow-up commit: hygiene sweep (experiments/ move, docs/archive,
+  README rewrite, stale worktrees + logs deletion) and migrating the 174 raw
+  `psycopg2.connect` call sites onto `core.db` (incremental).
+
 ---
 
 ## Phase 2 — Automated freshness gate + security hardening

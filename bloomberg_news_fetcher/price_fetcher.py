@@ -4,7 +4,7 @@ Fetches 1-minute historical data and stores in separate tables per ticker
 """
 import yfinance as yf
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from config import DB_CONFIG
 from logger import DatabaseLogger
@@ -252,11 +252,11 @@ def fetch_all_tickers(tickers=None, period='1d', verbose=False):
     
     if verbose:
         print(f"\n{'=' * 80}")
-        print(f"FETCHING 1-MINUTE PRICE DATA (PER-TICKER TABLES)")
+        print("FETCHING 1-MINUTE PRICE DATA (PER-TICKER TABLES)")
         print(f"{'=' * 80}")
         print(f"Tickers: {len(tickers)}")
         print(f"Period: {period}")
-        print(f"Interval: 1 minute")
+        print("Interval: 1 minute")
         print()
     
     logger.info('PRICE_FETCH_START', f'Starting price fetch for {len(tickers)} tickers',
@@ -300,12 +300,12 @@ def fetch_all_tickers(tickers=None, period='1d', verbose=False):
                 results['success'] += 1
         else:
             if verbose:
-                print(f"✗ Failed")
+                print("✗ Failed")
             results['failed'] += 1
     
     if verbose:
         print(f"\n{'=' * 80}")
-        print(f"FETCH COMPLETE")
+        print("FETCH COMPLETE")
         print(f"{'=' * 80}")
         print(f"Success: {results['success']}/{len(tickers)}")
         print(f"Failed: {results['failed']}/{len(tickers)}")

@@ -14,8 +14,8 @@ slice (last `shift_window_days`) and a baseline (everything earlier) and compute
 Everything degrades gracefully (Neo4j optional; tiny/empty baselines handled).
 """
 import re
-from statistics import mean, pstdev
-from typing import Any, Dict, List, Optional
+from statistics import pstdev
+from typing import Any, Dict, List
 from datetime import datetime, timedelta
 
 

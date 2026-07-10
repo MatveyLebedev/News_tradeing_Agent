@@ -10,13 +10,10 @@ of the harness, not a verdict on the strategy. Statistical power comes from forw
 
     python -m longterm_agent.backtest_report
 """
-import sys
 from statistics import mean, median
-from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 
 

@@ -3,7 +3,6 @@ Main Trading Agent - LangGraph-based AI agent for news analysis and trade signal
 
 All timestamps use US Eastern Time (America/New_York) for consistency with US market hours
 """
-import os
 from datetime import datetime, time, timedelta
 from typing import List, Dict, Any, Optional
 from langchain_openai import ChatOpenAI
@@ -98,7 +97,7 @@ class TradingAgent:
         )
         self.last_run_id: Optional[str] = None
 
-        print(f"✓ Trading Agent initialized")
+        print("✓ Trading Agent initialized")
         print(f"  Confidence threshold: {self.config.CONFIDENCE_THRESHOLD}")
         print(f"  LangSmith tracing: {'enabled' if self.config.LANGCHAIN_TRACING_V2 else 'disabled'}")
         print()
@@ -125,13 +124,13 @@ class TradingAgent:
           2. Otherwise call the @traceable inner method to run the full analysis graph.
         """
         print(f"\n{'='*70}")
-        print(f"ANALYZING NEWS")
+        print("ANALYZING NEWS")
         print(f"{'='*70}")
 
         eastern_tz = pytz.timezone('America/New_York')
         if timestamp.tzinfo is None:
             timestamp_et = eastern_tz.localize(timestamp)
-            print(f"⚠️  Naive timestamp provided - assuming US Eastern Time")
+            print("⚠️  Naive timestamp provided - assuming US Eastern Time")
         else:
             timestamp_et = timestamp.astimezone(eastern_tz)
             if timestamp.tzinfo != eastern_tz:
@@ -163,7 +162,7 @@ class TradingAgent:
             print(f"\n{'='*70}")
             print(f"ANALYSIS SKIPPED — {reason}")
             print(f"News time: {timestamp_et.strftime('%a %H:%M %Z')}")
-            print(f"(No classifier call, no LangSmith trace.)")
+            print("(No classifier call, no LangSmith trace.)")
             print(f"{'='*70}\n")
             self.last_run_id = None
             return []
@@ -218,9 +217,9 @@ class TradingAgent:
 
         if initial_state.get("is_significant") is False:
             print(f"\n{'='*70}")
-            print(f"ANALYSIS SKIPPED — news classified as NOT SIGNIFICANT")
+            print("ANALYSIS SKIPPED — news classified as NOT SIGNIFICANT")
             print(f"Reason: {initial_state.get('significance_reasoning', 'n/a')}")
-            print(f"(No LangSmith trace created.)")
+            print("(No LangSmith trace created.)")
             print(f"{'='*70}\n")
             return []
 
@@ -260,7 +259,7 @@ class TradingAgent:
             total_signals = len(result.get("signals", []))
 
             print(f"\n{'='*70}")
-            print(f"ANALYSIS COMPLETE")
+            print("ANALYSIS COMPLETE")
             print(f"{'='*70}")
             print(f"Generated {total_signals} signal(s)")
             print(f"Final signals after risk assessment: {len(filtered_signals)}")
@@ -311,7 +310,7 @@ class TradingAgent:
             results.append(signals)
         
         print(f"\n{'='*70}")
-        print(f"BATCH ANALYSIS COMPLETE")
+        print("BATCH ANALYSIS COMPLETE")
         print(f"{'='*70}")
         print(f"Total signals generated: {sum(len(r) for r in results)}")
         print(f"{'='*70}\n")

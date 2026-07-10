@@ -7,15 +7,11 @@ benchmark) is computed in the report; here we store the raw stock returns + benc
 
     python -m longterm_agent.grade_shifts
 """
-import os
-import sys
 import argparse
 from datetime import datetime, timedelta, date
-from pathlib import Path
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 
 BENCHMARK = "SPY"

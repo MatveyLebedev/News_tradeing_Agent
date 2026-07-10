@@ -3,7 +3,6 @@
 Script to view news parser logs from the database
 """
 import psycopg2
-from datetime import datetime, timedelta
 import json
 import argparse
 from config import DB_CONFIG

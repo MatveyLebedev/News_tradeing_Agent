@@ -15,7 +15,6 @@ Reproducible: enable the B0 LLM cache and run with reflection off.
         --horizons 14 28 84
     python -m longterm_agent.backtest --backtest-id exp1 --report-only   # re-print the report
 """
-import sys
 import argparse
 from datetime import datetime, timedelta, date
 from pathlib import Path
@@ -23,7 +22,6 @@ from pathlib import Path
 import psycopg2
 from psycopg2.extras import Json
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _ret
 from longterm_agent.stats import trade_excess
@@ -266,7 +264,7 @@ def report(cfg, backtest_id):
             for v in regimes:
                 sub = [r["excess"] for r in graded if r["regime"] == v]
                 line.append(f"{v}: n={len(sub)} mean {_pct(M.distribution(sub)['mean'])}")
-            print(f"  by regime   : " + "   ".join(line))
+            print("  by regime   : " + "   ".join(line))
         _protocol_checks(graded, cal)
     print("\n" + "=" * 74)
 

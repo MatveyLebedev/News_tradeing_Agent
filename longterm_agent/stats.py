@@ -12,15 +12,11 @@ Vocabulary:
   * a trade is "graded" once its 4-week horizon matured (outcome_filled_at set).
   * win    = strategy *excess* return vs SPY > 0 (LONG: stock−SPY; SHORT: SPY−stock).
 """
-import sys
 import statistics
-from datetime import date
-from pathlib import Path
 from typing import List, Dict, Any
 
 import psycopg2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 
 

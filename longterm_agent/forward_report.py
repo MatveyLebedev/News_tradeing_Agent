@@ -13,11 +13,8 @@ language — and adds the two pieces forward-testing needs:
 
 Reads only `longterm_agent_results` (the live table). Run:  python -m longterm_agent.forward_report
 """
-import sys
 from datetime import date, timedelta
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.stats import _conn, _version, trade_excess
 from longterm_agent import backtest_metrics as M

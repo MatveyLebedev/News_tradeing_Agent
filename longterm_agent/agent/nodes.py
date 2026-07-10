@@ -9,7 +9,6 @@ model, then merge the summaries into a NewsBackgroundProfile with the main model
 profile IS the "news background".
 """
 import json
-import time
 from collections import Counter
 from typing import Any, Dict, List
 
@@ -37,19 +36,8 @@ def _msg(state: Dict[str, Any], name: str, content: str, data: Dict = None):
     )
 
 
-def _invoke_structured(llm, schema, prompt, retries=2):
-    """Structured-output call with retry. Reasoning models intermittently truncate the
-    structured output (reasoning tokens eat the budget) → transient parse errors; a retry
-    usually succeeds. Re-raises the last error so callers keep their fallback."""
-    last = None
-    for attempt in range(retries + 1):
-        try:
-            return llm.with_structured_output(schema).invoke(prompt)
-        except Exception as e:
-            last = e
-            if attempt < retries:
-                time.sleep(1.0 * (attempt + 1))
-    raise last
+# Moved to shared infra (Phase 1); alias keeps existing call sites and tests unchanged.
+from core.llm import invoke_structured as _invoke_structured
 
 
 def _fallback_profile(summaries, sent_timeline):
@@ -653,7 +641,7 @@ def reflection_node(state, llm, config) -> Dict[str, Any]:
     state["reflection_count"] = count + 1
     if count >= config.MAX_REFLECTION_ITERATIONS:
         state["needs_refinement"] = False
-        print(f"  → max iterations reached; proceeding")
+        print("  → max iterations reached; proceeding")
         return state
 
     sig = state.get("signal", {})

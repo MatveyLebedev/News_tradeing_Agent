@@ -6,7 +6,7 @@ import psycopg2
 import argparse
 from typing import List, Tuple
 from config import DB_CONFIG
-from embeddings import EmbeddingGenerator, cosine_similarity
+from embeddings import EmbeddingGenerator
 from tabulate import tabulate
 
 

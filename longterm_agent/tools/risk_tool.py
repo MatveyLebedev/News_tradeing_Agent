@@ -9,7 +9,7 @@ earnings_event_risk : is an earnings date inside the next N days? A thesis forme
 
 Both read AS-OF (no lookahead) and degrade gracefully when data is missing.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from datetime import datetime, timedelta
 
 import psycopg2

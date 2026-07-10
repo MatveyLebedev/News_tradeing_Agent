@@ -3,13 +3,13 @@ Database manager with time-aware queries and connection pooling
 All timestamps use US Eastern Time (America/New_York) for consistency with US market hours
 """
 import psycopg2
-from psycopg2 import pool, Error
+import psycopg2.pool  # side-effect import: loads the submodule used as psycopg2.pool below
+from psycopg2 import Error
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import pandas as pd
 from contextlib import contextmanager
 import pytz
-import numpy as np
 
 
 class DBManager:
@@ -38,7 +38,7 @@ class DBManager:
             )
             if self.connection_pool:
                 print(f"✓ Database connection pool created (min={min_conn}, max={max_conn})")
-                print(f"✓ Using timezone: America/New_York (US Eastern Time)")
+                print("✓ Using timezone: America/New_York (US Eastern Time)")
         except Error as e:
             print(f"✗ Error creating connection pool: {e}")
             raise
