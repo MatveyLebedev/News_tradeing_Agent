@@ -148,3 +148,27 @@ docker compose run --rm longterm-agent python -u -m longterm_agent.auto_longterm
 The strategy is **not yet validated** — backtests so far are single-regime noise (README §7).
 Treat the first weeks as forward paper-testing: signals accumulate in `longterm_agent_results`,
 and the `/trades` win-rate only becomes meaningful after a quarter of graded cohorts.
+
+## 8. Data-layer status (audited 2026-07-10; Modification Plan Phase 0)
+
+What writes what, on which schedule:
+
+| Data | Writer | Schedule | Status 2026-07-10 |
+|---|---|---|---|
+| `news` (+ graph) | `news-fetcher` container | every 5 min | ✅ fresh (max published = yesterday) |
+| intraday bars → `historical_data_<ticker>` (120 tables) | same container (`FETCH_PRICES=true`) | every 5 min | ✅ live. NOTE: `stock_prices` is a **dead legacy table** (0 rows) — do not read it |
+| `stock_prices_daily` (incl. **SPY** benchmark) | weekly job in `news-fetcher` → `fetch_all_daily` | Saturday 03:00 ET (`FUNDAMENTALS_FETCH_*`) | ✅ fresh through 2026-07-09 after manual backfill |
+| `fundamentals` (EDGAR PIT + yfinance snapshots) | same weekly job | Saturday 03:00 ET | ✅ last run 2026-07-04 (on schedule) |
+
+Incident record (why SPY mattered): the weekly job passed bare `TOP_50_TICKERS` to
+`fetch_all_daily`, and SPY is **not** in that list — so the grading benchmark silently froze
+at 2026-06-15 while the universe kept updating; all outcome grading (X-vs-SPY) was blocked.
+Fixed 2026-07-10: `daily_price_fetcher.DEFAULT_TICKERS = TOP_50 + BENCHMARK_TICKERS (SPY)`,
+weekly top-up widened `5d → 1mo` (self-heals a missed week), connection retry added.
+**The fix lives in the image — rebuild/redeploy `news-fetcher` before the next Saturday run,
+or SPY freezes again.** Live-table grades were audited: 0 rows were graded against frozen
+prices (contamination was confined to the wf_2026q2 backtest report, already marked ESTIMATE).
+
+Known cosmetic issue: `SQ` (Block → ticker now XYZ) is delisted and fails in every fetch;
+remove/replace it when the universe list is next touched (label-affecting — bundle with a
+detection release).

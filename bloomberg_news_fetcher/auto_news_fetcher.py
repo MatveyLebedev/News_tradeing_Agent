@@ -88,8 +88,10 @@ def scheduled_fundamentals_fetch(verbose=True):
     # Imported lazily so a missing dep here never blocks the news/price loop.
     try:
         from daily_price_fetcher import fetch_all_daily
-        # 5d top-up keeps daily bars current; the initial 2y backfill is run manually once.
-        dr = fetch_all_daily(tickers=TOP_50_TICKERS, period="5d", verbose=verbose)
+        # No explicit tickers: the fetcher's default is TOP_50 + BENCHMARK (SPY). Passing
+        # bare TOP_50_TICKERS here silently excluded the grading benchmark. period=1mo
+        # (not 5d): with a weekly cadence, one missed run left a gap 5d could never heal.
+        dr = fetch_all_daily(period="1mo", verbose=verbose)
         if verbose:
             print(f"✓ Daily prices: {dr['rows']} rows")
     except Exception as e:

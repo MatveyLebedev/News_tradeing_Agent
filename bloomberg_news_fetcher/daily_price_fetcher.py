@@ -11,6 +11,7 @@ CLI:
     python daily_price_fetcher.py --tickers AAPL NVDA --stats
 """
 import os
+import time
 from datetime import datetime
 
 import pytz
@@ -22,15 +23,33 @@ from config import DB_CONFIG
 from logger import DatabaseLogger
 from price_fetcher import TOP_50_TICKERS
 
+# SPY is the grading benchmark (grade_results: excess return vs SPY), NOT part of the
+# agent universe — TOP_50_TICKERS feeds LongTermAgentConfig.get_universe(), so it must
+# stay agent-analyzable companies only. Any default fetch has to include BOTH lists:
+# passing bare TOP_50_TICKERS froze SPY at 2026-06-15 and blocked all outcome grading.
+BENCHMARK_TICKERS = ["SPY"]
+DEFAULT_TICKERS = TOP_50_TICKERS + BENCHMARK_TICKERS
+
 logger = DatabaseLogger()
 EASTERN_TZ = pytz.timezone("America/New_York")
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=DB_CONFIG["host"], database=DB_CONFIG["database"],
-        user=DB_CONFIG["user"], password=DB_CONFIG["password"], port=DB_CONFIG["port"],
-    )
+def get_db_connection(retries=3, delay=2.0):
+    # One connection per ticker means one transient network drop used to kill the whole
+    # multi-ticker run mid-way; retry with backoff so a flaky link costs seconds, not the run.
+    last = None
+    for attempt in range(retries):
+        try:
+            return psycopg2.connect(
+                host=DB_CONFIG["host"], database=DB_CONFIG["database"],
+                user=DB_CONFIG["user"], password=DB_CONFIG["password"], port=DB_CONFIG["port"],
+                connect_timeout=10,
+            )
+        except psycopg2.OperationalError as e:
+            last = e
+            if attempt < retries - 1:
+                time.sleep(delay * (attempt + 1))
+    raise last
 
 
 def ensure_table():
@@ -94,7 +113,7 @@ def save_daily(ticker, df):
 
 def fetch_all_daily(tickers=None, period="2y", verbose=True):
     if tickers is None:
-        tickers = TOP_50_TICKERS
+        tickers = DEFAULT_TICKERS
     ensure_table()
     results = {"tickers": len(tickers), "rows": 0, "failed": []}
     logger.info("DAILY_FETCH_START", f"Daily price fetch for {len(tickers)} tickers ({period})")

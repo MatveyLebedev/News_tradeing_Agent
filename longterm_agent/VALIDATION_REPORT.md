@@ -141,3 +141,17 @@ and contaminated by stale outcomes.
 4. Deferred: news-archive backfill (B2) for pre-2026-02 regimes; conviction re-calibration once n grows.
 
 Until then, every number ships with its **n** and a **single-regime / smoke-test** caveat.
+
+---
+
+## Addendum 2026-07-10 — step 1 (data pipeline) done
+
+- Fundamentals + daily-price weekly job confirmed **running on schedule** (Sat 03:00 ET;
+  last run 2026-07-04). The "disabled" status above is outdated.
+- Root cause of the frozen benchmark found & fixed: the weekly job excluded **SPY** (bare
+  `TOP_50_TICKERS` arg). `stock_prices_daily` incl. SPY backfilled and fresh through
+  2026-07-09; fix must be **redeployed** into the news-fetcher image to persist
+  (see DEPLOY.md §8).
+- Live grading tables audited: **0 rows** in `shift_library` / `longterm_agent_results`
+  were graded against frozen prices — §6 contamination is confined to this backtest's
+  numbers. Step 2 (re-run the backtest on healed prices) remains open.
