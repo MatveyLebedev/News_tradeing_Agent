@@ -596,6 +596,20 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
 # ---------------------------------------------------------------------------
 # 5. synthesis (profile + shift + fundamentals + analogs → LongTermSignal)
 # ---------------------------------------------------------------------------
+# Module-level so the eval harness can (a) reference the exact production rules and
+# (b) monkeypatch an inverted matrix to prove the synthesis_matrix eval catches it.
+# Byte-identical to the previous inline f-string — the LLM cache key is unchanged.
+SYNTHESIS_MATRIX_RULES = (
+    "Apply the news×fundamentals matrix:\n"
+    "  shift POSITIVE + fundamentals improving → high-conviction LONG\n"
+    "  shift NEGATIVE + fundamentals deteriorating → high-conviction SHORT\n"
+    "  shift NEGATIVE + fundamentals improving (contradicts) → overreaction: contrarian LONG or NEUTRAL\n"
+    "  shift POSITIVE + fundamentals deteriorating → hype risk: low conviction / avoid\n"
+    "  NO shift → no actionable edge for this agent: default NEUTRAL with LOW conviction "
+    "(strong standing fundamentals alone are NOT a trade trigger here — this agent trades shifts).\n"
+)
+
+
 def synthesis_node(state, llm, config) -> Dict[str, Any]:
     print("\n=== Synthesis ===")
     profile = state.get("background_profile", {})
@@ -634,13 +648,7 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"  long-term technicals: trend={tech.get('trend')}, window return={tech.get('return_window_pct')}%\n"
         f"ANALOG BASE RATE: {analog_desc}\n"
         f"{enriched_desc}\n"
-        f"Apply the news×fundamentals matrix:\n"
-        f"  shift POSITIVE + fundamentals improving → high-conviction LONG\n"
-        f"  shift NEGATIVE + fundamentals deteriorating → high-conviction SHORT\n"
-        f"  shift NEGATIVE + fundamentals improving (contradicts) → overreaction: contrarian LONG or NEUTRAL\n"
-        f"  shift POSITIVE + fundamentals deteriorating → hype risk: low conviction / avoid\n"
-        f"  NO shift → no actionable edge for this agent: default NEUTRAL with LOW conviction "
-        f"(strong standing fundamentals alone are NOT a trade trigger here — this agent trades shifts).\n"
+        f"{SYNTHESIS_MATRIX_RULES}"
         f"Valuation scales conviction (a positive shift at 40x sales ≠ at 12x earnings). "
         f"Give direction LONG/SHORT/NEUTRAL, conviction 0-1, horizon (e.g. '4-12 weeks'), a concise thesis, "
         f"supporting factors, key risks, and explicit invalidation conditions (what observation kills the thesis)."

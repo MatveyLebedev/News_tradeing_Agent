@@ -1,0 +1,29 @@
+# Offline evals: run when agent prompts/tools or model config change.
+# Frozen JSONL datasets live in-repo → no DB needed; only an OpenRouter key.
+# Skips gracefully on forks without the secret. Dormant until the repo has a remote.
+name: Evals
+
+on:
+  pull_request:
+    paths:
+      - "longterm_agent/agent/**"
+      - "longterm_agent/tools/**"
+      - "core/llm.py"
+      - "core/settings.py"
+      - "evals/**"
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[agents,dev]"
+      - name: Run evals vs baseline
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python -m evals.run_evals --tolerance 0.05

@@ -312,6 +312,32 @@ Changes:
 Acceptance: baseline scores committed (`evals/BASELINE.md`); a deliberately broken prompt
 (e.g. inverted matrix) fails the `synthesis_matrix` eval.
 
+**Status 2026-07-11 — done (one deliberate deviation: frozen JSONL in-repo instead of
+LangSmith-hosted datasets — reproducible, no cloud dependency; `--push-langsmith` mirrors
+them when wanted):**
+- ✅ `evals/` package: `matrix.py` (pure news×fundamentals cell logic + scorer with
+  low-conviction escape hatches), `build_datasets.py` (live DB → frozen
+  `evals/datasets/*.jsonl`, rebuilt deliberately, versioned in git),
+  `run_evals.py` (runs REAL node code — `_map_bucket`, `synthesis_node` — on the frozen
+  cases; no DB needed at eval time).
+- ✅ Datasets built: `bucket_map` 50 cases (ground truth = unambiguous graph-AFFECTS
+  majority ≥0.75 with ≥4 labels; labels STRIPPED from inputs — prompt-leak guard;
+  round-robin across tickers), `synthesis_matrix` 24 (8 synthetic canonical cells for
+  full coverage + 16 real states with PIT re-reads), `thesis_quality` 5 (real directional
+  theses; 4-criteria LLM-judge rubric).
+- ✅ Baseline recorded (`evals/BASELINE.md`): bucket_map 0.5, synthesis_matrix 0.958,
+  thesis_quality 0.7. Finding: bucket_map misses are one-sided — the map model reads
+  positive weeks correctly (+0.5…+0.8) but hedges negative weeks to ~0.0 instead of
+  going negative. First concrete prompt-tuning target for the Phase 11 loop.
+- ✅ Harness sanity check (`--check-harness`): inverted matrix tanks the synthesis eval
+  (normal 1.0 vs inverted 0.625) — the metric can tell a correct matrix from a broken one.
+- ✅ `SYNTHESIS_MATRIX_RULES` extracted as a module constant in `nodes.py`
+  (byte-identical text → LLM cache keys unchanged) so evals can reference/invert it.
+- ✅ CI: `.github/workflows/evals.yml` on PRs touching agent/tools/llm/settings/evals;
+  regression gate `--tolerance 0.05` vs baseline; skips gracefully without the key.
+- ✅ 118 tests green (7 new in test_eval_harness.py: matrix cells, escape hatches,
+  dataset integrity incl. no-leak guard), ruff clean.
+
 ---
 
 ## Phase 5 — Detection v2: robust sentiment stats + semantic retrieval  ⚠ label-changing
