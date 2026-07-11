@@ -21,6 +21,13 @@ docker-compose.yml
 .DS_Store
 .vscode
 .idea
+# secrets must NEVER enter an image (longterm Dockerfile does COPY . .)
+.env
+.env.*
+*.bak
+# local tooling / bulky non-runtime dirs
+.claude/
+longterm_agent/reports/
 
 
 
