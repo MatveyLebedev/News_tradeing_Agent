@@ -8,8 +8,14 @@ from longterm_agent.agent.nodes import _analog_desc
 
 
 def test_version_split():
-    assert LongTermAgentConfig.DETECTION_VERSION == "0.1.0"
-    assert LongTermAgentConfig.PIPELINE_VERSION == "0.1.1"
+    # Phase 5: DETECTION_VERSION derives from METRICS_VERSION (1→0.1.0, 2→0.2.0).
+    expected = {1: "0.1.0", 2: "0.2.0"}[LongTermAgentConfig.METRICS_VERSION]
+    assert LongTermAgentConfig.DETECTION_VERSION == expected
+    # v1 must stay the default until the v2 walk-forward gates pass (live cutover is an
+    # explicit env change, never a code default flip hidden in a commit).
+    import os
+    if not os.getenv("LT_METRICS_VERSION"):
+        assert LongTermAgentConfig.DETECTION_VERSION == "0.1.0"
     # DB rows carry the detection version in `agent_version` — the alias must not drift,
     # or existing shift_library analogs and results identities get orphaned.
     assert LongTermAgentConfig.AGENT_VERSION == LongTermAgentConfig.DETECTION_VERSION

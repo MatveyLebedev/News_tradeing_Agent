@@ -106,6 +106,9 @@ def corpus_collection_node(state, db_manager, neo4j_manager, config) -> Dict[str
     corpus = get_company_news_corpus(
         ticker, as_of, lookback, db_manager, neo4j_manager,
         min_confidence=config.AFFECTS_MIN_CONFIDENCE,
+        embed_enabled=config.CORPUS_EMBED_ENABLED,
+        embed_tau=config.EMBED_TAU,
+        embed_top_k=config.EMBED_TOP_K,
     )
     articles = corpus["articles"]
     buckets = bucket_by_week(articles, as_of, lookback, bucket_days)
@@ -182,7 +185,9 @@ def background_profiling_node(state, llm_map, llm_reduce, config, db_manager=Non
     as_of = state["as_of"]
     ticker = state["ticker"]
     bucket_days = config.BUCKET_DAYS
-    version = config.AGENT_VERSION
+    # Cache key ≠ detection version: summaries depend on corpus+map prompt+map model only,
+    # which are identical across metrics v1/v2 (see config.BUCKET_CACHE_VERSION).
+    version = config.BUCKET_CACHE_VERSION
 
     # --- MAP (with per-week cache for COMPLETE buckets only) ---
     cache_hits = 0
@@ -268,6 +273,8 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
         min_abs_delta=config.MIN_ABS_DELTA,
         attention_spike_ratio=config.ATTENTION_SPIKE_RATIO,
         neo4j_manager=neo4j_manager,
+        metrics_version=config.METRICS_VERSION,
+        articles=state.get("news_corpus"),
     )
     state["background_metrics"] = metrics
     sm = metrics["sentiment"]

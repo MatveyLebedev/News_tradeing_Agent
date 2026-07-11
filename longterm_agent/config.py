@@ -26,18 +26,38 @@ from model_config import (
 # Migration: existing DB rows carry "0.1.0" in their `agent_version` column → that value
 #   IS the detection version, so AGENT_VERSION stays an alias of DETECTION_VERSION for
 #   backward compat (results identity + grading queries unchanged, no schema migration).
-DETECTION_VERSION = "0.1.0"
-PIPELINE_VERSION = "0.1.1"   # Phase 3: reflection wiring, analog CI, config-ified risk knobs
+#
+# Phase 5: DETECTION_VERSION derives from LT_METRICS_VERSION, so one env flag selects the
+# whole detection release coherently — statistics path, embed corpus source, AND the
+# version stamped on rows / used by analog lookups and the bucket cache:
+#   1 → "0.1.0"  weekly bucket LLM sentiments, mean/std z-score, graph+ilike corpus
+#   2 → "0.2.0"  per-article AFFECTS daily series, median/MAD robust break, +embed corpus
+# v2 rows coexist with v1 in shift_library (agent_version column); live cutover = setting
+# LT_METRICS_VERSION=2 in the server env AFTER the walk-forward gates pass.
+METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
+DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0"}[METRICS_VERSION]
+PIPELINE_VERSION = "0.2.0"   # Phase 5: detection v2 shipped (v1 still the live default)
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
+
+# BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
+# A cached weekly map summary depends on exactly: corpus definition + map prompt + map
+# model — all UNCHANGED between metrics v1 and v2 (the Phase 5b embed source failed its
+# precision audit and stays off, so the corpus is byte-identical). Sharing the cache
+# across versions (a) saves ~1k map calls per backfill and (b) makes the v1-vs-v2 label
+# comparison isolate the estimator change — identical summaries feed both. Bump this
+# whenever the corpus definition, map prompt, or map model changes.
+BUCKET_CACHE_VERSION = "0.1.0"
 
 
 class LongTermAgentConfig:
     """Config for the long-term news-background + fundamentals agent."""
 
     AGENT_NAME = "longterm_agent"
+    METRICS_VERSION = METRICS_VERSION
     DETECTION_VERSION = DETECTION_VERSION
     PIPELINE_VERSION = PIPELINE_VERSION
     AGENT_VERSION = AGENT_VERSION  # == DETECTION_VERSION
+    BUCKET_CACHE_VERSION = BUCKET_CACHE_VERSION
 
     # --- Windows (see plan §8: start at 60d, raise to 90d as news history accrues) ---
     LOOKBACK_DAYS_BACKGROUND = int(os.getenv("LT_LOOKBACK_DAYS", "60"))
@@ -71,6 +91,17 @@ class LongTermAgentConfig:
 
     # --- Corpus retrieval ---
     AFFECTS_MIN_CONFIDENCE = float(os.getenv("LT_AFFECTS_MIN_CONF", "0.5"))
+    # Semantic retrieval (Phase 5b): third corpus source via pgvector cosine search.
+    # AUDIT VERDICT (2026-07-11): FAILED the precision guard — with gemini-embedding-001,
+    # known-relevant articles (median sim ≈0.50 to a query vector; ≈0.72 to the corpus
+    # centroid) are inseparable from market noise (bg p90 ≈ own median), and the target
+    # class (subsidiary phrasing, e.g. Waymo-without-Google) scores BELOW sector chatter.
+    # No usable τ exists → OFF by default in ALL versions. The code path stays for future
+    # embedding upgrades; enabling it is a corpus change = new DETECTION_VERSION +
+    # BUCKET_CACHE_VERSION bump. Experiment-only override: LT_CORPUS_EMBED=true.
+    CORPUS_EMBED_ENABLED = os.getenv("LT_CORPUS_EMBED", "false").lower() == "true"
+    EMBED_TAU = float(os.getenv("LT_EMBED_TAU", "0.62"))       # no usable value found (audit)
+    EMBED_TOP_K = int(os.getenv("LT_EMBED_TOP_K", "400"))      # candidates per HNSW scan
 
     # --- Models (OpenRouter) ---
     LLM_MODEL = _LLM_MODEL              # main reasoning model (reduce, shift, synthesis)
@@ -135,6 +166,7 @@ class LongTermAgentConfig:
             pass
         return {
             "detection_version": cls.DETECTION_VERSION,
+            "metrics_version": cls.METRICS_VERSION,
             "pipeline_version": cls.PIPELINE_VERSION,
             "agent_version": cls.AGENT_VERSION,  # == detection_version (back-compat)
             "git_revision": rev,
@@ -155,6 +187,9 @@ class LongTermAgentConfig:
                 "min_analogs": cls.MIN_ANALOGS,
                 "shift_z": cls.SENTIMENT_SHIFT_Z_THRESHOLD,
                 "conf_threshold": cls.LONGTERM_CONFIDENCE_THRESHOLD,
+                "corpus_embed": cls.CORPUS_EMBED_ENABLED,
+                "embed_tau": cls.EMBED_TAU,
+                "embed_top_k": cls.EMBED_TOP_K,
             },
         }
 

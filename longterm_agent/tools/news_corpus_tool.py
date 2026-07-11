@@ -1,8 +1,8 @@
 """
 Company news-corpus retrieval (§3.1) for the long-term agent.
 
-Builds the set of articles about ONE company over a period by combining two sources
-and deduping by `news.id`:
+Builds the set of articles about ONE company over a period by combining up to three
+sources and deduping by `news.id`:
 
   1. Neo4j AFFECTS (precision + sentiment) — events that affect the company, restricted
      to COMPANY-domain event types and a confidence floor. This is the precision path:
@@ -11,6 +11,12 @@ and deduping by `news.id`:
      sentiment for free.
   2. ILIKE recall — title/summary matches on the company's common name(s) + ticker, to
      catch articles the graph didn't link.
+  3. embed (Phase 5b, detection v2 only) — pgvector cosine search on `news.embedding`
+     (HNSW index) with a fixed per-ticker query string, similarity floor τ. Catches
+     product/subsidiary/supply-chain phrasing that names neither the company nor the
+     ticker. Corpus membership feeds detection → the source is gated by the detection
+     version, and embed-only articles are tagged in provenance so a bad τ is visible
+     per run.
 
 Everything is bounded by [start, end]; `end` = `as_of`, so nothing after the analysis
 date leaks in (no lookahead). The weekly bucketing helper turns the corpus into the
@@ -126,6 +132,54 @@ def _ilike_articles(
         return []
 
 
+def embed_query_text(ticker: str) -> str:
+    """The FIXED embed-search seed for a ticker — one string, deterministic, so the
+    query embedding is memoized per process and prompts stay byte-stable."""
+    names = ", ".join(names_for(ticker) or [ticker.upper()])
+    return f"{names} ({ticker.upper()}) company stock news: products, business, deals, results"
+
+
+def _embed_articles(
+    ticker: str, start: datetime, end: datetime, db_manager: Any,
+    tau: float, top_k: int,
+) -> List[Dict[str, Any]]:
+    """Semantic recall path: nearest news by cosine sim to the company query, sim ≥ τ.
+
+    ORDER BY embedding <=> vec uses the HNSW index; the publication window keeps PIT
+    discipline. Articles missing an embedding are simply unreachable here (they can
+    still arrive via graph/ilike) — embed is a recall supplement, never a gate.
+    """
+    from core.embeddings import embed_text  # lazy: pulls langchain_openai
+    vec = embed_text(embed_query_text(ticker))
+    if vec is None:
+        return []
+    vec_lit = "[" + ",".join(f"{x:.7f}" for x in vec) + "]"
+    sql = """
+        SELECT id, title, summary, published,
+               1 - (embedding <=> %s::vector) AS sim
+        FROM news
+        WHERE published >= %s AND published <= %s AND embedding IS NOT NULL
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    """
+    try:
+        conn = _fresh_conn(db_manager)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, [vec_lit, start, end, vec_lit, top_k])
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        return [
+            {"id": r[0], "title": r[1], "summary": r[2], "published": r[3],
+             "embed_sim": round(float(r[4]), 4)}
+            for r in rows if float(r[4]) >= tau
+        ]
+    except Exception as e:
+        print(f"  ⚠ embed corpus query failed for {ticker}: {e}")
+        return []
+
+
 def _fetch_by_ids(ids: List[int], start: datetime, end: datetime, db_manager: Any) -> List[Dict[str, Any]]:
     if not ids:
         return []
@@ -155,6 +209,9 @@ def get_company_news_corpus(
     db_manager: Any,
     neo4j_manager: Any = None,
     min_confidence: float = 0.5,
+    embed_enabled: bool = False,
+    embed_tau: float = 0.62,
+    embed_top_k: int = 400,
 ) -> Dict[str, Any]:
     """
     Build the company news corpus for [as_of - lookback_days, as_of].
@@ -163,7 +220,8 @@ def get_company_news_corpus(
         {
           "ticker": str,
           "articles": [{id, title, summary, published, affects_sentiment|None, sources:[...]}],
-          "provenance": {"graph": int, "ilike": int, "both": int, "total": int},
+          "provenance": {"graph": int, "ilike": int, "embed": int, "both": int,
+                         "embed_only": int, "total": int},
         }
     """
     start = as_of - timedelta(days=lookback_days)
@@ -191,6 +249,20 @@ def get_company_news_corpus(
         a["affects_sentiment"] = graph_map.get(a["id"])
         by_id[a["id"]] = a
 
+    # Semantic recall (detection v2): merge embed hits; tag pre-existing articles too, so
+    # the audit can see the graph∩embed / ilike∩embed overlap.
+    if embed_enabled:
+        for a in _embed_articles(ticker, start, as_of, db_manager, embed_tau, embed_top_k):
+            if a["id"] in by_id:
+                ex = by_id[a["id"]]
+                ex["sources"].append("embed")
+                ex["embed_sim"] = a["embed_sim"]
+            else:
+                a = dict(a)
+                a["sources"] = ["embed"]
+                a["affects_sentiment"] = graph_map.get(a["id"])
+                by_id[a["id"]] = a
+
     # Sort by (published, id): the id tiebreaker makes the article sequence fully deterministic
     # for equal timestamps, so the map/reduce prompts are byte-stable → the LLM cache (B0) hits.
     articles = sorted(by_id.values(), key=lambda x: (x["published"], x["id"]))
@@ -198,7 +270,9 @@ def get_company_news_corpus(
     prov = {
         "graph": sum(1 for a in articles if "graph" in a["sources"]),
         "ilike": sum(1 for a in articles if "ilike" in a["sources"]),
+        "embed": sum(1 for a in articles if "embed" in a["sources"]),
         "both": sum(1 for a in articles if len(a["sources"]) > 1),
+        "embed_only": sum(1 for a in articles if a["sources"] == ["embed"]),
         "total": len(articles),
     }
     return {"ticker": ticker.upper(), "articles": articles, "provenance": prov}

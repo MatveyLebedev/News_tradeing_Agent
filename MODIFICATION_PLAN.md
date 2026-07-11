@@ -381,6 +381,41 @@ Acceptance: v2 walk-forward report exists alongside VALIDATION_REPORT.md; analog
 under v2 only match v2 rows; corpus provenance shows all three sources with the embed
 share and coverage numbers.
 
+**Status 2026-07-11 — done (one honest deviation: the embed source FAILED its precision
+audit and ships disabled — full analysis in `longterm_agent/VALIDATION_REPORT_v0.2.md`):**
+- ✅ Prerequisite measured: AFFECTS coverage **88.2%** on the universe (min GOOG 74.4%)
+  → per-article series is primary; hybrid fallback carries ~12%.
+- ✅ 5a shipped: `compute_shift_metrics(metrics_version=2, articles=…)` — per-article
+  daily series (graph label ±1/0, unlabeled → bucket LLM sentiment), **median/scaled-MAD**
+  break test, sparse guards (3 recent / 5 baseline article-days → sentiment branch
+  abstains), zero-MAD coarse fallback (delta/0.3, same scale as v1). Attention branch,
+  `min_abs_delta`, turnover, inflection identical to v1. Same output keys (+`estimator`,
+  `n_*_days`, `label_coverage`, `sparse`, top-level `metrics_version`).
+- ✅ 5b audit FAILED → embed source off in ALL versions (`LT_CORPUS_EMBED` experiment
+  flag only): gemini-embedding-001 cosine encodes news genre, not company identity —
+  known-relevant med sim ≈0.50 *below* sector chatter (0.55–0.60); Waymo-without-Google
+  class inseparable; corpus-centroid variant also fails (bg p90 ≈ own median). Code path
+  + HNSW verified (90.5% fill; June gap 68.5% noted). `core/embeddings.py` retries the
+  flaky endpoint and raises after 4 attempts (labels must not depend on API weather).
+- ✅ Version wiring: `LT_METRICS_VERSION` (default 1) → `DETECTION_VERSION` 0.1.0/0.2.0;
+  `PIPELINE_VERSION=0.2.0`; bucket cache decoupled via `BUCKET_CACHE_VERSION="0.1.0"`
+  (corpus+map prompt+map model identical across v1/v2 → cache shared, comparison isolates
+  the estimator).
+- ✅ Backfill + controlled comparison (`compare_detections.py`, one pass, same corpus &
+  summaries): 677 decided grid points; v1 flags **39%** of ticker-weeks, v2 **22%**;
+  agreement 72.1%; 23/24 direction flips were attention-triggered sign-noise; stored-v1
+  graph-drift 1/17. v2 library: 152 rows under 0.2.0 (v1 rows untouched), 93 graded:
+  directional hit-rate v1 41% (median −1.6%) vs v2 52% (median +0.1%).
+- ✅ Manual review of all 7 wf-window disagreements → v2 correct or tie in every case;
+  the v0.1 AMD "edge" shifts were Broadcom sector contagion, correctly rejected by v2.
+- ✅ Walk-forward gates on v2 (`wf_2026q2_v0.2`, frozen config, OOS ✓): 2w +0.98%
+  CI [−2.2,+4.5], 4w +0.64% CI [−2.7,+4.4], calibration non-monotonic, FDR 0/0,
+  ESTIMATE n=13 — v0.1's apparent 2w edge does not reproduce (it was AMD concentration).
+  Per protocol §7 neither version is a verdict; forward accumulation decides.
+- ✅ 129 tests green (11 new in test_phase5.py), ruff clean.
+- 🟡 **Live cutover awaits user go**: set `LT_METRICS_VERSION=2` in the server env
+  (checklist in VALIDATION_REPORT_v0.2.md §6). v1 remains the code default until then.
+
 ---
 
 ## Phase 6 — Deep analysis v2 (advisory only; no label impact)
@@ -546,7 +581,7 @@ the multi-target columns; export produces a non-empty dataset for ≥2 nodes.
 | Reflection loop | inject advice vs remove | inject (Phase 3) |
 | Lock tooling | uv vs pip-tools | uv |
 | Transcript provider | FMP / API Ninjas / defer | defer to Phase 9.3 |
-| Embed threshold τ | tune on audit sample | audit-first, no default |
+| Embed threshold τ | tune on audit sample | **RESOLVED 2026-07-11: audit failed — no usable τ exists in this embedding space; source ships disabled** (VALIDATION_REPORT_v0.2.md §4) |
 | Intraday `stock_prices` table | document-as-dead vs fix fetcher | decide in Phase 0 |
 
 ## Explicitly not in this plan

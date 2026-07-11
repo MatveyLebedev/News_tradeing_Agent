@@ -11,12 +11,38 @@ slice (last `shift_window_days`) and a baseline (everything earlier) and compute
   - new stories       : Neo4j Stories tied to the ticker that started in the recent window
   - inflection week   : the bucket with the largest jump vs the running baseline mean
 
-Everything degrades gracefully (Neo4j optional; tiny/empty baselines handled).
+Two sentiment estimators (Phase 5, selected by `metrics_version`):
+
+  v1 — weekly bucket LLM sentiments, count-weighted mean / population std. ~8 scalars per
+       window; a map-model change silently moves the series.
+  v2 — PER-ARTICLE sentiment (graph AFFECTS label → ±1/0; unlabeled articles fall back to
+       their bucket's LLM sentiment — the hybrid path, ~12% of the universe corpus),
+       aggregated to a DAILY mean series, then a robust median/MAD recent-vs-baseline
+       break test. Hundreds of points instead of ~8, and the decision decouples from
+       map-LLM variance where graph labels exist. Sparse-series guards (min daily points)
+       suppress the sentiment branch rather than fabricate a z from 2 points.
+
+The attention-spike branch, `min_abs_delta` magnitude guard, turnover, new-stories and
+inflection logic are IDENTICAL across versions. Everything degrades gracefully
+(Neo4j optional; tiny/empty baselines handled).
 """
 import re
-from statistics import pstdev
-from typing import Any, Dict, List
+from statistics import median, pstdev
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
+
+# v2 sparse-series guards: below these the sentiment break is not trusted (attention
+# branch still active). Part of the detection definition — changing them is a release.
+MIN_RECENT_DAYS = 3
+MIN_BASELINE_DAYS = 5
+# Same coarse fallback scale v1 uses when the baseline has no variance: a delta of 0.3
+# maps to z=1.0. Keeps the zero-MAD case (e.g. neutral-dominated payment networks)
+# bounded instead of exploding.
+_FALLBACK_SCALE = 0.3
+# MAD → σ-equivalent under normality, so z_threshold keeps one scale across v1/v2.
+_MAD_CONSISTENCY = 1.4826
+
+SENTIMENT_NUM = {"positive": 1.0, "bullish": 1.0, "negative": -1.0, "bearish": -1.0, "neutral": 0.0}
 
 
 def _weighted_mean(pairs):
@@ -33,6 +59,50 @@ def _split_recent_baseline(buckets_with_idx, shift_window_days, bucket_days):
     recent = set(range(max(0, n - n_recent), n))
     baseline = set(range(0, max(0, n - n_recent)))
     return recent, baseline
+
+
+def _scaled_mad(xs: List[float], center: float) -> float:
+    """Median absolute deviation around `center`, scaled to σ-equivalent (v2)."""
+    if len(xs) < 2:
+        return 0.0
+    return _MAD_CONSISTENCY * median([abs(x - center) for x in xs])
+
+
+def _daily_sentiment_series(articles, bucket_summaries, period_buckets):
+    """Per-article sentiment → daily-mean series (v2 primary input).
+
+    Article sentiment: graph AFFECTS label via SENTIMENT_NUM (±1/0); an unlabeled article
+    inherits its bucket's LLM sentiment (hybrid fallback — coverage measured at 88% on the
+    universe, so this path carries ~1 article in 8).
+
+    Returns (series, label_coverage) where series = [(date, mean, count)] sorted by date.
+    """
+    bucket_sent = {}
+    for i, s in enumerate(bucket_summaries):
+        bucket_sent[s.get("_bucket_index", i)] = float(s.get("sentiment", 0.0) or 0.0)
+    art_bucket = {}
+    for b in period_buckets:
+        for aid in b.get("article_ids", []):
+            art_bucket[aid] = b["index"]
+
+    by_day: Dict[Any, List[float]] = {}
+    labeled = total = 0
+    for a in articles:
+        pub = a.get("published")
+        if pub is None:
+            continue
+        total += 1
+        label = a.get("affects_sentiment")
+        if label in SENTIMENT_NUM:
+            s = SENTIMENT_NUM[label]
+            labeled += 1
+        else:
+            s = bucket_sent.get(art_bucket.get(a.get("id")), 0.0)
+        day = pub.date() if hasattr(pub, "date") else pub
+        by_day.setdefault(day, []).append(s)
+
+    series = [(d, sum(v) / len(v), len(v)) for d, v in sorted(by_day.items())]
+    return series, (labeled / total if total else 0.0)
 
 
 def _new_stories(ticker, recent_start, as_of, neo4j_manager) -> List[Dict[str, Any]]:
@@ -68,6 +138,8 @@ def compute_shift_metrics(
     min_abs_delta: float = 0.2,
     attention_spike_ratio: float = 2.0,
     neo4j_manager: Any = None,
+    metrics_version: int = 1,
+    articles: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     # align summaries with raw buckets by index
     rows = []
@@ -84,7 +156,9 @@ def compute_shift_metrics(
     recent = [r for r in rows if r["i"] in recent_idx]
     baseline = [r for r in rows if r["i"] in baseline_idx]
 
-    # --- sentiment z-score (count-weighted means; baseline std over non-empty buckets) ---
+    # --- v1 sentiment z-score (count-weighted means; baseline std over non-empty buckets).
+    # Computed in BOTH versions: it's the v1 decision input, and the inflection heuristic
+    # below keys on the weekly running baseline either way.
     recent_mean = _weighted_mean([(r["sentiment"], r["count"]) for r in recent])
     baseline_pairs = [(r["sentiment"], r["count"]) for r in baseline if r["count"] > 0]
     baseline_mean = _weighted_mean(baseline_pairs)
@@ -95,7 +169,38 @@ def compute_shift_metrics(
         z = delta / baseline_std
     else:
         # no baseline variance: fall back to a coarse delta-based signal
-        z = (delta / 0.3) if abs(delta) > 1e-6 else 0.0
+        z = (delta / _FALLBACK_SCALE) if abs(delta) > 1e-6 else 0.0
+    v1_baseline_mean = baseline_mean  # inflection anchor (weekly scale, both versions)
+
+    # --- v2 sentiment: per-article daily series, median/MAD robust break test.
+    # Replaces the DECISION inputs (delta/z) and the reported sentiment stats; the same
+    # dict keys keep their names so downstream readers (prompts, prints, stored JSON)
+    # work unchanged — `estimator` marks the semantics.
+    sentiment_extra: Dict[str, Any] = {}
+    sparse = False
+    if metrics_version >= 2 and articles is not None:
+        series, coverage = _daily_sentiment_series(articles, bucket_summaries, period_buckets)
+        cutoff = (as_of - timedelta(days=shift_window_days)).date()
+        as_of_day = as_of.date() if hasattr(as_of, "date") else as_of
+        recent_pts = [m for d, m, _ in series if cutoff < d <= as_of_day]
+        base_pts = [m for d, m, _ in series if d <= cutoff]
+        recent_mean = median(recent_pts) if recent_pts else 0.0
+        baseline_mean = median(base_pts) if base_pts else 0.0
+        baseline_std = _scaled_mad(base_pts, baseline_mean)
+        delta = recent_mean - baseline_mean
+        if baseline_std > 1e-6:
+            z = delta / baseline_std
+        else:
+            z = (delta / _FALLBACK_SCALE) if abs(delta) > 1e-6 else 0.0
+        # Sparse series → the sentiment branch abstains (attention branch still live).
+        sparse = len(recent_pts) < MIN_RECENT_DAYS or len(base_pts) < MIN_BASELINE_DAYS
+        sentiment_extra = {
+            "estimator": "daily_median_mad",
+            "n_recent_days": len(recent_pts),
+            "n_baseline_days": len(base_pts),
+            "label_coverage": round(coverage, 3),
+            "sparse": sparse,
+        }
 
     # --- attention spike (articles/day recent vs baseline) ---
     recent_days = max(1, sum(1 for r in recent) * bucket_days)
@@ -128,9 +233,10 @@ def compute_shift_metrics(
         turnover = 0.0
 
     # --- inflection: bucket with the largest jump vs running baseline mean ---
+    # (anchored on the WEEKLY v1 baseline in both versions — descriptive, not a decision)
     inflection_week = None
     if rows:
-        run_base = baseline_mean if baseline else rows[0]["sentiment"]
+        run_base = v1_baseline_mean if baseline else rows[0]["sentiment"]
         best = max(rows, key=lambda r: abs(r["sentiment"] - run_base) if r["count"] else 0.0)
         if best["count"]:
             inflection_week = best["week"]
@@ -144,13 +250,16 @@ def compute_shift_metrics(
     # move (|delta|) — against a very stable baseline a tiny 0.1 move is "significant" by z
     # alone but isn't a tradeable shift (the steady-negative case). Turnover is reported as
     # supporting context but does NOT auto-trigger the flag (even tokenized it's noisy).
-    sentiment_break = (abs(z) >= z_threshold) and (abs(delta) >= min_abs_delta)
+    sentiment_break = (abs(z) >= z_threshold) and (abs(delta) >= min_abs_delta) and not sparse
     attention_break = bool(spike_ratio) and spike_ratio >= attention_spike_ratio
     shift_flag = sentiment_break or attention_break
 
     # Continuous shift strength (0-1), deterministic — synthesis weights this instead of
     # relying on the hard binary, which is what flip-flops near the z threshold.
-    sent_comp = min(abs(z) / 2.0, 1.0) * (1.0 if abs(delta) >= min_abs_delta else abs(delta) / min_abs_delta)
+    if sparse:
+        sent_comp = 0.0  # abstaining sentiment branch contributes nothing (v2 guard)
+    else:
+        sent_comp = min(abs(z) / 2.0, 1.0) * (1.0 if abs(delta) >= min_abs_delta else abs(delta) / min_abs_delta)
     att_comp = min(max((spike_ratio or 0.0) - 1.0, 0.0) / 3.0, 1.0)
     shift_score = round(min(max(sent_comp, att_comp), 1.0), 2)
 
@@ -159,12 +268,14 @@ def compute_shift_metrics(
         direction = "positive" if delta > 0 else "negative"
 
     return {
+        "metrics_version": metrics_version,
         "sentiment": {
             "recent_mean": round(recent_mean, 3),
             "baseline_mean": round(baseline_mean, 3),
             "baseline_std": round(baseline_std, 3),
             "delta": round(delta, 3),
             "z": round(z, 2),
+            **sentiment_extra,
         },
         "attention": {
             "recent_per_day": round(recent_rate, 2),
