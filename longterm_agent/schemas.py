@@ -46,11 +46,21 @@ class BackgroundShift(BaseModel):
 
 
 # --- fundamentals_analysis ---
+_SubVerdict = Literal["improving", "stable", "deteriorating", "unknown"]
+
+
 class FundamentalsTrend(BaseModel):
     revenue_growth_trend: Optional[str] = None
     margin_trend: Optional[str] = None
     fcf_trend: Optional[str] = None
     debt_trend: Optional[str] = None
+    # Phase 12 sub-verdicts — persisted per block for the future calibration study;
+    # the HEADLINE verdict below keeps its matrix semantics unchanged.
+    growth_sub: _SubVerdict = "unknown"
+    profitability_sub: _SubVerdict = "unknown"
+    balance_sheet_sub: _SubVerdict = "unknown"
+    capital_allocation_sub: _SubVerdict = "unknown"
+    street_sub: _SubVerdict = "unknown"
     verdict: Literal["confirms", "ignores", "contradicts", "unknown"] = "unknown"
     reasoning: str = ""
 

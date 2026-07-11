@@ -232,6 +232,138 @@ def valuation_pit(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     return out
 
 
+# --- Phase 12: STORED-field wiring (expert checklist #43-47, #49-50, #53-54) -----------
+# Pure block builders over already-fetched rows (unit-testable without a DB); fetching
+# stays in read_fundamentals. All EDGAR cash-flow values are stored sign-normalized
+# positive (verified against NVDA/AAPL/XOM filings), so FCF = OCF − capex directly.
+
+def _cash_flow_block(qs) -> Dict[str, Any]:
+    """True PIT FCF, capex intensity, capital return — summed over the available as-filed
+    quarters (~TTM when 4 are present; window labeled so the LLM sees the coverage)."""
+    vals = [q["data"] for q in qs]
+    pairs = [(d.get("operating_cash_flow"), d.get("capex")) for d in vals
+             if d.get("operating_cash_flow") is not None and d.get("capex") is not None]
+    if not pairs:
+        return {"quarters": 0}
+    s_ocf = sum(o for o, _ in pairs)
+    s_capex = sum(c for _, c in pairs)
+    fcf = s_ocf - s_capex
+    bb = sum(d.get("stock_buyback") or 0 for d in vals)
+    dv = sum(d.get("dividends_paid") or 0 for d in vals)
+    return {
+        "quarters": len(pairs),
+        "window": f"{qs[-1]['period_end']}..{qs[0]['period_end']}",
+        "fcf": fcf,
+        "capex_intensity": round(_safe_div(s_capex, s_ocf), 3) if _safe_div(s_capex, s_ocf) is not None else None,
+        "buybacks": bb,
+        "dividends": dv,
+        "capital_return_vs_fcf": round(_safe_div(bb + dv, fcf), 3) if fcf and fcf > 0 else None,
+    }
+
+
+def _balance_block(d) -> Dict[str, Any]:
+    """PIT leverage from the latest as-filed balance sheet."""
+    if not d:
+        return {}
+    lt, st = d.get("long_term_debt"), d.get("short_term_debt")
+    total_debt = (lt or 0) + (st or 0) if (lt is not None or st is not None) else None
+    cr = _safe_div(d.get("current_assets"), d.get("current_liabilities"))
+    net_debt = (total_debt - d["cash_and_equivalents"]
+                if total_debt is not None and d.get("cash_and_equivalents") is not None else None)
+    dte = _safe_div(total_debt, d.get("stockholders_equity")) if total_debt is not None else None
+    return {
+        "long_term_debt": lt, "short_term_debt": st,
+        "current_ratio": round(cr, 2) if cr is not None else None,
+        "net_debt": net_debt,
+        "debt_to_equity": round(dte, 2) if dte is not None else None,
+    }
+
+
+def _opex_block(income) -> Dict[str, Any]:
+    """R&D / SG&A intensity (share of revenue) newest quarter + change vs the same quarter
+    a year ago (fiscal-matched, so seasonality doesn't masquerade as a trend)."""
+    if not income:
+        return {}
+    recent = income[0]
+    rev0 = _revenue(recent["data"])
+    out: Dict[str, Any] = {}
+    for key, name in (("rd_expense", "rd_intensity"), ("sga_expense", "sga_intensity")):
+        cur = _safe_div(recent["data"].get(key), rev0)
+        out[name] = round(cur, 3) if cur is not None else None
+        prior = _yoy_match(income, recent)
+        if prior and cur is not None:
+            prev = _safe_div(prior["data"].get(key), _revenue(prior["data"]))
+            if prev is not None:
+                out[f"{name}_yoy_delta"] = round(cur - prev, 3)
+    return out
+
+
+def _eps_trajectory(income) -> Dict[str, Any]:
+    """Sequential basic-EPS path (#50): the series + mean QoQ delta as a slope proxy."""
+    series = [q["data"].get("eps_basic") for q in income[:6]]
+    series = [round(v, 2) if v is not None else None for v in series]
+    known = [v for v in series if v is not None]
+    out = {"series_newest_first": series}
+    if len(known) >= 3:
+        deltas = [known[i] - known[i + 1] for i in range(len(known) - 1)]
+        avg = sum(deltas) / len(deltas)
+        out["avg_qoq_delta"] = round(avg, 3)
+        out["slope"] = "rising" if avg > 0.01 else ("falling" if avg < -0.01 else "flat")
+    return out
+
+
+def _street_block(info, price) -> Dict[str, Any]:
+    """Analyst positioning + risk stats from the yfinance snapshot (#53-54)."""
+    if not info:
+        return {}
+    out = {
+        "recommendation_mean": info.get("recommendationMean"),
+        "recommendation": info.get("recommendationKey"),
+        "beta": info.get("beta"),
+    }
+    tgt = info.get("targetMeanPrice")
+    if tgt and price:
+        out["target_gap"] = round(tgt / price - 1, 3)
+    hi, lo = info.get("fiftyTwoWeekHigh"), info.get("fiftyTwoWeekLow")
+    if price and hi and lo and hi > lo:
+        out["pos_52w"] = round((price - lo) / (hi - lo), 2)  # 0=at low, 1=at high
+    return out
+
+
+def peer_forward_pe(db_manager, ticker: str, sector: str, as_of: datetime) -> Dict[str, Any]:
+    """Relative multiple gap (#49): the company's forward P/E vs its sector peers' median
+    (latest snapshot per peer fetched ≤ as_of). 'Expensive vs its peers' ≠ 'expensive'."""
+    if not sector:
+        return {}
+    rows = _rows(db_manager, """
+        SELECT DISTINCT ON (ticker) ticker, data->>'sector', data->>'forwardPE'
+        FROM fundamentals
+        WHERE source='yfinance' AND kind='info' AND fetch_date <= %s
+        ORDER BY ticker, fetch_date DESC
+    """, [as_of.date()])
+    peers, own = [], None
+    for tk, sec, fpe in rows:
+        try:
+            fpe = float(fpe)
+        except (TypeError, ValueError):
+            continue
+        if fpe <= 0:
+            continue
+        if tk == ticker.upper():
+            own = fpe
+        elif sec == sector:
+            peers.append(fpe)
+    if own is None or len(peers) < 3:
+        return {"n_peers": len(peers)}
+    peers_sorted = sorted(peers)
+    median = peers_sorted[len(peers_sorted) // 2]
+    pct = sum(1 for p in peers_sorted if p <= own) / len(peers_sorted)
+    return {"n_peers": len(peers), "forward_pe": own,
+            "peer_median_fpe": round(median, 2),
+            "peer_percentile": round(pct, 2),
+            "gap_vs_median": round(own / median - 1, 3) if median else None}
+
+
 def read_fundamentals(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     """Assemble an as-of fundamentals summary for the LLM verdict + CLI."""
     income = _edgar_quarters(db_manager, ticker, as_of, "income_statement")
@@ -290,5 +422,19 @@ def read_fundamentals(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any
         if pit.get(k) is not None:
             result["valuation"][k] = pit[k]
     result["valuation_pit"] = pit
+
+    # Phase 12 — wire the STORED fields into the verdict's evidence (zero new data):
+    cf_quarters = _edgar_quarters(db_manager, ticker, as_of, "cash_flow", limit=4)
+    bal_rows = _rows(db_manager, """
+        SELECT data FROM fundamentals
+        WHERE ticker=%s AND source='edgar' AND kind='balance_sheet' AND filed_date <= %s
+        ORDER BY period_end DESC LIMIT 1
+    """, [ticker.upper(), as_of.date()])
+    result["capital"] = _cash_flow_block(cf_quarters)
+    result["balance"] = _balance_block(bal_rows[0][0] if bal_rows else None)
+    result["opex"] = _opex_block(income)
+    result["eps_trajectory"] = _eps_trajectory(income)
+    result["street"] = _street_block(info, pit.get("price"))
+    result["peer_multiples"] = peer_forward_pe(db_manager, ticker, result["sector"], as_of)
 
     return result

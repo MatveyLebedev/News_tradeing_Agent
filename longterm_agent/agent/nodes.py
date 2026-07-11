@@ -367,16 +367,29 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
     # Consume reviewer critique on a reflection loop-back to this node, then clear it (Phase 3).
     critique = state.pop("reflection_advice", "") if state.get("loop_to") == "fundamentals_analysis" else ""
     critique_line = f"REVIEWER CRITIQUE TO ADDRESS: {critique}\n\n" if critique else ""
+    # Phase 12 — structured evidence blocks (all point-in-time, wired from stored filings;
+    # blocks render only when data exists so thin tickers don't get walls of None).
+    def _blk(label, d):
+        return f"  {label}: {d}\n" if d else ""
     prompt = (
         f"You judge whether {ticker}'s FUNDAMENTALS confirm, ignore, or contradict the news-background shift.\n\n"
         f"{critique_line}"
         f"News-background shift: {shift_desc}. {shift.get('reasoning','')}\n\n"
         f"Fundamentals (as-of {fund['as_of']}, point-in-time):\n"
-        f"  revenue YoY={fund['revenue_yoy']}, QoQ={fund['revenue_qoq']}\n"
-        f"  margin series (newest→oldest): {margins[:4]}\n"
-        f"  valuation: {fund['valuation']}\n"
-        f"  free cash flow: {fund['fcf']}, debt: {fund['debt']}\n"
-        f"  analyst estimate revisions (expectation gap): {fund['expectation_gap']}\n"
+        f"  GROWTH: revenue YoY={fund['revenue_yoy']}, QoQ={fund['revenue_qoq']}\n"
+        f"  PROFITABILITY: margin series (newest→oldest): {margins[:4]}\n"
+        + _blk("EPS trajectory", fund.get("eps_trajectory"))
+        + _blk("OPEX intensity (R&D/SG&A share of revenue, Δ vs yr ago)", fund.get("opex"))
+        + f"  VALUATION: {fund['valuation']}\n"
+        + _blk("PEER MULTIPLE (fwd P/E vs sector median — 'expensive vs peers' ≠ 'expensive')",
+               fund.get("peer_multiples"))
+        + f"  CAPITAL (as-filed, window={fund.get('capital', {}).get('window')}): "
+          f"FCF={fund.get('capital', {}).get('fcf')}, "
+          f"capex/OCF={fund.get('capital', {}).get('capex_intensity')}, "
+          f"capital return vs FCF={fund.get('capital', {}).get('capital_return_vs_fcf')}\n"
+        + _blk("BALANCE SHEET", fund.get("balance"))
+        + _blk("STREET (target gap, recommendation, beta, 52w position)", fund.get("street"))
+        + f"  analyst estimate revisions (expectation gap): {fund['expectation_gap']}\n"
         f"  long-term technicals: {tech}\n\n"
         f"Decide the verdict:\n"
         f"  'confirms'    — fundamentals move the SAME way as the news shift\n"
@@ -384,7 +397,9 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
         f"revenue/margins → overreaction candidate)\n"
         f"  'ignores'     — fundamentals are flat / unrelated to the shift\n"
         f"Fill revenue_growth_trend, margin_trend, fcf_trend, debt_trend with short phrases grounded "
-        f"in the numbers above. Be concrete."
+        f"in the numbers above. Also fill the five SUB-VERDICTS (growth_sub, profitability_sub, "
+        f"balance_sheet_sub, capital_allocation_sub, street_sub) as improving/stable/deteriorating/"
+        f"unknown — each judged ONLY on its block above. Be concrete."
     )
     try:
         ft: FundamentalsTrend = llm.with_structured_output(FundamentalsTrend).invoke(prompt)
