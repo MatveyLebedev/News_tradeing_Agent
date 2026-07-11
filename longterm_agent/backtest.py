@@ -16,6 +16,8 @@ Reproducible: enable the B0 LLM cache and run with reflection off.
     python -m longterm_agent.backtest --backtest-id exp1 --report-only   # re-print the report
 """
 import argparse
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, date
 from pathlib import Path
 
@@ -61,26 +63,59 @@ def _regime(cur, as_of: date, lookback=60, band=0.03):
 
 
 # --------------------------------------------------------------------------- run
-def run_cohorts(cfg, tickers, cohorts, horizons, backtest_id, force=False):
-    from longterm_agent.agent.graph import create_longterm_graph
+# Per-worker isolated (db, neo, graph). The Neo4j driver's reconnect-on-failure path
+# closes the shared driver, which would break sibling threads mid-query — so each worker
+# thread builds and reuses its OWN context instead of sharing one graph. Parallelism is
+# safe for correctness: the B0 cache makes every cohort independent and content-addressed,
+# so recorded signals do not depend on execution order.
+_tls = threading.local()
+_ctx_lock = threading.Lock()
+_all_ctxs = []
+
+
+def _thread_ctx(cfg):
+    ctx = getattr(_tls, "ctx", None)
+    if ctx is None:
+        from longterm_agent.agent.graph import create_longterm_graph
+        from news_agent.database.db_manager import DBManager
+        db = DBManager(db_config=cfg.get_db_config(), min_conn=1, max_conn=3)
+        neo = None
+        try:
+            from graph_db.neo4j_manager import Neo4jManager
+            neo = Neo4jManager()
+        except Exception as e:
+            print(f"⚠ Neo4j unavailable in worker ({e})")
+        llm_map = cfg.make_llm(model=cfg.MAP_MODEL, max_tokens=2048)
+        llm_reduce = cfg.make_llm(model=cfg.LLM_MODEL, max_tokens=8000)
+        graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
+        ctx = _tls.ctx = {"db": db, "neo": neo, "graph": graph}
+        with _ctx_lock:
+            _all_ctxs.append(ctx)
+    return ctx
+
+
+def _run_one(cfg, backtest_id, prov, horizons, tk, as_of):
+    ctx = _thread_ctx(cfg)
+    try:
+        final = ctx["graph"].invoke({"ticker": tk.upper(), "as_of": as_of,
+                                     "lookback_days": cfg.LOOKBACK_DAYS_BACKGROUND,
+                                     "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": []})
+        _write_rows(cfg, backtest_id, prov, tk, as_of, horizons, final)
+        return True
+    except Exception as e:
+        # One bad (ticker, cohort) must never abort the sweep — log and move on.
+        print(f"  {as_of.date()} {tk}: ERROR {type(e).__name__}: {e}")
+        return False
+
+
+def run_cohorts(cfg, tickers, cohorts, horizons, backtest_id, force=False, workers=1):
     from longterm_agent.llm_cache import maybe_enable_llm_cache
-    from news_agent.database.db_manager import DBManager
 
     _ensure_table(cfg)
-    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible + cheap re-runs (B0)
+    maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible + cheap re-runs (B0). Global
+    # cache, set once here in the main thread; all workers share it (Postgres-backed, safe).
     prov = cfg.provenance()
-    print(f"backtest_id={backtest_id}  provenance={prov}")
-
-    db = DBManager(db_config=cfg.get_db_config(), min_conn=1, max_conn=5)
-    neo = None
-    try:
-        from graph_db.neo4j_manager import Neo4jManager
-        neo = Neo4jManager()
-    except Exception as e:
-        print(f"⚠ Neo4j unavailable ({e})")
-    llm_map = cfg.make_llm(model=cfg.MAP_MODEL, max_tokens=2048)
-    llm_reduce = cfg.make_llm(model=cfg.LLM_MODEL, max_tokens=8000)
-    graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
+    print(f"backtest_id={backtest_id}  workers={workers}  provenance={prov}")
 
     done = set()
     if not force:
@@ -91,24 +126,34 @@ def run_cohorts(cfg, tickers, cohorts, horizons, backtest_id, force=False):
             done = {(t, d) for t, d in cur.fetchall()}
         conn.close()
 
+    tasks = [(tk, as_of) for as_of in cohorts for tk in tickers
+             if (tk.upper(), as_of.date()) not in done]
+    skipped = len(cohorts) * len(tickers) - len(tasks)
+    if skipped:
+        print(f"  skipping {skipped} already-recorded (ticker, cohort) pairs")
+
     n_run = 0
-    for as_of in cohorts:
-        for tk in tickers:
-            if (tk.upper(), as_of.date()) in done:
-                print(f"  skip {as_of.date()} {tk} (already recorded)")
-                continue
+    if workers <= 1:
+        for tk, as_of in tasks:
+            n_run += _run_one(cfg, backtest_id, prov, horizons, tk, as_of)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = [ex.submit(_run_one, cfg, backtest_id, prov, horizons, tk, as_of)
+                    for tk, as_of in tasks]
+            for f in futs:
+                try:
+                    n_run += bool(f.result())
+                except Exception as e:  # _run_one swallows its own errors; belt-and-suspenders
+                    print(f"  worker error: {type(e).__name__}: {e}")
+
+    for ctx in _all_ctxs:  # tidy up the per-thread Neo4j drivers
+        if ctx.get("neo"):
             try:
-                final = graph.invoke({"ticker": tk.upper(), "as_of": as_of,
-                                      "lookback_days": cfg.LOOKBACK_DAYS_BACKGROUND,
-                                      "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": []})
-            except Exception as e:
-                print(f"  {as_of.date()} {tk}: ERROR {e}")
-                continue
-            _write_rows(cfg, backtest_id, prov, tk, as_of, horizons, final)
-            n_run += 1
-    if neo:
-        neo.close()
-    print(f"ran {n_run} (ticker, cohort) pipelines")
+                ctx["neo"].close()
+            except Exception:
+                pass
+    _all_ctxs.clear()
+    print(f"ran {n_run}/{len(tasks)} (ticker, cohort) pipelines")
 
 
 def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
@@ -119,6 +164,10 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
     shift = final.get("background_shift") or {}
     direction = "NO_DATA" if no_data else (sig.get("direction") or "NEUTRAL")
     traded = bool(filtered) and filtered.get("direction") in ("LONG", "SHORT")
+    if direction not in ("LONG", "SHORT", "NEUTRAL", "NO_DATA"):
+        print(f"  ⚠ {ticker} {as_of.date()}: unexpected direction {direction!r} "
+              f"(len {len(str(direction))}) — coercing to NEUTRAL")
+        direction = "NEUTRAL"
 
     conn = _conn(cfg)
     with conn.cursor() as cur:
@@ -303,6 +352,9 @@ def main():
     ap.add_argument("--end")
     ap.add_argument("--step", type=int, default=7)
     ap.add_argument("--horizons", nargs="+", type=int, default=[28])
+    ap.add_argument("--workers", type=int, default=1,
+                    help="parallel worker threads (each gets its own db/neo/graph). "
+                         "B0 cache keeps results order-independent, so this is reproducible.")
     ap.add_argument("--force", action="store_true", help="re-run cohorts already recorded")
     ap.add_argument("--report-only", action="store_true", help="skip run+grade, just print")
     ap.add_argument("--no-grade", action="store_true", help="skip grading")
@@ -315,7 +367,8 @@ def main():
         if args.tickers and args.start and args.end:
             cohorts = _weekly(datetime.strptime(args.start, "%Y-%m-%d"),
                               datetime.strptime(args.end, "%Y-%m-%d"), args.step)
-            run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id, args.force)
+            run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id,
+                        args.force, args.workers)
         if not args.no_grade:
             grade(cfg, args.backtest_id, args.asof_today, args.benchmark)
     report(cfg, args.backtest_id)

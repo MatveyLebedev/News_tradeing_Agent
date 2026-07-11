@@ -117,6 +117,38 @@ cleaner, smaller trade set with CIs straddling zero. Per protocol §7, **neither
 verdict**; forward accumulation decides. v2 rows accumulate under `agent_version='0.2.0'`
 (152 backfilled shifts, 93 already graded); analog lookups under v2 match only v2 rows.
 
+## 5b. Wide-universe check — 30 tickers × 9 cohorts (added 2026-07-11)
+
+Re-ran both versions on a 30-name universe (`wf_30x_v0.1` / `wf_30x_v0.2`, same frozen
+window/config, 20-worker parallel harness — `backtest.py --workers`). n≈44–75 per horizon,
+~4× the 8-ticker sample:
+
+| | v0.1 | **v0.2** |
+|---|---|---|
+| 4w traded / graded | 75 / 72 | 46 / 44 |
+| 2w win / mean | 45% / −1.10% | 50% / −0.88% |
+| 4w win / mean / median | 49% / −1.16% / −0.95% | **55% / −0.54% / +1.05%** |
+| 4w Sharpe (per-cohort) | −0.29 | **+0.57** |
+| calibration monotonic | no | no |
+
+**Trade-set decomposition (4w):** overlap 37; the **35 v1-only trades sum to −42.8%**
+(avg −1.2%) — v2's selectivity removed a net-losing book; the **7 v2-only trades sum to
++16.5%**. v0.1's 8-ticker "edge" confirmed dead on a wide universe (goes negative).
+
+**Where v2's remaining losses live:** two counter-trend SHORTs shared by both versions —
+INTC 04-24 (−40.7%; SHORT into a +317% rally) and QCOM 05-01 (−36.8%). Both were
+*top-conviction* trades (0.75–0.78): the LLM is most confident exactly on dramatic
+contrarian "narrative reckoning" theses, and no risk gate penalizes fighting a strong
+trend (the priced-in guard only fires when the stock already moved WITH the signal).
+Excluding those two, v2's 4w book is positive; its other 12 SHORTs sum ≈ +0.3%.
+This cleanly separates the failure modes: **detection noise is fixed by v2; the residual
+losses are a conviction/gate problem** — the highest-conviction bucket is the worst
+(v2 4w: conv 0.75–0.85 mean −4.43%) — which is exactly Phase 7's scope. Any
+momentum-guard/conviction change inspired by this window must be validated forward
+(tuning on this window would break OOS discipline).
+
+12w horizon not yet matured (first cohort matures 2026-07-17) — re-run grading later.
+
 ## 6. Cutover checklist (when the user green-lights)
 
 1. Server env: add `LT_METRICS_VERSION=2` to the longterm_agent service env → provenance stamps

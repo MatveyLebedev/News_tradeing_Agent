@@ -413,6 +413,12 @@ audit and ships disabled — full analysis in `longterm_agent/VALIDATION_REPORT_
   ESTIMATE n=13 — v0.1's apparent 2w edge does not reproduce (it was AMD concentration).
   Per protocol §7 neither version is a verdict; forward accumulation decides.
 - ✅ 129 tests green (11 new in test_phase5.py), ruff clean.
+- ✅ Wide-universe check (2026-07-11, post-release): 30 tickers × 9 cohorts, 20-worker
+  parallel harness (`backtest.py --workers`). v2 beats v1 on every headline (4w: win 55%
+  vs 49%, median +1.05% vs −0.95%, Sharpe +0.57 vs −0.29) while trading 40% less; the 35
+  v1-only trades sum to −42.8%. Residual v2 losses = two top-conviction counter-trend
+  SHORTs (INTC/QCOM) shared with v1 → conviction/gate problem, Phase 7's scope
+  (VALIDATION_REPORT_v0.2.md §5b).
 - 🟡 **Live cutover awaits user go**: set `LT_METRICS_VERSION=2` in the server env
   (checklist in VALIDATION_REPORT_v0.2.md §6). v1 remains the code default until then.
 
