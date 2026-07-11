@@ -76,6 +76,9 @@ services:
       - .env
     environment:
       - TZ=America/New_York
+      # Detection v2 cutover (2026-07-11, validated: VALIDATION_REPORT_v0.2.md).
+      # Rollback = remove this line (v1 is the code default; v1 library stays intact).
+      - LT_METRICS_VERSION=2
       # Override schedule here or in .env (defaults: Sunday 06:00 ET batch, daily 07:00 grade)
       # - LT_BATCH_WEEKDAY=sunday
       # - LT_BATCH_TIME=06:00
