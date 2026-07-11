@@ -460,6 +460,21 @@ backfilled onto wf_30x_v0.1/v0.2/g2ct; report verified against the ad-hoc analys
 
 ---
 
+## Phase 6-pre — MEASURE the current deep analysis first (added 2026-07-12)
+
+Deep analysis has NEVER been measured: every backtest ran `LT_DEEP_ANALYSIS=false`
+(config: "OFF in backtest, ON live") — so its ±0.2 advisory nudge affects live trades
+while being absent from every validated number (a live/backtest asymmetry). Before
+investing in Phase 6, run the A/B: `wf_30x_v0.2_deep` (same 30-ticker grid,
+`LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=true`) vs the `wf_30x_v0.2` baseline. Decide:
+(a) nudge helps → Phase 6 justified; (b) noise/harm → turn it OFF live for symmetry and
+skip/deprioritize Phase 6. **First attempt 2026-07-12 was destroyed by the OpenRouter
+weekly key limit (403 mid-sweep, fallback-NEUTRAL contamination) — rows deleted, must
+re-run on a healthy key. Run it from a pre-Phase-12 checkout (commit `1162a76`'s parent
+`4d148aa`) OR accept the fundamentals-v2 confound and compare against wf_30x_f12 instead.**
+
+---
+
 ## Phase 6 — Deep analysis v2 (advisory only; no label impact)
 
 **Goal:** the "adaptive depth" the docstring promises, at lower latency, with verifiable
@@ -663,6 +678,12 @@ Changes (expert items #43–47, #49–50, #53–54 — all STORED or computed-fr
 Acceptance: fundamentals prompt shows all blocks with PIT values; sub-verdicts persisted;
 A/B report vs v0.2 checked into docs/; no synthesis_matrix eval regression.
 
+**Status 2026-07-12 — code shipped (commit `1162a76`), A/B pending key-limit recovery:**
+- ✅ All blocks wired (capital/balance/opex/eps_trajectory/street/peer_multiples), signs
+  verified normalized; sub-verdicts in schema; prompt structured; 7 pure tests; NVDA live
+  smoke (FCF $74.8B, fwd P/E at 28th pct of 25 sector peers). `PIPELINE_VERSION` 0.5.0.
+- ⏳ wf_30x_f12 backtest queued (see "Queued backtests" below).
+
 ---
 
 ## Phase 13 — Sector-relative shift detection (detection v3 candidate) ⚠ label-changing
@@ -689,6 +710,50 @@ Changes:
 
 Acceptance: v2-vs-v3 comparison report; wf_30x_v0.3 gates alongside v0.2; the
 sector-contagion cases from VALIDATION_REPORT_v0.2.md §3 re-classified correctly.
+
+**Status 2026-07-12 — code COMPLETE but UNCOMMITTED (tests deferred by user):**
+- ✅ Written: `sector_map.py` (static groups, **industry granularity** — the live AMD
+  check proved a sector-level median too coarse: the Broadcom wave hit Semiconductors
+  while the 26-name Technology median stayed flat, so baseline groups are industries
+  with ≥4 members, semis-equipment merged into the semis complex, <4-member leftovers
+  unmapped → honest v2 degradation; GOOGL/GOOG twins never each other's peers),
+  `tools/sector_sentiment.py` (median-of-peers daily baseline, graph labels only —
+  LLM-free by design; process cache per (group, as_of)), metrics v3 in
+  `background_metrics.py` (excess series + `sector_break` context flag),
+  nodes wiring (baseline computed in corpus_collection when `LT_METRICS_VERSION>=3`),
+  `compare_detections --versions OLD NEW` (writes 0.3.0 rows), `config` mapping
+  3→"0.3.0", tests in `test_phase13.py` (AMD-shape suppression, idiosyncratic
+  survival, degradation, map integrity).
+- ⏳ TO RESUME: (1) `python -m pytest longterm_agent/tests/ -q` (last run: 5/6 new tests
+  passed, NEM-orphan fixed after, full suite not re-run), (2) commit Phase 13,
+  (3) live AMD 06-04/06-11 re-check on the semis baseline, (4) queued backtests below.
+
+---
+
+## Queued backtests (waiting on user "go" after key fix; 2026-07-12)
+
+OpenRouter weekly key limit killed the first deep A/B mid-sweep (403 → fallback-NEUTRAL
+contamination; wf_30x_v0.2_deep rows DELETED). Key has since been fixed per user. Queue:
+
+```bash
+# 1. deep-analysis A/B (Phase 6-pre) — NOTE the pre-Phase-12 confound choice, see 6-pre
+LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=true LT_LLM_CACHE=true LT_MAX_REFLECTION=0 \
+  python -u -m longterm_agent.backtest --backtest-id wf_30x_v0.2_deep \
+  --tickers <30 names as in wf_30x_v0.2> --start 2026-04-24 --end 2026-06-19 --step 7 \
+  --horizons 14 28 84 --benchmark SPY --workers 20 --asof-today 2026-07-10
+
+# 2. Phase 12 A/B (fundamentals v2; diff vs wf_30x_v0.2 isolates the wiring)
+LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=false ... --backtest-id wf_30x_f12 ...
+
+# 3. Phase 13 (detection v3 on top of f12; diff vs wf_30x_f12 isolates sector-relative)
+#    FIRST: python -m longterm_agent.compare_detections --versions 2 3 \
+#             --start 2026-04-30 --end 2026-07-09   (v2-vs-v3 report + 0.3.0 backfill)
+#           python -m longterm_agent.grade_shifts   (grade the 0.3.0 rows for analogs)
+LT_METRICS_VERSION=3 LT_DEEP_ANALYSIS=false ... --backtest-id wf_30x_f12_v3 ...
+```
+
+Analysis after: deep vs v0.2; f12 vs v0.2; f12_v3 vs f12; AMD 06-04/06-11 must show
+`sector_break` under the semis baseline; write the 3-way report into docs/.
 
 ---
 
