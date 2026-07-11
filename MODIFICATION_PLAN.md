@@ -636,6 +636,58 @@ the multi-target columns; export produces a non-empty dataset for ≥2 nodes.
 
 ---
 
+## Deployment status (2026-07-11, session notes — resume point)
+
+Server ops executed over SSH (root@DB_HOST, expect + hidden password) after user approval.
+
+**Done:**
+- ✅ **news-fetcher redeployed with the SPY fix.** The running container had been started
+  from a stale image (`…news-fetcher:server`, no `BENCHMARK_TICKERS`); replaced with the
+  user-pushed `matveylebedev891/stock-fetcher:latest` (fix verified inside the pulled
+  image on the server before the swap). Recreated via
+  `docker run … --env-file /root/trade_agent/.env -e FETCH_INTERVAL_MIN=5 -e VERBOSE=true
+  -e FETCH_PRICES=true -e FETCH_FULL_TEXT=false … python -u auto_news_fetcher.py`
+  (default bridge network; DB via public IP — matches the old container). First fetch
+  cycle healthy. **Rollback container kept**: `bloomberg_news_fetcher_old` (stopped) —
+  delete after the Saturday 03:00 ET run proves SPY updates
+  (`SELECT max(date) FROM stock_prices_daily WHERE ticker='SPY'`).
+- ✅ `.dockerignore` now excludes `.env`/`*.bak`/`.claude/` — the longterm Dockerfile does
+  `COPY . .` and would have baked secrets. (Audited the already-public stock-fetcher
+  image: clean — selective COPYs only.)
+- ✅ `docker-compose.yml` (repo) carries `LT_METRICS_VERSION=2` for longterm-agent.
+- ✅ Local image **`longterm-agent:0.4.0` built (linux/amd64, 1.01 GB)**, verified: no
+  `.env`, code = pipeline 0.4.0. Archive was mid-transfer when the user paused the deploy.
+
+**Discovered server state (important):**
+- ❗ **longterm-agent has NEVER been deployed** — no container, so no Sunday batch, no
+  daily grading, no forward accumulation is currently running anywhere.
+- `/root/trade_agent/` holds only `.env` (no repo checkout); deploy model = prebuilt
+  images + `docker run`. Infra present: postgres (pgvector), neo4j, telegram-bot,
+  3x-ui (VPN — part of §9 already covered), openclaw.
+- Server `.env` gaps: no `TELEGRAM_CHAT_ID` (agent alerts will be silently disabled),
+  no `LT_TELEGRAM_BOT_TOKEN` (stats bot would conflict with the news telegram-bot on the
+  shared token — do NOT deploy stats bot until a second token exists).
+- Disk: 19 GB free (fine); 6.4 GB reclaimable in old docker images if needed.
+
+**⏸ PAUSED — to resume the agent deploy (user said "skip for now"):**
+1. `docker save longterm-agent:0.4.0 | gzip > lta-0.4.0.tar.gz` (or reuse the archive if
+   the session scratchpad still has it) → scp to `/root/` (a partial
+   `/root/lta-0.4.0.tar.gz` from the interrupted transfer may need deleting first).
+2. On server: `gunzip -c /root/lta-0.4.0.tar.gz | docker load && rm /root/lta-0.4.0.tar.gz`
+3. `docker run -d --name longterm_agent --restart unless-stopped
+   --env-file /root/trade_agent/.env -e LT_METRICS_VERSION=2 longterm-agent:0.4.0`
+   (CMD defaults to the weekly scheduler; TZ baked into the image.)
+4. Verify: `docker exec longterm_agent python -c "from longterm_agent.config import
+   LongTermAgentConfig as C; print(C.DETECTION_VERSION, C.METRICS_VERSION)"` → `0.2.0 2`;
+   logs show schedule (batch Sun 06:00 ET, grade daily 07:00 ET).
+5. Add `TELEGRAM_CHAT_ID` to `/root/trade_agent/.env` first if alerts are wanted from
+   day one (agent runs fine without — alerts are just skipped).
+
+**Still open (user, §9 hardening — interactive session offered):** firewall for
+5544/7688, non-root SSH; VPN already present.
+
+---
+
 ## Open decisions (flagged, non-blocking)
 
 | Decision | Options | Default if not decided |
