@@ -636,6 +636,87 @@ the multi-target columns; export produces a non-empty dataset for ≥2 nodes.
 
 ---
 
+## Phase 12 — Fundamentals interpretation v2 (wire STORED fields; zero new data)
+
+**Origin:** expert indicator checklist (`docs/EXPERT_INDICATORS.md`) × wf_30x evidence.
+The INTC/QCOM blowups were "confirms" cells judged on revenue+margins+valuation alone —
+the verdict is too coarse, while the richer filed picture is ALREADY in the DB (Table B
+fields fetched by the EDGAR/yfinance pipelines but never surfaced to the agent).
+
+Changes (expert items #43–47, #49–50, #53–54 — all STORED or computed-from-stored):
+- `read_fundamentals` / state gains: true PIT FCF (OCF − capex), capex intensity
+  (capex/OCF), capital return (buybacks+dividends vs FCF), PIT leverage (debt split,
+  current ratio), R&D intensity + SG&A trend, EPS trajectory slope (sequential
+  `eps_basic` path), analyst target gap + `recommendationMean`, beta / 52w distance.
+- **Relative multiple gap** (#49): forward P/E vs peer-group median + percentile
+  (peer groups from the existing sector map) — "expensive vs its peers" ≠ "expensive".
+- Fundamentals prompt: structured blocks (growth / profitability / balance sheet /
+  capital allocation / street positioning); schema records per-block sub-verdicts for
+  the future calibration study; the headline verdict stays confirms/contradicts/ignores
+  (matrix unchanged).
+- Validation: wf_30x A/B under a fresh backtest id vs v0.2 baseline (prompts change →
+  new LLM calls, moderate cost); `synthesis_matrix` eval must not regress; new pure
+  tests for each derived metric (PIT: filed/fetched dates only).
+- `PIPELINE_VERSION` bump; detection untouched (verdict feeds synthesis, not the shift
+  label).
+
+Acceptance: fundamentals prompt shows all blocks with PIT values; sub-verdicts persisted;
+A/B report vs v0.2 checked into docs/; no synthesis_matrix eval regression.
+
+---
+
+## Phase 13 — Sector-relative shift detection (detection v3 candidate) ⚠ label-changing
+
+**Origin:** the AMD/Broadcom failure — the dominant observed news-interpretation error is
+labeling a SECTOR wave as a company shift (graph AFFECTS fan-out tags peer headlines onto
+the company; the weekly map summaries amplify sector gloom). Detection v2 dampened this
+statistically; this fixes it structurally. Not in the expert checklist — derived from our
+own test evidence; complements (not replaces) the advisory `is_sector_wide` in deep
+analysis.
+
+Changes:
+- Sector baseline series: median daily AFFECTS-label sentiment across the ticker's
+  sector peers (same data as v2, computed across tickers; sector map exists).
+- Company **excess series** = company daily mean − sector baseline; the median/MAD break
+  test runs on the excess series. Report both `company_break` and `sector_break` flags —
+  a sector-wide break is CONTEXT (risk gate / synthesis), not a company shift.
+- Full Phase-5 playbook (this is why it's cheap now): `LT_METRICS_VERSION=3` →
+  `DETECTION_VERSION 0.3.0`; bucket cache shared (corpus/map unchanged);
+  `compare_detections` v2-vs-v3 on the full grid; manual review of disagreements;
+  wf gates under a fresh backtest id; cutover only after review.
+- Prediction to verify: the AMD 06-04/06-11 cohorts must flag `sector_break`, not
+  `company_break`.
+
+Acceptance: v2-vs-v3 comparison report; wf_30x_v0.3 gates alongside v0.2; the
+sector-contagion cases from VALIDATION_REPORT_v0.2.md §3 re-classified correctly.
+
+---
+
+## Phase 14 — Regime context lite (free PIT series only; collect NOW, gate LATER)
+
+**Origin:** expert Layers 3–4, trimmed to what is PIT-clean and free. All wf shorts died
+in one bull regime; regime detectors are how the system will eventually know the
+difference — but gating on them TODAY would be fitting to a single regime, so this phase
+only collects and stamps.
+
+Changes (expert #28, #31–33, #37):
+- Daily fetcher job (bloomberg_news_fetcher container, same cadence as prices): VIX +
+  VIX3M (term-structure inversion flag), HY OAS (FRED `BAMLH0A0HYM2`), 10Y (`DGS10`,
+  Δ≥40bp/15-session shock flag), Brent/WTI → new `macro_series` table (series, date,
+  value; first-release only, PIT by construction).
+- Stamp a `regime_context` snapshot (VIX level/percentile, HY OAS percentile, 10Y Δ,
+  oil) into `risk_checks` on every signal and into backtest rows; report splits by these
+  (like the existing bull/flat/bear SPY split).
+- Explicitly NO decision logic until data spans ≥2 regimes. The consensus-dependent
+  Macro Surprise Engine (expert Layers 1–2, #19–21) and guidance-vs-consensus (#40–41)
+  stay DEFERRED until a consensus source is chosen (ties into the Phase 9.3 transcript
+  decision).
+
+Acceptance: `macro_series` populated daily with backfill from FRED/yfinance history;
+every new signal carries `regime_context`; forward report gains regime-split tables.
+
+---
+
 ## Deployment status (2026-07-11, session notes — resume point)
 
 Server ops executed over SSH (root@DB_HOST, expect + hidden password) after user approval.
