@@ -424,6 +424,42 @@ audit and ships disabled — full analysis in `longterm_agent/VALIDATION_REPORT_
 
 ---
 
+## Phase 5.5 — Exit discipline (added 2026-07-11 from wf_30x evidence)
+
+**Goal:** cap the unbounded per-trade left tail. The wf_30x decomposition showed the
+strategy earns small and loses catastrophically: two counter-trend SHORTs (INTC −41%,
+QCOM −37%) erased more than the other 42 trades earned (+53.7%). The pipeline generates
+invalidation conditions but nothing enforces them; trades ride to the fixed horizon.
+
+Changes:
+- `exit_rules.py`: structural stop-loss on the RAW direction-adjusted position return,
+  simulated on daily closes (exit at breach-day close; gaps exit beyond the level).
+  Knobs `LT_STOP_LOSS_PCT` (default 0.10) / `LT_TAKE_PROFIT_PCT` (default 0 = off) in
+  provenance. In-sample sweep was positive across 6–12% → 10% is a round prior, not a
+  fitted optimum; TP measured useless at 4w (1 trade in 44 reached +20%).
+- Graders fill **BOTH books** on every matured trade — hold-to-horizon (unchanged
+  columns) + stopped (`fwd_return_stopped`, `benchmark_return_stopped`, `exit_reason`,
+  `exit_days`; backtest_runs also `excess_stopped`) — in `backtest.py grade()` (with
+  idempotent backfill of already-graded rows) and `grade_results.py` (live daily job).
+- Backtest report prints the stopped book per horizon next to the hold book.
+- Live daily scan (`grade_results.scan_open_breaches`): open traded rows whose position
+  return breached the stop → one-time Telegram alert (`exit_alert_at`).
+- `PIPELINE_VERSION` → 0.4.0 (trade semantics; detection untouched).
+
+Validation: **deliberately no separate campaign** (user decision 2026-07-11). The
+in-sample A/B ran in-session (wf_30x v2 4w: hold −23.9% sum / worst −40.8% → stopped
++11.9% / −15.1%; whipsaw cost 2 of 7 stops ≈ −12.5% vs +49.6% saved; v1's book stays
+negative under stops — stops don't fix selection). Forward validation is AUTOMATIC:
+every matured live trade grades both books, so the hold-vs-stopped comparison accrues
+without extra runs. CI on the stopped book still includes zero (+0.27% [−2.3%, +2.8%]) —
+the stop caps tails; it does not prove edge.
+
+**Status 2026-07-11 — done:** all of the above shipped; 9 pure simulator tests
+(breach-day close, gap-through-stop, TP off by default, entry conventions); stopped book
+backfilled onto wf_30x_v0.1/v0.2/g2ct; report verified against the ad-hoc analysis.
+
+---
+
 ## Phase 6 — Deep analysis v2 (advisory only; no label impact)
 
 **Goal:** the "adaptive depth" the docstring promises, at lower latency, with verifiable

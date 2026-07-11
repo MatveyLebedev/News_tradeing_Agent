@@ -42,6 +42,14 @@ def _ensure_table(cfg):
     conn = _conn(cfg)
     with conn.cursor() as cur:
         cur.execute(_DDL.read_text())
+        # Phase 5.5 — the stopped book rides alongside the hold-to-horizon columns so the
+        # two exit policies stay comparable on every graded trade (forward validation).
+        cur.execute("""ALTER TABLE backtest_runs
+                       ADD COLUMN IF NOT EXISTS fwd_return_stopped REAL,
+                       ADD COLUMN IF NOT EXISTS benchmark_return_stopped REAL,
+                       ADD COLUMN IF NOT EXISTS excess_stopped REAL,
+                       ADD COLUMN IF NOT EXISTS exit_reason VARCHAR(12),
+                       ADD COLUMN IF NOT EXISTS exit_days INTEGER""")
     conn.commit()
     conn.close()
 
@@ -192,32 +200,56 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
 
 # --------------------------------------------------------------------------- grade
 def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
-    """Fill realized outcome + regime for matured rows. `benchmark` is the comparison index
-    (B3 calls for SPY *and* a sector ETF — sector ETFs need price data; SPY is the default)."""
+    """Fill realized outcome + regime for matured rows — BOTH books: hold-to-horizon
+    (fwd_return/excess, back-compat) and stopped (Phase 5.5 exit discipline). Rows graded
+    before 5.5 get their stopped columns backfilled idempotently; hold columns are never
+    overwritten. `benchmark` is the comparison index (B3: SPY or a sector ETF)."""
+    from longterm_agent.exit_rules import stopped_returns
+    _ensure_table(cfg)
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
     cur = conn.cursor()
-    cur.execute("""SELECT id, ticker, as_of, horizon_days, direction FROM backtest_runs
-                   WHERE backtest_id=%s AND outcome_filled_at IS NULL ORDER BY as_of""",
-                [backtest_id])
+    cur.execute("""SELECT id, ticker, as_of, horizon_days, direction, outcome_filled_at
+                   FROM backtest_runs
+                   WHERE backtest_id=%s AND (outcome_filled_at IS NULL
+                          OR (exit_reason IS NULL AND traded AND direction IN ('LONG','SHORT')))
+                   ORDER BY as_of""", [backtest_id])
     rows = cur.fetchall()
-    graded = 0
-    for rid, ticker, as_of, horizon, direction in rows:
+    graded = backfilled = 0
+    for rid, ticker, as_of, horizon, direction, already in rows:
         if as_of + timedelta(days=horizon) > today:
             continue  # horizon not matured yet
         fwd = _ret(cur, ticker, as_of, horizon)
         bench = _ret(cur, benchmark, as_of, horizon)
         if fwd is None:
             continue  # missing prices; retry next run
-        ex = trade_excess(direction, fwd, bench) if direction in ("LONG", "SHORT") else None
-        cur.execute("""UPDATE backtest_runs SET fwd_return=%s, benchmark_return=%s, excess=%s,
-                       regime=%s, outcome_filled_at=%s WHERE id=%s""",
-                    [round(fwd, 4), round(bench, 4) if bench is not None else None,
-                     round(ex, 4) if ex is not None else None, _regime(cur, as_of), today, rid])
-        graded += 1
+        # stopped book (traded directional rows only — the exit rule is a trade property)
+        stopped = None
+        if direction in ("LONG", "SHORT"):
+            stopped = stopped_returns(cur, ticker, as_of, direction, horizon,
+                                      benchmark=benchmark, stop_loss=cfg.STOP_LOSS_PCT,
+                                      take_profit=cfg.TAKE_PROFIT_PCT)
+        if stopped:
+            ex_st = trade_excess(direction, stopped["fwd"], stopped["bench"])
+            cur.execute("""UPDATE backtest_runs SET fwd_return_stopped=%s,
+                           benchmark_return_stopped=%s, excess_stopped=%s,
+                           exit_reason=%s, exit_days=%s WHERE id=%s""",
+                        [round(stopped["fwd"], 4), round(stopped["bench"], 4),
+                         round(ex_st, 4) if ex_st is not None else None,
+                         stopped["reason"], stopped["days"], rid])
+        if already is None:
+            ex = trade_excess(direction, fwd, bench) if direction in ("LONG", "SHORT") else None
+            cur.execute("""UPDATE backtest_runs SET fwd_return=%s, benchmark_return=%s, excess=%s,
+                           regime=%s, outcome_filled_at=%s WHERE id=%s""",
+                        [round(fwd, 4), round(bench, 4) if bench is not None else None,
+                         round(ex, 4) if ex is not None else None, _regime(cur, as_of), today, rid])
+            graded += 1
+        else:
+            backfilled += 1
     conn.commit()
     conn.close()
-    print(f"graded {graded} matured rows (today={today})")
+    print(f"graded {graded} matured rows (today={today})"
+          + (f"; stopped-book backfilled on {backfilled} already-graded rows" if backfilled else ""))
 
 
 # --------------------------------------------------------------------------- report
@@ -236,11 +268,12 @@ def report(cfg, backtest_id):
     conn = _conn(cfg)
     cur = conn.cursor()
     cur.execute("""SELECT horizon_days, ticker, as_of, direction, conviction, traded,
-                          shift_flag, regime, excess
+                          shift_flag, regime, excess, excess_stopped, exit_reason
                    FROM backtest_runs WHERE backtest_id=%s ORDER BY horizon_days, as_of""",
                 [backtest_id])
     rows = [dict(zip(("horizon", "ticker", "as_of", "direction", "conviction", "traded",
-                      "shift_flag", "regime", "excess"), r)) for r in cur.fetchall()]
+                      "shift_flag", "regime", "excess", "excess_stopped", "exit_reason"),
+                     r)) for r in cur.fetchall()]
     cur.execute("""SELECT DISTINCT provenance::text FROM backtest_runs WHERE backtest_id=%s""",
                 [backtest_id])
     prov_stamps = [r[0] for r in cur.fetchall()]
@@ -290,6 +323,18 @@ def report(cfg, backtest_id):
                   for c in sorted({r["as_of"] for r in graded})]
         print(f"  Sharpe/IR    : {('  n/a' if M.sharpe(series) is None else f'{M.sharpe(series):.2f}')} "
               f"(per-cohort)   max drawdown {_pct(M.max_drawdown(series))}")
+
+        # Phase 5.5 — the SAME trades under the stop rule (both books graded per trade)
+        stopped = [r for r in graded if r["excess_stopped"] is not None]
+        if stopped:
+            exs = [r["excess_stopped"] for r in stopped]
+            ds = M.distribution(exs)
+            s_ci = M.bootstrap_ci(exs, lambda s: M.distribution(s)["mean"])
+            n_stop = sum(1 for r in stopped if r["exit_reason"] == "stop")
+            n_tp = sum(1 for r in stopped if r["exit_reason"] == "take_profit")
+            print(f"  stopped book : win {M.win_rate(exs):.0%}  mean {_pct(ds['mean'])} "
+                  f"CI {_ci(*s_ci)}  min {_pct(ds['min'])}  "
+                  f"(exits: {n_stop} stop / {n_tp} tp / {len(stopped) - n_stop - n_tp} horizon)")
 
         cal = M.calibration_curve(graded)
         print("  conviction calibration (is conviction predictive?):")

@@ -36,7 +36,7 @@ from model_config import (
 # LT_METRICS_VERSION=2 in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.3.0"   # Phase 7: conviction gate machinery (detection untouched)
+PIPELINE_VERSION = "0.4.0"   # Phase 5.5: exit discipline (stop book + alerts); detection untouched
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -121,6 +121,15 @@ class LongTermAgentConfig:
     # Set LT_COUNTER_TREND_PENALTY=0 to disable.
     COUNTER_TREND_PCT = float(os.getenv("LT_COUNTER_TREND_PCT", "50.0"))
     COUNTER_TREND_PENALTY = float(os.getenv("LT_COUNTER_TREND_PENALTY", "0.2"))
+
+    # --- Exit discipline (Phase 5.5) ---
+    # Structural stop on the RAW position return (direction-adjusted), simulated on daily
+    # closes by the graders (both books recorded: hold-to-horizon AND stopped) and watched
+    # live by the daily open-position breach scan. Round prior — the in-sample sweep was
+    # positive across 6–12%, so 10% is not a fitted optimum. take_profit=0 disables TP
+    # (measured useless at the 4w horizon: 1 trade in 44 reached +20%).
+    STOP_LOSS_PCT = float(os.getenv("LT_STOP_LOSS_PCT", "0.10"))
+    TAKE_PROFIT_PCT = float(os.getenv("LT_TAKE_PROFIT_PCT", "0"))
 
     # --- Corpus retrieval ---
     AFFECTS_MIN_CONFIDENCE = float(os.getenv("LT_AFFECTS_MIN_CONF", "0.5"))
@@ -227,6 +236,8 @@ class LongTermAgentConfig:
                 "conviction_table": {k: list(v) for k, v in cls.CONVICTION_TABLE.items()},
                 "counter_trend_pct": cls.COUNTER_TREND_PCT,
                 "counter_trend_penalty": cls.COUNTER_TREND_PENALTY,
+                "stop_loss_pct": cls.STOP_LOSS_PCT,
+                "take_profit_pct": cls.TAKE_PROFIT_PCT,
             },
         }
 
