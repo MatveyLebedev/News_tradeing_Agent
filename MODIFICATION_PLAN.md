@@ -472,6 +472,27 @@ Changes later (data-dependent, after Phase 5 accumulates ~80+ graded v2 signals)
 Acceptance: backtest A/B report (deterministic vs LLM gate) checked into `docs/`; grading
 tables carry both conviction columns.
 
+**Status 2026-07-11 — plumbing done; A/B verdict: DO NOT switch (docs/GATE_AB_2026Q2.md):**
+- ✅ Gate machinery shipped behind `LT_CONVICTION_GATE=llm|table` (default `llm` — live
+  behavior unchanged): deterministic `CONVICTION_TABLE[verdict][shift_score bucket]` +
+  advisory nudge; LLM conviction recorded as `signal.conviction_raw`, gated value as
+  `signal.conviction_gate` + `signal.gate`; scalar `conviction` column = gating value
+  (rides in signal JSONB, no schema migration). `PIPELINE_VERSION` → 0.3.0.
+- ✅ NEW counter-trend guard (−0.2 when fighting a ≥50% trailing 180d move; structural
+  prior, values not fitted): stays ON — removed zero trades under the llm gate on wf_30x
+  while protecting the mid-conviction band. Knife-edge limitation documented: LLM 0.75+
+  eats a flat −0.2 and still clears 0.55 (INTC did exactly this).
+- ✅ A/B 2×2 on the wf_30x grid (cache replay, identical signals): **table gate REJECTED**
+  — it kept 22 trades summing −63.6% and dropped 24 summing +39.7% (kept confirms-cell
+  SHORTs into a bull market, dropped the LLM's profitable contradicts-cell contrarian
+  LONGs). table+guard was best-behaved (2w mean +1.14%, worst −11.3%, n=20) but 4w still
+  negative and single-regime → burden of proof for switching not met. QCOM-class losses
+  (by-the-book SHORT squeezed by a new catalyst) are irreducible by gates.
+- ✅ 140 tests green (11 new in test_phase7.py), ruff clean.
+- ▶ "Later" step unchanged and now unblocked by data: isotonic calibration
+  (`calibrate.py`) once ~80+ graded v2 signals accumulate live — calibrate the number,
+  don't replace the selector. Re-examine the table after a second regime.
+
 ---
 
 ## Phase 8 — LangGraph mechanics: deltas, batch resume, parallel branches

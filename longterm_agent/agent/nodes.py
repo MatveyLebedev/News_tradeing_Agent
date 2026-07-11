@@ -723,11 +723,33 @@ def reflection_node(state, llm, config) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 7. risk_gate (priced-in, earnings-event, data sufficiency, conviction threshold)
 # ---------------------------------------------------------------------------
+def _table_conviction(table, shift_score, verdict):
+    """Deterministic base conviction (gate=table): CONVICTION_TABLE[verdict][score bucket].
+    Buckets on shift_score: [0, .4) / [.4, .7) / [.7, 1]."""
+    row = table.get(verdict or "unknown") or table["unknown"]
+    s = shift_score or 0.0
+    return row[0] if s < 0.4 else row[1] if s < 0.7 else row[2]
+
+
 def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     print("\n=== Risk Gate ===")
     sig = dict(state.get("signal", {}))
     shift = state.get("background_shift", {})
     flags = []
+
+    # Phase 7 — what the threshold gates on. "llm": the model's self-reported conviction
+    # (current behavior; wf_30x showed it is anti-correlated with outcomes on the tails).
+    # "table": deterministic base from evidence (shift_score × fundamentals verdict) plus
+    # the advisory deep-analysis nudge; the LLM number is recorded but stops gating.
+    raw_conviction = sig.get("conviction", 0.0)
+    gate_mode = getattr(config, "CONVICTION_GATE", "llm")
+    if gate_mode == "table":
+        verdict = (state.get("fundamentals", {}).get("trend") or {}).get("verdict")
+        base = _table_conviction(config.CONVICTION_TABLE, shift.get("shift_score"), verdict)
+        nudge = float((state.get("enriched_analysis") or {}).get("conviction_adjustment") or 0.0)
+        sig["conviction"] = round(min(1.0, max(0.0, base + nudge)), 2)
+        print(f"  gate=table: base={base} (score={shift.get('shift_score')}, verdict={verdict}) "
+              f"nudge={nudge:+.2f} | llm raw={raw_conviction}")
 
     priced = priced_in_check(db_manager, state["ticker"], state["as_of"],
                              state.get("shift_window_days", config.SHIFT_WINDOW_DAYS))
@@ -781,10 +803,29 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         flags.append(f"earnings within {config.EARNINGS_RISK_DAYS}d ({earn['upcoming']}) — binary-event risk")
         sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - config.EARNINGS_PENALTY), 2)
 
+    # COUNTER-TREND GUARD (Phase 7): a signal fighting a strong trailing trend (SHORT into
+    # a big rally / LONG into a collapse) has negative skew, and the priced-in guard cannot
+    # see it — it only fires when price already moved WITH the signal. Structural prior
+    # (not fitted to any window); LT_COUNTER_TREND_PENALTY=0 disables.
+    tech = state.get("technical_longterm") or {}
+    ret = tech.get("return_window_pct")
+    ct_penalty = getattr(config, "COUNTER_TREND_PENALTY", 0.0)
+    if direction in ("LONG", "SHORT") and ret is not None and ct_penalty > 0:
+        against = ((direction == "SHORT" and ret >= config.COUNTER_TREND_PCT)
+                   or (direction == "LONG" and ret <= -config.COUNTER_TREND_PCT))
+        if against:
+            flags.append(f"counter-trend: {direction} against a {ret:+.1f}% trailing move")
+            sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - ct_penalty), 2)
+
     if state.get("article_count", 0) < config.MIN_ARTICLES_FOR_BACKGROUND * 2:
         flags.append(f"thin coverage ({state.get('article_count')} articles)")
 
-    # final gate: conviction threshold
+    # final gate: conviction threshold. Phase 7: both conviction values persist — the raw
+    # LLM self-report (for the calibration study) and the value actually gated on
+    # (sig.conviction stays the gating value for back-compat with grading/stats readers).
+    sig["conviction_raw"] = round(raw_conviction, 2)
+    sig["conviction_gate"] = sig.get("conviction", 0.0)
+    sig["gate"] = gate_mode
     passed = sig.get("conviction", 0.0) >= config.LONGTERM_CONFIDENCE_THRESHOLD and direction in ("LONG", "SHORT")
     state["risk_flags"] = flags
     state["risk_checks"] = {"priced_in": priced, "earnings": earn}
@@ -793,7 +834,7 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
 
     print(f"  flags: {flags or 'none'}")
     print(f"  → {'PASS' if passed else 'FILTERED'} "
-          f"(conviction={sig.get('conviction')} vs threshold {config.LONGTERM_CONFIDENCE_THRESHOLD})")
+          f"(conviction={sig.get('conviction')} [{gate_mode}] vs threshold {config.LONGTERM_CONFIDENCE_THRESHOLD})")
     _msg(state, "risk_gate", f"{'PASS' if passed else 'FILTERED'}; flags={flags}",
          {"flags": flags, "passed": passed})
     return state

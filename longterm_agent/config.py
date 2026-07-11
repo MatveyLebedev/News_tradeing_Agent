@@ -36,7 +36,7 @@ from model_config import (
 # LT_METRICS_VERSION=2 in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.2.0"   # Phase 5: detection v2 shipped (v1 still the live default)
+PIPELINE_VERSION = "0.3.0"   # Phase 7: conviction gate machinery (detection untouched)
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -88,6 +88,39 @@ class LongTermAgentConfig:
     # When true, no-shift signals are capped below the trade threshold (deterministic
     # not-traded) — the directional lean + thesis stay for information.
     REQUIRE_SHIFT_TO_TRADE = os.getenv("LT_REQUIRE_SHIFT", "true").lower() == "true"
+
+    # --- Conviction gate (Phase 7) ---
+    # What number the 0.55 threshold operates on:
+    #   "llm"   — the synthesis model's self-reported conviction (current behavior).
+    #             wf_30x showed it is ANTI-correlated with outcomes on the tails: the
+    #             worst calibration bucket is the most confident one (0.75-0.85 @4w:
+    #             −4.43%) — the LLM is surest on dramatic contrarian theses.
+    #   "table" — deterministic base from CONVICTION_TABLE[verdict][shift_score bucket]
+    #             (+ the advisory deep-analysis nudge), so the gate input is reproducible
+    #             and monotone in evidence. LLM conviction is still recorded
+    #             (signal.conviction_raw) for the later calibration study (calibrate.py).
+    # Default stays "llm" until the A/B (docs/GATE_AB_2026Q2.md) is reviewed — switching
+    # is an explicit env change, like the detection cutover.
+    CONVICTION_GATE = os.getenv("LT_CONVICTION_GATE", "llm").lower()
+    # Rows: fundamentals-trend verdict; columns: shift_score buckets
+    # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
+    # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype
+    # cell (never clears alone; a strong live advisory nudge +0.2 can lift strong cases),
+    # ignores/unknown = news-only basis (never clears alone). NOT fitted to any window.
+    CONVICTION_TABLE = {
+        "confirms":    (0.45, 0.60, 0.70),
+        "contradicts": (0.25, 0.35, 0.45),
+        "ignores":     (0.20, 0.30, 0.40),
+        "unknown":     (0.20, 0.30, 0.40),
+    }
+    # Counter-trend guard: penalize a signal that FIGHTS a strong trailing trend (SHORT
+    # into a big rally / LONG into a collapse, measured on the 180d technical window).
+    # Structural prior (same class as the earnings penalty), NOT tuned on wf_30x — that
+    # window merely exposed the gap (INTC −41% / QCOM −37% were counter-trend SHORTs the
+    # priced-in guard can't catch: it only fires when price moved WITH the signal).
+    # Set LT_COUNTER_TREND_PENALTY=0 to disable.
+    COUNTER_TREND_PCT = float(os.getenv("LT_COUNTER_TREND_PCT", "50.0"))
+    COUNTER_TREND_PENALTY = float(os.getenv("LT_COUNTER_TREND_PENALTY", "0.2"))
 
     # --- Corpus retrieval ---
     AFFECTS_MIN_CONFIDENCE = float(os.getenv("LT_AFFECTS_MIN_CONF", "0.5"))
@@ -190,6 +223,10 @@ class LongTermAgentConfig:
                 "corpus_embed": cls.CORPUS_EMBED_ENABLED,
                 "embed_tau": cls.EMBED_TAU,
                 "embed_top_k": cls.EMBED_TOP_K,
+                "conviction_gate": cls.CONVICTION_GATE,
+                "conviction_table": {k: list(v) for k, v in cls.CONVICTION_TABLE.items()},
+                "counter_trend_pct": cls.COUNTER_TREND_PCT,
+                "counter_trend_penalty": cls.COUNTER_TREND_PENALTY,
             },
         }
 
