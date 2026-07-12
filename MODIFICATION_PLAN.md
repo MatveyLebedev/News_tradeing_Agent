@@ -500,6 +500,30 @@ Acceptance: wall-clock for deep_analysis ≤ sequential baseline despite more th
 every persisted finding carries ≥1 citation; planner output visible in `messages` and
 LangSmith traces. `PIPELINE_VERSION` bump.
 
+**Status 2026-07-12 — CODE DONE behind `LT_DEEP_V2` (default OFF; cutover waits on the
+6-pre A/B verdict + a deep-v2 backtest):**
+- ✅ Planner (map model, structured `DeepAnalysisPlan`): picks 2-5 threads from the
+  7-thread menu (v1's four + legal_regulatory_exposure / supply_chain /
+  management_change) with a one-line `focus` each; ANY planner failure falls back to the
+  v1 default four (planner can redirect effort, never lose it); plan + rationale visible
+  in `messages` (`deep_analysis_planner`) and persisted in `enriched_analysis.planner`.
+- ✅ Parallel threads: `ThreadPoolExecutor(max_workers=4)` per run + a PROCESS-WIDE
+  semaphore (`LT_DEEP_LLM_CONCURRENCY`, default 8) around every deep LLM call so backtest
+  workers × thread fan-out can't multiply into an OpenRouter stampede.
+- ✅ Citations: map finalize is `DeepAnalysisFindingV2` (`evidence[{news_id, event_id,
+  quote}]`); uncited findings DROPPED; tools-ran-but-zero-cited → advisory nudge zeroed
+  (extends the v1 no-tools guard); cited findings persist in
+  `enriched_analysis.map_findings` (results JSONB, no migration).
+- ✅ Corpus reuse: `build_deep_analysis_tools(news_corpus=…)` — company-under-analysis
+  searches serve from the state's corpus (peers still hit the DB) and headlines carry
+  `news_id` only in v2 (v1 tool outputs stay byte-identical → v1 LLM-cache keys intact).
+- ✅ Per-thread oplog (`deep_thread`: tools, duration, n_evidence). PIPELINE_VERSION
+  0.7.0; `deep_analysis`/`deep_v2` stamped into provenance knobs. 5 new tests
+  (test_deep_v2.py) + v1 suite untouched and green.
+- ⏳ Deep-v2 backtest QUEUED (see "Queued backtests" #4) — decision rule: v2 must beat
+  BOTH wf_30x_f12 (no deep) and wf_30x_v0.2_deep (deep v1) to earn `LT_DEEP_V2=true`
+  live; if deep v1 already fails 6-pre, v2 must beat no-deep alone to justify existing.
+
 ---
 
 ## Phase 7 — Conviction calibration (gate change only)
@@ -750,6 +774,14 @@ LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=false ... --backtest-id wf_30x_f12 ...
 #             --start 2026-04-30 --end 2026-07-09   (v2-vs-v3 report + 0.3.0 backfill)
 #           python -m longterm_agent.grade_shifts   (grade the 0.3.0 rows for analogs)
 LT_METRICS_VERSION=3 LT_DEEP_ANALYSIS=false ... --backtest-id wf_30x_f12_v3 ...
+
+# 4. Phase 6 deep-v2 A/B (queued 2026-07-12; run AFTER 1-3 settle and only if the 6-pre
+#    verdict doesn't kill deep analysis outright). Same grid; diff vs wf_30x_f12 isolates
+#    deep-v2; diff vs wf_30x_v0.2_deep isolates v2-over-v1.
+LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=true LT_DEEP_V2=true LT_LLM_CACHE=true LT_MAX_REFLECTION=0 \
+  python -u -m longterm_agent.backtest --backtest-id wf_30x_f12_deepv2 \
+  --tickers <same 30> --start 2026-04-24 --end 2026-06-19 --step 7 \
+  --horizons 14 28 84 --benchmark SPY --workers 20 --asof-today 2026-07-10
 ```
 
 Analysis after: deep vs v0.2; f12 vs v0.2; f12_v3 vs f12; AMD 06-04/06-11 must show

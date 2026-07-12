@@ -39,7 +39,7 @@ from model_config import (
 # changing LT_METRICS_VERSION in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.6.0"   # Phase 14: regime_context stamp (descriptive only, no gating)
+PIPELINE_VERSION = "0.7.0"   # Phase 6: deep analysis v2 machinery (LT_DEEP_V2, default off)
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -166,6 +166,11 @@ class LongTermAgentConfig:
     MAX_TOOL_CALL_ITERATIONS = int(os.getenv("LT_MAX_TOOL_ITERS", "7"))  # same cap as news_agent
     TOOL_RESULT_MAX_CHARS = int(os.getenv("LT_TOOL_RESULT_MAX_CHARS", "3000"))  # truncate tool blobs
     DEEP_ANALYSIS_MODEL = LLM_MODEL  # reuse the main reasoning model
+    # Phase 6 — deep analysis v2 (planner + parallel threads + citations). DEFAULT OFF:
+    # the v1 path stays byte-identical (prompts are LLM-cache keys) until the queued
+    # wf_30x deep-v2 A/B earns the cutover. Both flags must be true for v2 to run.
+    DEEP_V2 = os.getenv("LT_DEEP_V2", "false").lower() == "true"
+    DEEP_LLM_CONCURRENCY = int(os.getenv("LT_DEEP_LLM_CONCURRENCY", "8"))  # global LLM-call cap
 
     # --- Database ---
     DB_CONFIG = {
@@ -241,6 +246,8 @@ class LongTermAgentConfig:
                 "counter_trend_penalty": cls.COUNTER_TREND_PENALTY,
                 "stop_loss_pct": cls.STOP_LOSS_PCT,
                 "take_profit_pct": cls.TAKE_PROFIT_PCT,
+                "deep_analysis": cls.DEEP_ANALYSIS_ENABLED,
+                "deep_v2": cls.DEEP_V2,
             },
         }
 

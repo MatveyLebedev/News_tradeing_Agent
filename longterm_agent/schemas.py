@@ -102,6 +102,37 @@ class DeepAnalysisFinding(BaseModel):
     signal: str = Field("", description="short label: sector-wide/idiosyncratic/confirms/contradicts/novel/priced-in")
 
 
+# --- deep_analysis v2 (Phase 6, LT_DEEP_V2): planner + parallel threads + citations ---
+# Separate schemas ON PURPOSE: v1's DeepAnalysisFinding must stay byte-identical (its
+# prompts/schema are LLM-cache keys and the v1 path ships unchanged when the flag is off).
+class DeepEvidence(BaseModel):
+    """One citation backing a finding — a fact taken from a TOOL OUTPUT in this thread."""
+    news_id: Optional[int] = Field(None, description="news id the fact came from (if any)")
+    event_id: Optional[str] = Field(None, description="graph event id/name (if any)")
+    quote: str = Field("", description="short verbatim fragment from the tool result")
+
+
+class DeepAnalysisFindingV2(BaseModel):
+    """One focused map-thread result. Findings WITHOUT evidence are dropped by the node."""
+    finding: str = Field("", description="1-3 sentence evidence-tagged finding")
+    signal: str = Field("", description="short label: sector-wide/idiosyncratic/confirms/contradicts/novel/priced-in")
+    evidence: List[DeepEvidence] = Field(
+        default_factory=list,
+        description="citations from THIS thread's tool outputs; a finding with none is discarded")
+
+
+class PlannedThread(BaseModel):
+    name: Literal["sector_breadth", "cause_novelty", "fundamentals", "analogs",
+                  "legal_regulatory_exposure", "supply_chain", "management_change"]
+    focus: str = Field("", description="one-line parameterization (peer list, search terms, angle)")
+
+
+class DeepAnalysisPlan(BaseModel):
+    """Planner output: which research threads to run for THIS shift (2-5 of the menu)."""
+    threads: List[PlannedThread] = Field(default_factory=list)
+    rationale: str = Field("", description="one line on why these threads")
+
+
 class DeepAnalysisOutput(BaseModel):
     findings: List[str] = Field(default_factory=list, description="Grounded, evidence-tagged findings")
     is_sector_wide: Optional[bool] = Field(None, description="True=sector-wide, False=idiosyncratic")

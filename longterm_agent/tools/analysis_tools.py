@@ -121,9 +121,15 @@ def make_graph_query_tool(neo4j_manager: Any, as_of, max_rows: int = 50, max_cha
 def build_deep_analysis_tools(
     ticker: str, as_of, db_manager: Any, neo4j_manager: Any, config: Any,
     shift: Optional[dict] = None, metrics: Optional[dict] = None,
+    news_corpus: Optional[list] = None,
 ) -> List[Any]:
     """Assemble the read-only @tool list for one run. `shift`/`metrics` close over the
-    deterministic outputs so the analog tool can resolve the CURRENT shift's neighbors."""
+    deterministic outputs so the analog tool can resolve the CURRENT shift's neighbors.
+
+    `news_corpus` (Phase 6 / deep v2): the state's already-collected corpus — when given,
+    search_company_news serves the company-under-analysis from it instead of re-fetching
+    (peer queries still hit the DB), and headlines carry `news_id` so v2 findings can cite
+    them. v1 callers omit it → tool outputs stay byte-identical (LLM-cache keys)."""
     tk = ticker.upper()
 
     @tool
@@ -158,15 +164,21 @@ def build_deep_analysis_tools(
         'guidance cut') for this company or a peer. Args: query — words to match (space-separated,
         OR); ticker — company (default: under analysis); limit — max headlines (1-20)."""
         t = (ticker or tk).upper()
-        corpus = get_company_news_corpus(
-            t, as_of, config.LOOKBACK_DAYS_BACKGROUND, db_manager,
-            neo4j_manager, config.AFFECTS_MIN_CONFIDENCE)
+        if t == tk and news_corpus is not None:
+            articles = news_corpus  # deep v2: reuse the state's corpus — no re-fetch
+        else:
+            articles = get_company_news_corpus(
+                t, as_of, config.LOOKBACK_DAYS_BACKGROUND, db_manager,
+                neo4j_manager, config.AFFECTS_MIN_CONFIDENCE).get("articles", [])
         terms = [w.lower() for w in query.split() if w.strip()]
         hits = []
-        for a in corpus.get("articles", []):
+        for a in articles:
             text = f"{a.get('title','')} {a.get('summary','')}".lower()
             if not terms or any(term in text for term in terms):
-                hits.append({"published": str(a.get("published")), "title": a.get("title")})
+                hit = {"published": str(a.get("published")), "title": a.get("title")}
+                if news_corpus is not None:  # v2 only: citable ids (v1 output byte-stable)
+                    hit["news_id"] = a.get("id")
+                hits.append(hit)
         hits = hits[-max(1, min(limit, 20)):]
         return json.dumps({"ticker": t, "query": query, "n": len(hits), "headlines": hits}, default=str)
 

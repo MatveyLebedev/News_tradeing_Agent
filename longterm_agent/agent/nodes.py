@@ -9,12 +9,15 @@ model, then merge the summaries into a NewsBackgroundProfile with the main model
 profile IS the "news background".
 """
 import json
+import threading
+import time
 from collections import Counter
 from typing import Any, Dict, List
 
 from ..schemas import (
     PeriodBucketSummary, NewsBackgroundProfile, BackgroundShift, FundamentalsTrend,
     ShiftAnalogs, LongTermSignal, ReflectionOutput, DeepAnalysisOutput, DeepAnalysisFinding,
+    DeepAnalysisFindingV2, DeepAnalysisPlan,
 )
 from ..tools.news_corpus_tool import get_company_news_corpus, bucket_by_week
 from ..tools.background_metrics import compute_shift_metrics
@@ -515,6 +518,221 @@ def _run_map_thread(llm_map, tools, seed, max_iter=_MAP_MAX_ITERS, trunc=_MAP_TR
     return finding, used
 
 
+# --- deep analysis v2 (Phase 6, LT_DEEP_V2) -------------------------------------------
+# Planner (cheap model) picks 2-5 threads from the menu and parameterizes them; threads run
+# in PARALLEL (each is an isolated context, so concurrency changes nothing semantically);
+# findings must cite tool-output evidence or they are DROPPED. v1 above stays byte-identical.
+_V2_MAX_THREADS = 5
+_V2_MIN_THREADS = 2
+_V2_POOL = 4                      # thread-pool width per run (per-run fan-out)
+_v2_llm_gate = None               # process-wide semaphore: total concurrent deep LLM calls
+_v2_gate_lock = threading.Lock()  # (backtest workers × thread pool would otherwise multiply)
+
+
+def _v2_gate(config):
+    global _v2_llm_gate
+    with _v2_gate_lock:
+        if _v2_llm_gate is None:
+            _v2_llm_gate = threading.Semaphore(getattr(config, "DEEP_LLM_CONCURRENCY", 8))
+    return _v2_llm_gate
+
+
+def _v2_thread_menu(ticker, peer_line):
+    """The 7-thread menu (v1's four + Phase 6 additions), keyed by planner name."""
+    return {
+        "sector_breadth":
+            f"FOCUSED TASK: decide whether this shift is SECTOR-WIDE or IDIOSYNCRATIC. Research the "
+            f"peers ({peer_line}) — pass each peer's ticker to get_fundamentals_detail / "
+            f"get_long_term_technicals — and use cross-ticker correlation + the sector tool. Are peers "
+            f"moving/deteriorating with {ticker} or not?",
+        "cause_novelty":
+            "FOCUSED TASK: trace the CAUSAL CHAIN behind the shift and judge whether the catalyst is "
+            "genuinely NEW or already PRICED IN (use the causal-chain, events and novelty tools).",
+        "fundamentals":
+            f"FOCUSED TASK: drill {ticker}'s quarter-level FUNDAMENTALS and contrast them with a key "
+            f"peer's — do the numbers CONFIRM or CONTRADICT the shift?",
+        "analogs":
+            "FOCUSED TASK: check whether the closest historical ANALOGS support the directional read; "
+            "report their base rate (find_historical_analogs).",
+        "legal_regulatory_exposure":
+            f"FOCUSED TASK: assess LEGAL/REGULATORY exposure relevant to the shift — query legal and "
+            f"regulatory events for {ticker} (get_events_for_ticker, run_graph_query on type legal/"
+            f"regulatory) and search_company_news for lawsuit/antitrust/probe threads. Is there an "
+            f"open exposure that changes the multi-week thesis?",
+        "supply_chain":
+            f"FOCUSED TASK: check SUPPLY-CHAIN and customer/supplier concentration angles behind the "
+            f"shift — search_company_news for supplier/shortage/capacity/contract threads on {ticker} "
+            f"and its peers; check events for disruptions. Does the chain amplify or dampen the shift?",
+        "management_change":
+            f"FOCUSED TASK: check LEADERSHIP/MANAGEMENT changes around the shift window — "
+            f"leadership_change events and related news for {ticker}. Is a management transition "
+            f"driving or confounding the narrative?",
+    }
+
+
+def _v2_plan(llm_map, config, context, menu):
+    """Planner step (cheap model): pick 2-5 threads for THIS shift. Falls back to the v1
+    default four on any failure — the planner can only ever REDIRECT effort, not lose it."""
+    default = ["sector_breadth", "cause_novelty", "fundamentals", "analogs"]
+    menu_desc = "\n".join(f"- {name}" for name in menu)
+    prompt = (
+        f"{context}\nYou are PLANNING a focused research pass for this shift. Menu of "
+        f"research threads:\n{menu_desc}\n\nSelect the {_V2_MIN_THREADS}-{_V2_MAX_THREADS} "
+        f"threads MOST LIKELY to change a multi-week trade decision on this specific shift "
+        f"(catalysts and sector matter; don't pick a thread with no signal in the context). "
+        f"For each, give a one-line `focus` parameterization (peer names, search terms, the "
+        f"specific question). Return a DeepAnalysisPlan."
+    )
+    try:
+        with _v2_gate(config):
+            plan = _invoke_structured(llm_map, DeepAnalysisPlan, prompt)
+        seen, threads = set(), []
+        for t in plan.threads:
+            if t.name in menu and t.name not in seen:
+                seen.add(t.name)
+                threads.append((t.name, (t.focus or "").strip()))
+        if len(threads) < _V2_MIN_THREADS:
+            raise ValueError(f"planner kept {len(threads)} valid threads")
+        return threads[:_V2_MAX_THREADS], (plan.rationale or "").strip(), True
+    except Exception as e:
+        print(f"  ⚠ planner failed ({e}) — falling back to the default thread set")
+        return [(n, "") for n in default], "planner fallback: default set", False
+
+
+def _run_map_thread_v2(llm_map, tools, seed, gate, max_iter=_MAP_MAX_ITERS, trunc=_MAP_TRUNC):
+    """v2 map thread: same bounded loop as v1, but (a) every LLM call passes the process-wide
+    concurrency gate and (b) the finalize is DeepAnalysisFindingV2 (citations required)."""
+    from langchain_core.messages import SystemMessage, ToolMessage
+    messages = [SystemMessage(content=seed)]
+    llm_tools = llm_map.bind_tools(tools)
+    used: List[str] = []
+    for _ in range(max_iter):
+        with gate:
+            resp = llm_tools.invoke(messages)
+        messages.append(resp)
+        calls = getattr(resp, "tool_calls", None)
+        if not calls:
+            break
+        for call in calls:
+            name, args, cid = call.get("name", ""), call.get("args", {}), call.get("id", "")
+            used.append(name)
+            messages.append(ToolMessage(content=_exec_tool(tools, name, args)[:trunc], tool_call_id=cid))
+    try:
+        with gate:
+            finding = _invoke_structured(llm_map, DeepAnalysisFindingV2, messages).model_dump()
+    except Exception:
+        finding = DeepAnalysisFindingV2().model_dump()
+    return finding, used
+
+
+def _deep_analysis_v2(state, llm_map, llm_reduce, db_manager, neo4j_manager, config,
+                      tools, context, peer_line):
+    """Phase 6 body: planner → parallel cited threads → reduce. Shares v1's gates (enable/
+    no-shift/no-tools) via the caller; adds the citation guard (uncited findings dropped;
+    none survive → advisory nudge zeroed). Writes only `enriched_analysis` — never the shift."""
+    from concurrent.futures import ThreadPoolExecutor
+    from .. import oplog
+
+    ticker, as_of = state["ticker"], state["as_of"]
+    menu = _v2_thread_menu(ticker, peer_line)
+    gate = _v2_gate(config)
+
+    planned, rationale, planner_ok = _v2_plan(llm_map, config, context, menu)
+    print(f"  planner: {[n for n, _ in planned]} — {rationale[:100]}")
+    _msg(state, "deep_analysis_planner", f"threads={[n for n, _ in planned]}",
+         {"threads": [{"name": n, "focus": f} for n, f in planned],
+          "rationale": rationale, "planner_ok": planner_ok})
+
+    cite_rules = (
+        "CITATIONS REQUIRED: every finding must carry `evidence` — news_id / event_id / a short "
+        "verbatim quote taken from THIS thread's tool outputs. A finding without evidence is "
+        "DISCARDED. Do not cite anything you did not see in a tool result."
+    )
+
+    def _one(name, focus):
+        seed = (
+            f"You are researching ONE focused question for a multi-week trade thesis.\n\n{context}\n"
+            f"{menu[name]}\n" + (f"PLANNER FOCUS: {focus}\n" if focus else "") +
+            f"You MUST call at least one tool — do not answer from prior knowledge. Then return a "
+            f"1-3 sentence evidence-tagged `finding`, a short `signal` label (e.g. sector-wide / "
+            f"idiosyncratic / confirms / contradicts / novel / priced-in), and `evidence`. {cite_rules}"
+        )
+        t0 = time.time()
+        finding, used = _run_map_thread_v2(llm_map, tools, seed, gate)
+        dur = time.time() - t0
+        finding["thread"] = name
+        oplog.info("deep_thread", f"{name}: {len(used)} tool call(s) in {dur:.1f}s",
+                   ticker=ticker, as_of=as_of,
+                   details={"thread": name, "tools": used, "duration_s": round(dur, 1),
+                            "n_evidence": len(finding.get("evidence") or [])})
+        return finding, used, dur
+
+    findings, all_used = [], []
+    with ThreadPoolExecutor(max_workers=_V2_POOL) as ex:
+        futs = {ex.submit(_one, name, focus): name for name, focus in planned}
+        for fut in futs:
+            try:
+                finding, used, dur = fut.result()
+            except Exception as e:  # one thread must never sink the pass
+                print(f"  ⚠ map[{futs[fut]}] failed: {type(e).__name__}: {e}")
+                continue
+            findings.append(finding)
+            all_used += used
+            print(f"  → map[{finding['thread']}] {dur:.1f}s: {len(used)} tool call(s), "
+                  f"{len(finding.get('evidence') or [])} citation(s) | "
+                  f"{str(finding.get('finding', ''))[:70]}")
+
+    # Citation guard: an uncited finding is an unverifiable claim — drop it. If nothing
+    # survives, the enrichment is evidence-free → zero the nudge (extends the v1 guard).
+    cited = [f for f in findings if f.get("evidence")]
+    dropped = len(findings) - len(cited)
+    if dropped:
+        print(f"  citation guard: dropped {dropped} uncited finding(s), kept {len(cited)}")
+
+    digest = "\n".join(
+        f"- [{f.get('thread')}] {f.get('finding', '')} (signal: {f.get('signal', '')}; evidence: "
+        + "; ".join(f"news_id={e.get('news_id')} event={e.get('event_id')} \"{(e.get('quote') or '')[:60]}\""
+                    for e in (f.get("evidence") or [])) + ")"
+        for f in cited)
+    reduce_prompt = (
+        f"{context}\nRESEARCH FINDINGS (from focused tool-using passes; every finding cites its "
+        f"tool-output evidence):\n{digest or '(none survived the citation guard)'}\n\n"
+        f"Synthesize a DeepAnalysisOutput: `findings` (the concrete points, noting the company), a "
+        f"short `summary` of the cross-company insights, `is_sector_wide`, `catalyst_assessment` "
+        f"(new vs priced-in), `analog_takeaway`, and an ADVISORY `conviction_adjustment` "
+        f"(-0.2..+0.2) that nudges synthesis but NEVER changes the shift label."
+    )
+    try:
+        with gate:
+            data = _invoke_structured(llm_reduce, DeepAnalysisOutput, reduce_prompt).model_dump()
+    except Exception as e:
+        print(f"  ⚠ deep_analysis reduce failed: {e}")
+        data = DeepAnalysisOutput().model_dump()
+
+    data["tools_used"] = sorted(set(all_used))
+    data["deep_version"] = 2
+    data["planner"] = {"threads": [{"name": n, "focus": f} for n, f in planned],
+                       "rationale": rationale, "planner_ok": planner_ok}
+    data["map_findings"] = cited  # citations persist with the run (results JSONB)
+    if not all_used:
+        data["conviction_adjustment"] = 0.0
+        data["note"] = "no tools were called across map threads — enrichment skipped"
+        print("  ⚠ no tools ran across threads — advisory nudge zeroed (enrichment skipped)")
+    elif not cited:
+        data["conviction_adjustment"] = 0.0
+        data["note"] = "no finding carried citations — advisory nudge zeroed"
+        print("  ⚠ zero cited findings — advisory nudge zeroed (unverifiable enrichment)")
+
+    state["enriched_analysis"] = data
+    _msg(state, "deep_analysis",
+         f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
+         {"enriched": data})
+    print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory) | "
+          f"sector_wide={data.get('is_sector_wide')} | findings={len(data.get('findings') or [])}")
+    print(f"    summary: {str(data.get('summary', ''))[:140]}")
+    return state
+
+
 def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, config) -> Dict[str, Any]:
     """Map-reduce cross-company research. MAP: a focused tool-using call per research thread,
     each in an isolated small context → a short finding. REDUCE: the main model folds the
@@ -538,9 +756,13 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
     profile = state.get("background_profile", {})
     news_summary = (profile.get("summary") or "").strip()
 
+    deep_v2 = bool(getattr(config, "DEEP_V2", False))
     tools = build_deep_analysis_tools(
         ticker, as_of, db_manager, neo4j_manager, config,
-        shift=shift, metrics=state.get("background_metrics", {}))
+        shift=shift, metrics=state.get("background_metrics", {}),
+        # v2 only: reuse the state's corpus (no re-fetch) + citable news ids. v1 omits the
+        # argument so its tool outputs — and therefore its LLM-cache keys — stay identical.
+        news_corpus=(state.get("news_corpus") if deep_v2 else None))
     if not tools:
         print("  → no tools available; skipping")
         return state
@@ -567,6 +789,12 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
         f"  analog base rate: {analog_line}\n"
         f"Do NOT recompute or contradict these deterministic labels.\n"
     )
+
+    # Phase 6 (LT_DEEP_V2): planner + parallel cited threads. Shares every gate above.
+    if deep_v2:
+        print("  mode: v2 (planner + parallel threads + citations)")
+        return _deep_analysis_v2(state, llm_map, llm_reduce, db_manager, neo4j_manager,
+                                 config, tools, context, peer_line)
 
     # The research threads — each runs in isolation (its own context) as one MAP unit.
     threads = [
