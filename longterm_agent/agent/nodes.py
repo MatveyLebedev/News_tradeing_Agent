@@ -121,6 +121,19 @@ def corpus_collection_node(state, db_manager, neo4j_manager, config) -> Dict[str
     print(f"  provenance: {corpus['provenance']}")
     print(f"  weekly buckets: {[b['count'] for b in buckets]}")
 
+    # Phase 13 (detection v3): sector baseline for the excess-series break test.
+    # Computed here because this node holds both db and neo; cached per (sector, as_of).
+    if getattr(config, "METRICS_VERSION", 1) >= 3:
+        from ..tools.sector_sentiment import sector_baseline
+        try:
+            base = sector_baseline(ticker, as_of, lookback, db_manager, neo4j_manager,
+                                   min_confidence=config.AFFECTS_MIN_CONFIDENCE)
+        except Exception as e:
+            print(f"  ⚠ sector baseline failed ({e}) — v3 degrades to v2 for this run")
+            base = None
+        state["sector_baseline"] = base
+        print(f"  sector baseline: {'%d days' % len(base) if base else 'unavailable'}")
+
     if len(articles) < config.MIN_ARTICLES_FOR_BACKGROUND:
         state["no_data"] = True
         _msg(state, "corpus_collection",
@@ -275,6 +288,7 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
         neo4j_manager=neo4j_manager,
         metrics_version=config.METRICS_VERSION,
         articles=state.get("news_corpus"),
+        sector_baseline=state.get("sector_baseline"),
     )
     state["background_metrics"] = metrics
     sm = metrics["sentiment"]
@@ -282,6 +296,10 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
           f"z={sm['z']} | attention spike={metrics['attention']['spike_ratio']}x | "
           f"turnover={metrics['narrative_turnover']} | flag={metrics['shift_flag']} "
           f"score={metrics['shift_score']}")
+    if metrics.get("sector"):
+        sec = metrics["sector"]
+        print(f"  sector: break={sec.get('sector_break')} dir={sec.get('direction')} "
+              f"z={sec.get('z')} (n_days={sec.get('n_days')}, available={sec.get('available')})")
 
     # DETERMINISTIC decision: existence/direction/magnitude come from the metrics, not the
     # LLM — so the shift_library labels are reproducible. The LLM ONLY characterizes

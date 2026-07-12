@@ -140,6 +140,7 @@ def compute_shift_metrics(
     neo4j_manager: Any = None,
     metrics_version: int = 1,
     articles: Optional[List[Dict[str, Any]]] = None,
+    sector_baseline: Optional[Dict[Any, float]] = None,
 ) -> Dict[str, Any]:
     # align summaries with raw buckets by index
     rows = []
@@ -177,11 +178,41 @@ def compute_shift_metrics(
     # dict keys keep their names so downstream readers (prompts, prints, stored JSON)
     # work unchanged — `estimator` marks the semantics.
     sentiment_extra: Dict[str, Any] = {}
+    sector_stats: Dict[str, Any] = {}
     sparse = False
     if metrics_version >= 2 and articles is not None:
         series, coverage = _daily_sentiment_series(articles, bucket_summaries, period_buckets)
         cutoff = (as_of - timedelta(days=shift_window_days)).date()
         as_of_day = as_of.date() if hasattr(as_of, "date") else as_of
+
+        # --- v3 (Phase 13): subtract the sector baseline day-wise → EXCESS series.
+        # A sector-wide wave moves company and baseline together (excess ≈ 0 → no company
+        # shift); days without sector data use baseline 0 (neutral). The baseline itself
+        # gets the same robust break test → sector_break, reported as CONTEXT.
+        if metrics_version >= 3 and sector_baseline:
+            series = [(d, m - sector_baseline.get(d, 0.0), c) for d, m, c in series]
+            b_recent = [v for d, v in sector_baseline.items() if cutoff < d <= as_of_day]
+            b_base = [v for d, v in sector_baseline.items() if d <= cutoff]
+            if len(b_recent) >= MIN_RECENT_DAYS and len(b_base) >= MIN_BASELINE_DAYS:
+                b_rm, b_bm = median(b_recent), median(b_base)
+                b_mad = _scaled_mad(b_base, b_bm)
+                b_delta = b_rm - b_bm
+                b_z = (b_delta / b_mad) if b_mad > 1e-6 else (
+                    (b_delta / _FALLBACK_SCALE) if abs(b_delta) > 1e-6 else 0.0)
+                sector_stats = {
+                    "available": True, "n_days": len(sector_baseline),
+                    "recent_median": round(b_rm, 3), "baseline_median": round(b_bm, 3),
+                    "delta": round(b_delta, 3), "z": round(b_z, 2),
+                    "sector_break": (abs(b_z) >= z_threshold and abs(b_delta) >= min_abs_delta),
+                    "direction": ("positive" if b_delta > 0 else "negative") if abs(b_delta) > 1e-6 else None,
+                }
+            else:
+                sector_stats = {"available": True, "n_days": len(sector_baseline),
+                                "sector_break": False, "note": "sector series too sparse to test"}
+        elif metrics_version >= 3:
+            sector_stats = {"available": False,
+                            "note": "no sector baseline (unmapped/thin) — excess == company series"}
+
         recent_pts = [m for d, m, _ in series if cutoff < d <= as_of_day]
         base_pts = [m for d, m, _ in series if d <= cutoff]
         recent_mean = median(recent_pts) if recent_pts else 0.0
@@ -195,7 +226,8 @@ def compute_shift_metrics(
         # Sparse series → the sentiment branch abstains (attention branch still live).
         sparse = len(recent_pts) < MIN_RECENT_DAYS or len(base_pts) < MIN_BASELINE_DAYS
         sentiment_extra = {
-            "estimator": "daily_median_mad",
+            "estimator": ("daily_median_mad_sector_excess"
+                          if metrics_version >= 3 and sector_baseline else "daily_median_mad"),
             "n_recent_days": len(recent_pts),
             "n_baseline_days": len(base_pts),
             "label_coverage": round(coverage, 3),
@@ -267,8 +299,10 @@ def compute_shift_metrics(
     if shift_flag and abs(delta) > 1e-6:
         direction = "positive" if delta > 0 else "negative"
 
+    out_sector = {"sector": sector_stats} if sector_stats else {}
     return {
         "metrics_version": metrics_version,
+        **out_sector,
         "sentiment": {
             "recent_mean": round(recent_mean, 3),
             "baseline_mean": round(baseline_mean, 3),

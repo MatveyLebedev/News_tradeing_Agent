@@ -27,7 +27,7 @@ from longterm_agent.tools.background_metrics import compute_shift_metrics
 from longterm_agent.tools.shift_library_tool import write_shift_row
 from news_agent.database.db_manager import DBManager
 
-V2 = "0.2.0"
+VERSION_STR = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}
 REPORTS = Path(__file__).parent / "reports"
 
 
@@ -45,6 +45,7 @@ def _metrics(state, cfg, neo, version):
         neo4j_manager=neo,
         metrics_version=version,
         articles=state.get("news_corpus"),
+        sector_baseline=state.get("sector_baseline") if version >= 3 else None,
     )
 
 
@@ -64,12 +65,16 @@ def main():
     ap.add_argument("--start", required=True)
     ap.add_argument("--end", required=True)
     ap.add_argument("--step", type=int, default=7)
+    ap.add_argument("--versions", nargs=2, type=int, default=[1, 2], metavar=("OLD", "NEW"),
+                    help="metric versions to compare; NEW's shifts are written to shift_library")
     ap.add_argument("--dry-run", action="store_true", help="no shift_library writes")
     args = ap.parse_args()
+    v_old, v_new = args.versions
 
     cfg = LongTermAgentConfig()
     assert not cfg.CORPUS_EMBED_ENABLED, "comparison assumes the shared v1 corpus (embed off)"
-    print(f"provenance: {cfg.provenance()}")
+    print(f"provenance: {cfg.provenance()}  |  comparing v{v_old} vs v{v_new} "
+          f"(writing {VERSION_STR[v_new]} rows)")
 
     db = DBManager(db_config=cfg.get_db_config(), min_conn=1, max_conn=5)
     neo = None
@@ -100,7 +105,7 @@ def main():
                 stored_v1[(tk, str(ao))] = dr
 
     REPORTS.mkdir(exist_ok=True)
-    out_path = REPORTS / f"detection_v1_v2_{args.start}_{args.end}.jsonl"
+    out_path = REPORTS / f"detection_v{v_old}_v{v_new}_{args.start}_{args.end}.jsonl"
     rows = []
     stats = {"runs": 0, "no_data": 0, "errors": 0,
              "v1_shifts": 0, "v2_shifts": 0, "both": 0, "v1_only": 0, "v2_only": 0,
@@ -119,8 +124,19 @@ def main():
                         continue
                     state = background_profiling_node(state, llm_map, None, cfg, db,
                                                       skip_reduce=True)
-                    m1 = _metrics(state, cfg, neo, 1)
-                    m2 = _metrics(state, cfg, neo, 2)
+                    # v3 needs the sector baseline; compute it regardless of the env
+                    # METRICS_VERSION so the comparison is self-contained.
+                    if max(v_old, v_new) >= 3 and "sector_baseline" not in state:
+                        from longterm_agent.tools.sector_sentiment import sector_baseline
+                        try:
+                            state["sector_baseline"] = sector_baseline(
+                                ticker, as_of, cfg.LOOKBACK_DAYS_BACKGROUND, db, neo,
+                                min_confidence=cfg.AFFECTS_MIN_CONFIDENCE)
+                        except Exception as e:
+                            print(f"  ⚠ sector baseline failed for {ticker}: {e}")
+                            state["sector_baseline"] = None
+                    m1 = _metrics(state, cfg, neo, v_old)
+                    m2 = _metrics(state, cfg, neo, v_new)
 
                     f1, f2 = m1["shift_flag"], m2["shift_flag"]
                     stats["v1_shifts"] += f1
@@ -138,7 +154,8 @@ def main():
                             stats["stored_v1_drift"] += 1
 
                     if f2 and not args.dry_run:
-                        write_shift_row(db, ticker, as_of, V2, _shift_dict(m2), {}, m2)
+                        write_shift_row(db, ticker, as_of, VERSION_STR[v_new],
+                                        _shift_dict(m2), {}, m2)
 
                     rec = {"ticker": ticker.upper(), "as_of": str(as_of.date()),
                            "v1": {"flag": f1, "dir": m1["direction"],
@@ -152,6 +169,7 @@ def main():
                                   "coverage": m2["sentiment"].get("label_coverage"),
                                   "sparse": m2["sentiment"].get("sparse")},
                            "attention_spike": m1["attention"]["spike_ratio"],
+                           "sector": m2.get("sector"),
                            "articles": state.get("article_count")}
                     rows.append(rec)
                     f.write(json.dumps(rec) + "\n")
@@ -165,7 +183,8 @@ def main():
 
     decided = stats["runs"] - stats["no_data"] - stats["errors"]
     agree = decided - stats["v1_only"] - stats["v2_only"] - stats["direction_flips"]
-    print("\n=== v1 vs v2 (same corpus, same summaries) ===")
+    print(f"\n=== v{v_old} vs v{v_new} (same corpus, same summaries; "
+          f"'v1'=old 'v2'=new in the JSONL) ===")
     print(f"grid: {stats['runs']} runs, decided {decided} (no_data {stats['no_data']}, errors {stats['errors']})")
     print(f"v1 shifts: {stats['v1_shifts']}  v2 shifts: {stats['v2_shifts']}  both: {stats['both']}")
     print(f"v1-only: {stats['v1_only']}  v2-only: {stats['v2_only']}  direction flips: {stats['direction_flips']}")

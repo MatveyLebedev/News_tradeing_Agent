@@ -31,11 +31,14 @@ from model_config import (
 # whole detection release coherently — statistics path, embed corpus source, AND the
 # version stamped on rows / used by analog lookups and the bucket cache:
 #   1 → "0.1.0"  weekly bucket LLM sentiments, mean/std z-score, graph+ilike corpus
-#   2 → "0.2.0"  per-article AFFECTS daily series, median/MAD robust break, +embed corpus
-# v2 rows coexist with v1 in shift_library (agent_version column); live cutover = setting
-# LT_METRICS_VERSION=2 in the server env AFTER the walk-forward gates pass.
+#   2 → "0.2.0"  per-article AFFECTS daily series, median/MAD robust break
+#   3 → "0.3.0"  Phase 13: break test on the company-MINUS-SECTOR excess series
+#                (sector baseline = median of peers' graph-label daily means), so a
+#                sector-wide wave (the AMD←Broadcom failure) is context, not a shift
+# Rows of every version coexist in shift_library (agent_version column); live cutover =
+# changing LT_METRICS_VERSION in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
-DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0"}[METRICS_VERSION]
+DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 PIPELINE_VERSION = "0.5.0"   # Phase 12: fundamentals interpretation v2 (STORED-field wiring)
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
