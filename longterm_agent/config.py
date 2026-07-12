@@ -39,7 +39,7 @@ from model_config import (
 # changing LT_METRICS_VERSION in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.5.0"   # Phase 12: fundamentals interpretation v2 (STORED-field wiring)
+PIPELINE_VERSION = "0.6.0"   # Phase 14: regime_context stamp (descriptive only, no gating)
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.

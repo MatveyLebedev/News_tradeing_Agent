@@ -49,7 +49,8 @@ def _ensure_table(cfg):
                        ADD COLUMN IF NOT EXISTS benchmark_return_stopped REAL,
                        ADD COLUMN IF NOT EXISTS excess_stopped REAL,
                        ADD COLUMN IF NOT EXISTS exit_reason VARCHAR(12),
-                       ADD COLUMN IF NOT EXISTS exit_days INTEGER""")
+                       ADD COLUMN IF NOT EXISTS exit_days INTEGER,
+                       ADD COLUMN IF NOT EXISTS regime_context JSONB""")
     conn.commit()
     conn.close()
 
@@ -205,18 +206,30 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
     before 5.5 get their stopped columns backfilled idempotently; hold columns are never
     overwritten. `benchmark` is the comparison index (B3: SPY or a sector ETF)."""
     from longterm_agent.exit_rules import stopped_returns
+    from longterm_agent.tools.regime_tool import regime_context_from_conn
     _ensure_table(cfg)
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
     cur = conn.cursor()
-    cur.execute("""SELECT id, ticker, as_of, horizon_days, direction, outcome_filled_at
+    cur.execute("""SELECT id, ticker, as_of, horizon_days, direction, outcome_filled_at,
+                          regime_context IS NULL
                    FROM backtest_runs
                    WHERE backtest_id=%s AND (outcome_filled_at IS NULL
-                          OR (exit_reason IS NULL AND traded AND direction IN ('LONG','SHORT')))
+                          OR (exit_reason IS NULL AND traded AND direction IN ('LONG','SHORT'))
+                          OR regime_context IS NULL)
                    ORDER BY as_of""", [backtest_id])
     rows = cur.fetchall()
-    graded = backfilled = 0
-    for rid, ticker, as_of, horizon, direction, already in rows:
+    graded = backfilled = stamped = 0
+    for rid, ticker, as_of, horizon, direction, already, no_regime in rows:
+        # Phase 14 — regime stamp is a property of as_of (not of maturity): fill it for any
+        # row missing one, incl. idempotent backfill of rows graded before the stamp existed.
+        # Left NULL while macro_series is empty so a later pass can still fill it.
+        if no_regime:
+            ctx = regime_context_from_conn(conn, as_of)
+            if ctx.get("available"):
+                cur.execute("UPDATE backtest_runs SET regime_context=%s WHERE id=%s",
+                            [Json(ctx), rid])
+                stamped += 1
         if as_of + timedelta(days=horizon) > today:
             continue  # horizon not matured yet
         fwd = _ret(cur, ticker, as_of, horizon)
@@ -249,7 +262,8 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
     conn.commit()
     conn.close()
     print(f"graded {graded} matured rows (today={today})"
-          + (f"; stopped-book backfilled on {backfilled} already-graded rows" if backfilled else ""))
+          + (f"; stopped-book backfilled on {backfilled} already-graded rows" if backfilled else "")
+          + (f"; regime_context stamped on {stamped} rows" if stamped else ""))
 
 
 # --------------------------------------------------------------------------- report
@@ -268,11 +282,12 @@ def report(cfg, backtest_id):
     conn = _conn(cfg)
     cur = conn.cursor()
     cur.execute("""SELECT horizon_days, ticker, as_of, direction, conviction, traded,
-                          shift_flag, regime, excess, excess_stopped, exit_reason
+                          shift_flag, regime, excess, excess_stopped, exit_reason, regime_context
                    FROM backtest_runs WHERE backtest_id=%s ORDER BY horizon_days, as_of""",
                 [backtest_id])
     rows = [dict(zip(("horizon", "ticker", "as_of", "direction", "conviction", "traded",
-                      "shift_flag", "regime", "excess", "excess_stopped", "exit_reason"),
+                      "shift_flag", "regime", "excess", "excess_stopped", "exit_reason",
+                      "regime_context"),
                      r)) for r in cur.fetchall()]
     cur.execute("""SELECT DISTINCT provenance::text FROM backtest_runs WHERE backtest_id=%s""",
                 [backtest_id])
@@ -359,8 +374,41 @@ def report(cfg, backtest_id):
                 sub = [r["excess"] for r in graded if r["regime"] == v]
                 line.append(f"{v}: n={len(sub)} mean {_pct(M.distribution(sub)['mean'])}")
             print("  by regime   : " + "   ".join(line))
+        _regime_context_splits(graded)
         _protocol_checks(graded, cal)
     print("\n" + "=" * 74)
+
+
+def _vix_band(ctx):
+    v = (ctx or {}).get("vix")
+    if v is None:
+        return None
+    return "vix<20" if v < 20 else ("vix20-30" if v <= 30 else "vix>30")
+
+
+def _hy_band(ctx):
+    p = (ctx or {}).get("hy_oas_pctile_5y")
+    if p is None:
+        return None
+    return "hy<p50" if p < 50 else ("hy_p50-80" if p <= 80 else "hy>p80")
+
+
+def _regime_context_splits(graded):
+    """Phase 14 — descriptive splits by the stamped macro regime (VIX / HY-OAS bands).
+    A single populated band is itself the finding: the sample spans ONE regime, so
+    regime-conditional conclusions are not yet supported (and nothing gates on this)."""
+    for label, fn in (("vix band", _vix_band), ("hy band", _hy_band)):
+        buckets = {}
+        for r in graded:
+            b = fn(r.get("regime_context"))
+            if b is not None:
+                buckets.setdefault(b, []).append(r["excess"])
+        if not buckets:
+            continue
+        line = [f"{b}: n={len(sub)} mean {_pct(M.distribution(sub)['mean'])}"
+                for b, sub in sorted(buckets.items())]
+        note = "  (single band — one-regime sample)" if len(buckets) == 1 else ""
+        print(f"  by {label:9s}: " + "   ".join(line) + note)
 
 
 def _protocol_checks(graded, cal):

@@ -13,6 +13,7 @@ from config import (
     GRAPH_MAINTENANCE_ENABLED, GRAPH_CLEANUP_TIME,
     GRAPH_MERGE_WEEKDAY, GRAPH_MERGE_TIME, EVENT_EMBEDDING_RETENTION_DAYS,
 )
+from config import MACRO_FETCH_ENABLED, MACRO_FETCH_TIME
 from graph_db import (
     update_price_movements,
     close_stale_stories,
@@ -103,6 +104,20 @@ def scheduled_fundamentals_fetch(verbose=True):
             print(f"✓ Fundamentals: {result['edgar_rows']} EDGAR rows, {result['yf_rows']} yfinance rows")
     except Exception as e:
         print(f"❌ Fundamentals fetch failed: {e}")
+
+
+def scheduled_macro_fetch(verbose=True):
+    """Daily macro/regime series fetch (Phase 14): VIX, HY OAS, 10Y, oil, Fed liquidity."""
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"DAILY MACRO SERIES FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    # Imported lazily so a missing dep here never blocks the news/price loop.
+    try:
+        from macro_fetcher import fetch_all_macro
+        fetch_all_macro(verbose=verbose)
+    except Exception as e:
+        print(f"❌ Macro series fetch failed: {e}")
 
 
 def scheduled_graph_cleanup(verbose=True):
@@ -206,6 +221,14 @@ def run_scheduler(verbose=True):
             print(f"✓ Fundamentals fetch scheduled: {FUNDAMENTALS_FETCH_WEEKDAY} at {FUNDAMENTALS_FETCH_TIME} ET")
         except Exception as e:
             print(f"⚠️  Could not schedule fundamentals fetch: {e}")
+
+    # Daily macro/regime series (Phase 14) — collect-and-stamp only, nothing gates on it.
+    if MACRO_FETCH_ENABLED:
+        try:
+            schedule.every().day.at(MACRO_FETCH_TIME).do(lambda: scheduled_macro_fetch(verbose=verbose))
+            print(f"✓ Macro series fetch scheduled: daily at {MACRO_FETCH_TIME} ET")
+        except Exception as e:
+            print(f"⚠️  Could not schedule macro fetch: {e}")
 
     # Graph maintenance (off-market): daily close-stale + embedding purge, weekly dedup merge.
     # These bound the news->graph fan-out that otherwise grows unbounded.

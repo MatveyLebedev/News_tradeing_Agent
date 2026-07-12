@@ -24,7 +24,14 @@ _QUERIES = {
     "prices": "SELECT max(date) FROM stock_prices_daily",
     "prices_spy": "SELECT max(date) FROM stock_prices_daily WHERE ticker='SPY'",
     "fundamentals": "SELECT max(fetch_date) FROM fundamentals",
+    "macro": "SELECT max(date) FROM macro_series",
 }
+
+# Advisory sources are REPORTED (visible in /freshness and preflight prints) but never
+# included in stale/any_stale — Phase 14 macro series are a descriptive stamp with no
+# decision logic, so their staleness (or the table not existing yet on an old deployment)
+# must not abort a batch the way a frozen price/news feed rightly does.
+_ADVISORY = {"macro"}
 
 
 def _weekdays_between(start: date, end: date) -> int:
@@ -52,6 +59,7 @@ def _thresholds():
         "prices": s.fresh_prices_max_trading_days,
         "prices_spy": s.fresh_prices_max_trading_days,
         "fundamentals": s.fresh_fundamentals_max_days,
+        "macro": s.fresh_macro_max_days,
     }
 
 
@@ -82,8 +90,10 @@ def evaluate_freshness(maxes: dict, now: datetime = None, thresholds: dict = Non
                 as_date = val.date() if isinstance(val, datetime) else val
                 entry["age"] = (today - as_date).days
             entry["stale"] = entry["age"] > threshold
+        if name in _ADVISORY:
+            entry["advisory"] = True
         sources[name] = entry
-        if entry["stale"]:
+        if entry["stale"] and name not in _ADVISORY:
             stale_names.append(name)
 
     return {"sources": sources, "stale": stale_names,

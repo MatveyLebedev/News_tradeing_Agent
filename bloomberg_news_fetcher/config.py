@@ -76,6 +76,12 @@ FETCH_FUNDAMENTALS = os.getenv("FETCH_FUNDAMENTALS", "false").lower() == "true"
 FUNDAMENTALS_FETCH_WEEKDAY = os.getenv("FUNDAMENTALS_FETCH_WEEKDAY", "saturday").lower()
 FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, off-market
 
+# Macro/regime series (Modification Plan Phase 14) — free PIT series (VIX, HY OAS, 10Y,
+# oil, Fed liquidity) into `macro_series`, daily off-market. Values are collected and
+# stamped onto signals as regime context; NOTHING gates on them yet (single-regime data).
+MACRO_FETCH_ENABLED = os.getenv("MACRO_FETCH_ENABLED", "true").lower() == "true"
+MACRO_FETCH_TIME = os.getenv("MACRO_FETCH_TIME", "18:30")  # ET — after FRED daily updates
+
 # Graph maintenance (Neo4j story lifecycle + pgvector retention)
 # Without these, the news->graph fan-out grows unbounded: stale Stories are never
 # closed, duplicate Stories never merged, and graph_event_embeddings has no TTL.

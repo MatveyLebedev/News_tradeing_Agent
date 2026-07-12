@@ -95,6 +95,7 @@ class Settings(BaseSettings):
     fresh_news_max_days: int = 2                # parser runs every 5 min
     fresh_prices_max_trading_days: int = 5      # weekly cadence, no midweek false alarms
     fresh_fundamentals_max_days: int = 14       # weekly job + slack for one miss
+    fresh_macro_max_days: int = 5               # daily job; advisory-only (never aborts)
 
     @field_validator(
         "llm_model", "graph_llm_model", "embedding_model", "embedding_dimensions",

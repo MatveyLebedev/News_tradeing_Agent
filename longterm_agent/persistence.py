@@ -22,6 +22,10 @@ def _ensure_results_table(db_manager):
     conn = _conn(db_manager)
     with conn.cursor() as cur:
         cur.execute(ddl)
+        # Phase 14 — risk_checks (incl. the regime_context stamp) persists with the run so
+        # forward signals are regime-annotated from day one (splits become computable later).
+        cur.execute("""ALTER TABLE longterm_agent_results
+                       ADD COLUMN IF NOT EXISTS risk_checks JSONB""")
     conn.commit()
     conn.close()
 
@@ -47,8 +51,8 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                     (agent_name, agent_version, ticker, as_of, lookback_days,
                      background_profile, background_shift, fundamentals_summary, shift_analogs,
                      enriched_analysis, signal, verdict, traded, risk_flags, conviction,
-                     article_count, execution_time_seconds)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     article_count, execution_time_seconds, risk_checks)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (agent_version, ticker, as_of) DO UPDATE SET
                     background_profile=EXCLUDED.background_profile,
                     background_shift=EXCLUDED.background_shift,
@@ -59,6 +63,7 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                     traded=EXCLUDED.traded, risk_flags=EXCLUDED.risk_flags,
                     conviction=EXCLUDED.conviction, article_count=EXCLUDED.article_count,
                     execution_time_seconds=EXCLUDED.execution_time_seconds,
+                    risk_checks=EXCLUDED.risk_checks,
                     run_timestamp=NOW()
             """, [
                 # Results identity = DETECTION_VERSION (see config.py migration note):
@@ -75,6 +80,7 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 verdict, traded, Json(state.get("risk_flags") or []),
                 sig.get("conviction"), state.get("article_count"),
                 round(execution_time, 1) if execution_time else None,
+                Json(state.get("risk_checks") or {}),
             ])
         conn.commit()
         conn.close()

@@ -22,6 +22,7 @@ from ..tools.fundamentals_tool import read_fundamentals
 from ..tools.technical_tool import compute_daily_technicals
 from ..tools.shift_library_tool import find_similar_shifts
 from ..tools.risk_tool import priced_in_check, earnings_event_risk
+from ..tools.regime_tool import regime_context
 from ..tools import bucket_cache
 from datetime import timedelta
 
@@ -787,6 +788,9 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     priced = priced_in_check(db_manager, state["ticker"], state["as_of"],
                              state.get("shift_window_days", config.SHIFT_WINDOW_DAYS))
     earn = earnings_event_risk(db_manager, state["ticker"], state["as_of"], config.EARNINGS_RISK_DAYS)
+    # Phase 14 — regime stamp: PIT snapshot of VIX/HY-OAS/10Y/oil AS-OF the run. Recorded
+    # for later regime-split analysis; deliberately NOT a gate (single-regime data so far).
+    regime = regime_context(db_manager, state["as_of"])
 
     direction = sig.get("direction")
 
@@ -861,11 +865,16 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     sig["gate"] = gate_mode
     passed = sig.get("conviction", 0.0) >= config.LONGTERM_CONFIDENCE_THRESHOLD and direction in ("LONG", "SHORT")
     state["risk_flags"] = flags
-    state["risk_checks"] = {"priced_in": priced, "earnings": earn}
+    state["risk_checks"] = {"priced_in": priced, "earnings": earn, "regime_context": regime}
     state["signal"] = sig
     state["filtered_signal"] = sig if passed else None
 
     print(f"  flags: {flags or 'none'}")
+    if regime.get("available"):
+        print(f"  regime: vix={regime.get('vix')} (p{regime.get('vix_pctile_5y')}) "
+              f"hy_oas={regime.get('hy_oas')} (p{regime.get('hy_oas_pctile_5y')}) "
+              f"10y={regime.get('dgs10')} Δ15s={regime.get('dgs10_delta_15s_bp')}bp "
+              f"brent={regime.get('brent')} [{regime.get('oil_band')}] — stamped, not gated")
     print(f"  → {'PASS' if passed else 'FILTERED'} "
           f"(conviction={sig.get('conviction')} [{gate_mode}] vs threshold {config.LONGTERM_CONFIDENCE_THRESHOLD})")
     _msg(state, "risk_gate", f"{'PASS' if passed else 'FILTERED'}; flags={flags}",

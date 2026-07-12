@@ -780,6 +780,30 @@ Changes (expert #28, #31–33, #37):
 Acceptance: `macro_series` populated daily with backfill from FRED/yfinance history;
 every new signal carries `regime_context`; forward report gains regime-split tables.
 
+**Status 2026-07-12 — DONE (collect-and-stamp only, as designed):**
+- ✅ `bloomberg_news_fetcher/macro_fetcher.py`: 9 series (vix/vix3m/brent/wti via
+  yfinance; hy_oas/dgs10 + fed_bs/tga/rrp liquidity extras via fredgraph.csv, no key),
+  first-release-only inserts (ON CONFLICT DO NOTHING — PIT by construction), incremental
+  runs re-scan a 21d window to heal FRED lag. Scheduled daily 18:30 ET in the news
+  container (`MACRO_FETCH_ENABLED/MACRO_FETCH_TIME`). Backfilled locally: VIX since 1990,
+  DGS10 2010+, **hy_oas only 2023+ — FRED caps ICE BofA series to trailing ~3y
+  (licensing), so its "5y" percentile grows into a true 5y window as PIT rows accumulate**.
+- ✅ `longterm_agent/tools/regime_tool.py`: pure `compute_regime_context` (unit-tested) +
+  cached AS-OF reader; stamp = vix (+p5y, >30 capitulation, vix3m inversion), hy_oas
+  (+p5y, 20-obs RoC), dgs10 (+Δ15s bp, ≥40bp shock flag), brent/wti (+oil band).
+- ✅ Stamped: `risk_checks.regime_context` in risk_gate (live runs; new `risk_checks`
+  JSONB column in longterm_agent_results), `regime_context` JSONB on backtest_runs filled
+  at grade time (idempotent backfill for rows graded pre-Phase-14; left NULL if
+  macro_series empty so a later pass can fill it). Report: `by vix band` / `by hy band`
+  splits with an explicit "single band — one-regime sample" marker.
+- ✅ Freshness: `macro` registered as an ADVISORY source (visible in /freshness, never in
+  `any_stale` — a missing/stale advisory stamp must not abort a batch). `PIPELINE_VERSION`
+  → 0.6.0. 9 new tests (test_phase14.py). Live check 2026-07-10: vix 15.03 (p21),
+  hy_oas 2.70 (p8), dgs10 4.54 (Δ+11bp), brent 76 deflationary — one calm regime, QED.
+- ▶ Server side on next deploy: new image picks up the daily job automatically
+  (macro_series auto-created; run `python macro_fetcher.py --backfill` once in the
+  container for history).
+
 ---
 
 ## Deployment status (2026-07-11, session notes — resume point)
