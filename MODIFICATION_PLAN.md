@@ -780,9 +780,16 @@ sector-contagion cases from VALIDATION_REPORT_v0.2.md §3 re-classified correctl
   `compare_detections --versions OLD NEW` (writes 0.3.0 rows), `config` mapping
   3→"0.3.0", tests in `test_phase13.py` (AMD-shape suppression, idiosyncratic
   survival, degradation, map integrity).
-- ⏳ TO RESUME: (1) `python -m pytest longterm_agent/tests/ -q` (last run: 5/6 new tests
-  passed, NEM-orphan fixed after, full suite not re-run), (2) commit Phase 13,
-  (3) live AMD 06-04/06-11 re-check on the semis baseline, (4) queued backtests below.
+- ✅ RESUMED & DONE 2026-07-15: committed `82f1ff8` (suite green); live AMD re-check
+  resolved the prediction — the 06-04/06-11 "wave" was AVGO-idiosyncratic (fresh v2
+  doesn't flag it; the peer MEDIAN is robust to one-name events by design), while the
+  REAL July semis wave (07-02 sector z=−6.88) is where v3 suppressed v2's false AMD
+  company-shift and stamped `sector_break` — the structural fix works where it matters.
+- ✅ Full-grid compare + wf_30x_f12_v3 run (see "Queued backtests" status / docs report).
+  **VERDICT: no cutover yet — live stays `LT_METRICS_VERSION=2`.** Decision-level ≈ wash
+  (label changes concentrate in non-traded cells; 2w book degrades), and v3's showcase
+  window (July) is outside the graded grid. Re-examine ~2026-08-06 when the 07-02/07-09
+  cohorts mature (0.3.0 shift_library rows are in and grading forward).
 
 ---
 
@@ -791,11 +798,13 @@ sector-contagion cases from VALIDATION_REPORT_v0.2.md §3 re-classified correctl
 OpenRouter weekly key limit killed the first deep A/B mid-sweep (403 → fallback-NEUTRAL
 contamination; wf_30x_v0.2_deep rows DELETED). Key has since been fixed per user.
 
-**Status 2026-07-15:** #1 wf_30x_f12 ✅ (810 rows, +1.07pp 4w mean vs v0.2 — Phase 12
-validated) · #2 wf_30x_v0.2_deep ✅ (810 rows, deep nudge helps — see 6-pre verdict) ·
-#3 compare v2-vs-v3 + wf_30x_f12_v3 ⏳ running detached
-(/private/tmp/claude-501/-Users-lebedevmatvey-test/wf_queue2/, pinned @ 82f1ff8) ·
-#4 deep-v2 queued, now justified. Report: docs/BACKTESTS_2026Q2_PH6_12_13.md. Queue:
+**Status 2026-07-15 — ALL THREE COMPLETE (zero 403s; report:
+docs/BACKTESTS_2026Q2_PH6_12_13.md):** #1 wf_30x_f12 ✅ (+1.07pp 4w mean vs v0.2 —
+Phase 12 validated) · #2 wf_30x_v0.2_deep ✅ (deep nudge HELPS — 6-pre verdict (a)) ·
+#3 compare v2-vs-v3 ✅ (100% baseline coverage; July AMD semis wave correctly
+reclassified as sector_break) + wf_30x_f12_v3 ✅ (decision-level ≈ wash → **NO cutover;
+stay LT_METRICS_VERSION=2**; re-examine ~2026-08-06 when the July sector-wave cohorts
+mature) · #4 deep-v2 justified by #2, still queued. Original queue for reference:
 
 ```bash
 # 1. deep-analysis A/B (Phase 6-pre) — NOTE the pre-Phase-12 confound choice, see 6-pre

@@ -21,7 +21,7 @@ idempotent).
 | `wf_30x_v0.2` | baseline (detection v2) | 46→44 | 55% | −0.54% | 0.57 | −40.8% | +0.27% |
 | `wf_30x_f12` | + Phase 12 fundamentals v2 | 49→46 | 57% | **+0.53%** | 0.91 | −36.8% | +0.71% |
 | `wf_30x_v0.2_deep` | + deep analysis v1 ON | 42→39 | 62% | **+1.78%** | 1.30 | −36.8% | +2.04% |
-| `wf_30x_f12_v3` | detection v3 (sector-relative) | *(pending)* | | | | | |
+| `wf_30x_f12_v3` | detection v3 (sector-relative) | 47→46 | 59% | +0.55% | 0.95 | −36.8% | +0.90% |
 
 ## 1. Phase 12 — fundamentals v2 wiring (`wf_30x_f12` vs `wf_30x_v0.2`)
 
@@ -74,7 +74,41 @@ Decision rule stands: deep v2 must beat BOTH f12 and deep v1 to earn the flag ON
 
 ## 3. Phase 13 — sector-relative detection v3 (`wf_30x_f12_v3` vs `wf_30x_f12`)
 
-*(pending — compare v2-vs-v3 backfill + grade + backtest in flight)*
+Same code/gates (f12), only `LT_METRICS_VERSION=3` — the diff isolates the excess-series
+detection change.
+
+**Label level** (compare, 704 cells, full universe,
+`longterm_agent/reports/detection_v2_v3_2026-04-30_2026-07-09.jsonl`): sector baseline
+available in **100%** of decided cells; flag agreement 81.7%; v3 suppressed 51 v2 flags
+(sector waves / moves-with-sector) and added 44 (idiosyncratic moves hidden by sector
+trend); 29 direction flips. **The AMD prediction resolved cleanly**: the early-June
+"wave" was AVGO-idiosyncratic (fresh v2 doesn't flag it either; the peer MEDIAN
+correctly ignores a one-name event), while the REAL July semis wave (sector z=−6.88 on
+07-02, −2.28 on 07-09) is exactly where v2 still called an AMD company shift and v3
+reclassified it as `sector_break` context.
+
+**Decision level** (wf grid): nearly a wash — the label changes concentrate in cells the
+conviction gate doesn't trade anyway. 43 shared trades; 3 dropped (net +2.9% forgone),
+3 added (net +3.1%), 1 flip (MSFT SHORT −0.4% → LONG +0.4%).
+
+| horizon | metric | f12 (v2) | f12_v3 | Δ |
+|---|---|---|---|---|
+| 4w | win rate | 57% | 59% | +2pp |
+| 4w | mean excess | +0.53% | +0.55% | ≈0 |
+| 4w | Sharpe | 0.91 | 0.95 | +0.04 |
+| 4w | max drawdown | −3.23% | −2.27% | better |
+| 4w | stopped mean | +0.71% | +0.90% | +0.19pp |
+| 2w | win rate | 51% | 47% | −4pp |
+| 2w | Sharpe | 0.59 | 0.16 | **worse** |
+
+**Verdict: DO NOT cut over yet — stay on `LT_METRICS_VERSION=2` live.** v3 is validated
+as safe (4w book marginally better on every risk metric, trading set nearly identical)
+and structurally right (the sector-wave fix demonstrably works at label level), but a
+label-affecting release needs positive decision-level evidence, the 2w book degrades,
+and v3's strongest moments (the July semis wave) sit OUTSIDE the graded window
+(cohorts end 06-19). **Re-examine ~2026-08-06+** when the 07-02/07-09 cohorts mature in
+shift_library (0.3.0 rows are backfilled and grading forward via grade_shifts) — that
+window contains precisely the sector-wave trades v3 exists to avoid.
 
 ## Protocol notes
 
