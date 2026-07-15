@@ -34,6 +34,10 @@ COPY bloomberg_news_fetcher/auto_news_fetcher.py .
 COPY bloomberg_news_fetcher/edgar_fetcher.py .
 COPY bloomberg_news_fetcher/fundamentals_fetcher.py .
 COPY bloomberg_news_fetcher/daily_price_fetcher.py .
+COPY bloomberg_news_fetcher/macro_fetcher.py .
+COPY bloomberg_news_fetcher/filings_fetcher.py .
+COPY bloomberg_news_fetcher/options_fetcher.py .
+COPY bloomberg_news_fetcher/sec_cik_map.json .
 COPY bloomberg_news_fetcher/create_fundamentals_table.sql .
 COPY bloomberg_news_fetcher/create_daily_price_table.sql .
 COPY graph_db/ graph_db/
