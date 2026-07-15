@@ -671,6 +671,26 @@ Changes:
 Acceptance: tool returns graded events for a ticker with intraday history; cited in
 findings like any other evidence.
 
+**Status 2026-07-15 — DONE, plus a production bug found and fixed on the way:**
+- ✅ `tools/intraday_tool.py`: `read_intraday_reactions` joins `agent_results` calls
+  (12.9k rows, 2026-03..06) with realized `AFFECTS.move_1d` from the graph → per-event
+  predicted-vs-realized + hit rate; as-of-windowed, advisory deep tool
+  `get_intraday_reactions`. Reduce-prompt line SKIPPED on purpose (deep v1 prompts are
+  LLM-cache keys; the LLM can call the tool). 3 new tests.
+- 🐞 **Found: `AFFECTS.move_*` was NEVER populated in production (0 of 23,166 edges)**
+  despite healthy inputs (96% SOURCED_FROM.published_at, 120 intraday tables, fresh
+  bars) — Phase 11's per-article ground-truth assumption was false. Two causes in
+  `update_price_movements`: (a) unbounded 23k-row aggregation selector dies on the
+  server's Neo4j before writing anything (silent ⚠ every 5-min cycle); (b) selector
+  keyed on `move_15m IS NULL` dropped fresh events from the queue once the 15m window
+  filled, so `move_1d` could never fill for live events.
+- ✅ Fixed: batched selectors (`EVENT_MOVES_BATCH`, default 300/cycle), keyed on
+  `move_1d IS NULL` with a `move_checked_at` 4h retry cooldown; function returns
+  attempted counts. One-off local backfill of the 23k+39k backlog RUNNING (detached);
+  the server picks up the fix + drains its own future backlog on next fetcher deploy.
+- Note: intraday agent's last `agent_results` row is 2026-06-06 — check the news_agent
+  container on deploy day (bridge data stops there until it runs again).
+
 ---
 
 ## Phase 11 — Learning-loop groundwork (prompt-tuning / fine-tuning later; collect NOW)

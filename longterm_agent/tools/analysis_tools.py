@@ -21,6 +21,7 @@ from langchain_core.tools import tool
 from .filings_tool import (read_insider_activity, read_options_iv, read_recent_filings,
                            read_short_interest)
 from .fundamentals_tool import read_consensus, read_fundamentals
+from .intraday_tool import read_intraday_reactions
 from .technical_tool import compute_daily_technicals
 from .news_corpus_tool import get_company_news_corpus
 from .shift_library_tool import find_similar_shifts
@@ -212,6 +213,18 @@ def build_deep_analysis_tools(
         return json.dumps(read_short_interest(db_manager, t, as_of), default=str)
 
     @tool
+    def get_intraday_reactions(ticker: str = None) -> str:
+        """How the market ACTUALLY reacted to this window's significant events: the intraday
+        agent's calls (buy/sell + confidence) on the company's news over the last 60 days,
+        each with the REALIZED 1-day move and a hit flag, plus the aggregate hit rate. Use as
+        a reality check on the narrative — e.g. a 'negative' background whose events kept
+        getting bought is weaker than it reads. DEFAULTS to the company under analysis; pass
+        a PEER ticker to compare. Args: ticker — company (default: under analysis)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_intraday_reactions(db_manager, neo4j_manager, t, as_of),
+                          default=str)
+
+    @tool
     def search_company_news(query: str, ticker: str = None, limit: int = 8) -> str:
         """Re-query a company's point-in-time news corpus for headlines whose title or summary
         mention the query terms — DEFAULTS to the company under analysis; pass a PEER ticker to
@@ -257,7 +270,7 @@ def build_deep_analysis_tools(
         get_fundamentals_detail, get_long_term_technicals,
         search_company_news, find_historical_analogs, get_street_consensus,
         get_recent_filings, get_insider_activity, get_options_positioning,
-        get_short_interest,
+        get_short_interest, get_intraday_reactions,
     ]
 
     # Sector/competitor read — reuse the short-term agent's as-of-aware factory verbatim.

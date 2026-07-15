@@ -14,7 +14,7 @@ CLI:
     python options_fetcher.py --tickers NVDA --stats
 """
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 import yfinance as yf
@@ -79,7 +79,10 @@ def snapshot_ticker(ticker):
     """One ticker's IV snapshot dict, or None when no listed options / no spot."""
     t = yf.Ticker(ticker)
     try:
-        expiries = list(t.options or [])[:N_EXPIRIES]
+        # skip expiries within a day of the snapshot — expiry-day chains carry degenerate
+        # IVs (near-zero ATM, wild wings) that would poison the forward archive
+        cutoff = (datetime.now(EASTERN_TZ).date() + timedelta(days=1)).isoformat()
+        expiries = [e for e in (t.options or []) if e > cutoff][:N_EXPIRIES]
         if not expiries:
             return None
         hist = t.history(period="5d", interval="1d")

@@ -333,24 +333,43 @@ def _query_moves(ticker: str, pub_dt: datetime, pg_conn) -> dict:
     return moves
 
 
-def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None):
+MOVES_BATCH = int(os.getenv("EVENT_MOVES_BATCH", "300"))
+MOVES_RETRY_COOLDOWN = "PT4H"  # re-attempt cadence for rows that yielded no data yet
+
+
+def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None,
+                           batch: int | None = None):
     """Background process: fill move_* on AFFECTS and SOURCED_FROM edges where still null.
 
     Should be called after historical_data_{ticker} tables are populated by the price fetcher,
     not during news ingestion (price data may not be available yet at ingestion time).
+
+    2026-07-15 rework — the original version silently filled NOTHING in production:
+      * the selectors pulled EVERY null edge (23k+) with an aggregation in one query —
+        that dies on the server's Neo4j before a single row is written → now processed
+        in LIMIT `batch` slices per call (the 5-min loop drains the backlog over cycles);
+      * selecting on `move_15m IS NULL` dropped fresh events from the queue as soon as
+        the 15-minute window filled, so `move_1d` NEVER filled for live events → now
+        keyed on `move_1d IS NULL` (the last window to mature) with a `move_checked_at`
+        cooldown so waiting/недatable rows are retried, not hammered.
+    Returns (n_affects_attempted, n_sourced_attempted) so backfill drivers can loop.
     """
     if neo4j_mgr is None:
         neo4j_mgr = _get_neo4j_manager()
     if pg_conn is None:
         pg_conn = _get_pg_conn()
+    batch = batch or MOVES_BATCH
 
     # ── 1. AFFECTS edges with missing moves ──────────────────────────────────
     # Baseline = earliest SOURCED_FROM.published_at (real intraday publish time),
     # falling back to e.date. e.date is frequently date-only (midnight) and has no
     # market data, which previously left every AFFECTS move null.
-    affects_rows = neo4j_mgr.query("""
+    affects_rows = neo4j_mgr.query(f"""
         MATCH (e:Event)-[r:AFFECTS]->(c:Company)
-        WHERE r.move_15m IS NULL
+        WHERE r.move_1d IS NULL
+          AND (r.move_checked_at IS NULL
+               OR r.move_checked_at < datetime() - duration('{MOVES_RETRY_COOLDOWN}'))
+        WITH e, r, c LIMIT {int(batch)}
         OPTIONAL MATCH (e)-[s:SOURCED_FROM]->(:Article)
         WITH e, r, c, min(s.published_at) AS first_pub
         RETURN e.id AS eid, c.ticker AS ticker,
@@ -358,34 +377,39 @@ def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None):
     """)
     for row in affects_rows:
         pub_dt = _to_et_naive(row["pub"])
-        if pub_dt is None:
-            continue
-        moves = _query_moves(row["ticker"], pub_dt, pg_conn)
-        if not moves:
-            continue
+        moves = _query_moves(row["ticker"], pub_dt, pg_conn) if pub_dt else {}
         set_clause = ", ".join(f"r.{k} = COALESCE(r.{k}, ${k})" for k in moves)
         neo4j_mgr.query(
-            f"MATCH (e:Event {{id: $eid}})-[r:AFFECTS]->(c:Company {{ticker: $t}}) SET {set_clause}",
+            f"MATCH (e:Event {{id: $eid}})-[r:AFFECTS]->(c:Company {{ticker: $t}}) "
+            f"SET r.move_checked_at = datetime(){(', ' + set_clause) if set_clause else ''}",
             {"eid": row["eid"], "t": row["ticker"].upper(), **moves},
         )
 
     # ── 2. SOURCED_FROM edges with missing moves — baseline = r.published_at ─
-    sourced_rows = neo4j_mgr.query("""
+    sourced_rows = neo4j_mgr.query(f"""
         MATCH (e:Event)-[r:SOURCED_FROM]->(a:Article)
-        WHERE r.move_15m IS NULL AND r.published_at IS NOT NULL
+        WHERE r.move_1d IS NULL AND r.published_at IS NOT NULL
+          AND (r.move_checked_at IS NULL
+               OR r.move_checked_at < datetime() - duration('{MOVES_RETRY_COOLDOWN}'))
+        WITH e, r, a LIMIT {int(batch)}
         MATCH (e)-[:AFFECTS]->(c:Company)
         RETURN e.id AS eid, a.news_id AS nid, r.published_at AS pub,
                collect(DISTINCT c.ticker) AS tickers
     """)
     for row in sourced_rows:
         pub_dt = _to_et_naive(row["pub"])
+        neo4j_mgr.query(
+            "MATCH (e:Event {id: $eid})-[r:SOURCED_FROM]->(a:Article {news_id: $nid}) "
+            "SET r.move_checked_at = datetime()",
+            {"eid": row["eid"], "nid": row["nid"]},
+        )
         if pub_dt is None:
             continue
         for ticker in row["tickers"]:
             moves = _query_moves(ticker, pub_dt, pg_conn)
             if not moves:
                 continue
-            set_clause = ", ".join(f"r.{k} = ${k}_{ticker}" for k in moves)
+            set_clause = ", ".join(f"r.{k} = COALESCE(r.{k}, ${k}_{ticker})" for k in moves)
             params = {"eid": row["eid"], "nid": row["nid"],
                       **{f"{k}_{ticker}": v for k, v in moves.items()}}
             neo4j_mgr.query(
@@ -395,6 +419,7 @@ def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None):
 
     logger.info("update_price_movements: processed %d AFFECTS, %d SOURCED_FROM rows",
                 len(affects_rows), len(sourced_rows))
+    return len(affects_rows), len(sourced_rows)
 
 
 def _create_relation(from_id, to_id, rel, neo4j_mgr: Neo4jManager):
