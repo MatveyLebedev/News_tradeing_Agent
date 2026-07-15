@@ -28,6 +28,10 @@ LOG_TABLES = {
     "news_parser_log":   "log_time",
     "longterm_agent_log": "log_time",
 }
+# NEVER suggest cleanup for these (Phase 11): longterm_run_snapshots IS the future
+# training set (~100-200 MB/year by design — keep forever); macro_series is tiny PIT
+# history that cannot be re-fetched first-release once lost.
+KEEP_FOREVER = ["longterm_run_snapshots", "macro_series"]
 
 
 def conn():
@@ -85,6 +89,12 @@ def suggest(cur, existing, logs_days):
         print("\n-- 4) Closed/inactive story centroids (1536-d vectors):")
         print("DELETE FROM graph_story_centroids WHERE status <> 'active' "
               "AND last_updated < NOW() - INTERVAL '90 days';")
+
+    keep = [t for t in KEEP_FOREVER if t in existing]
+    if keep:
+        print(f"\n-- 5) KEEP FOREVER (never suggest cleanup): {', '.join(keep)}")
+        print("--    snapshots = the future training set; macro_series = first-release PIT")
+        print("--    history that cannot be re-fetched once lost.")
 
     print("\n-- NOTE: DELETE/TRUNCATE marks space reusable but does NOT shrink the")
     print("--       files on disk. To return space to the OS, afterwards run:")

@@ -36,6 +36,23 @@ SECTOR_GROUPS = {
 
 SECTOR_OF = {tk: sec for sec, tks in SECTOR_GROUPS.items() for tk in tks}
 
+# Sector benchmark ETFs (Phase 11 multi-target grading: excess vs the SECTOR, not just
+# SPY — "right about the stock" vs "just long the sector's beta"). Fetched daily by
+# daily_price_fetcher (its BENCHMARK list mirrors these symbols).
+SECTOR_ETF = {
+    "Basic Materials": "XLB",
+    "Communication Services": "XLC",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Financial Services": "XLF",
+    "Healthcare": "XLV",
+    "Industrials": "XLI",
+    "Real Estate": "XLRE",
+    "Technology": "XLK",
+    "Utilities": "XLU",
+}
+
 # Industry-level refinements (≥4 members after the semis-equipment merge). Tickers not
 # covered here fall back to their sector group.
 _INDUSTRY_GROUPS = {

@@ -673,6 +673,31 @@ Future stages (explicitly deferred, gated by WALK_FORWARD_PROTOCOL):
 Acceptance (groundwork): every new run stores a replayable snapshot; grading tables carry
 the multi-target columns; export produces a non-empty dataset for ≥2 nodes.
 
+**Status 2026-07-15 — GROUNDWORK DONE (tuning itself stays future work):**
+- ✅ `snapshots.py` + `longterm_run_snapshots` (UNIQUE detection_version+ticker+as_of,
+  upsert): references-not-copies (corpus → news ids; deterministic re-reads keyed by
+  (ticker, as_of) + provenance.git_revision), LLM outputs IN FULL (bucket summaries,
+  profile, shift, verdicts, findings, signal, node messages). Wired into `persist_run`
+  (best-effort, result_id soft ref). Registered KEEP-FOREVER in db_cleanup_report.py
+  (with macro_series). pg_dump job: still an ops TODO on the server.
+- ✅ Multi-target grading (`grade_results.py` + pure classifiers in `targets.py`):
+  2w/12w return pairs alongside the 4w book; `sector_benchmark`(+`_return_4w`) vs the
+  sector ETF (SECTOR_ETF map; ETFs added to the daily fetcher benchmarks + 2y local
+  backfill); `worst_position_return_4w` (max adverse excursion); `aux_targets` JSONB =
+  `shift_outcome` (post-window AFFECTS daily means → persisted/reverted/mixed — same
+  estimator family as detection v2) + `fundamentals_realized` (next filed quarter ≥120d
+  later vs the verdict, ±2pp revenue / ±1pp margin thresholds). Invalidation-trigger
+  flag = the Phase 5.5 stopped book (`exit_reason`), already graded per trade.
+- ✅ `export_training_data.py`: snapshots ⋈ graded results → per-node JSONL
+  (synthesis / fundamentals / shift), versioned filenames, hindsight guard (inputs from
+  snapshot only, targets from grader columns only). `longterm_agent/exports/` gitignored.
+- ✅ First consumer: dynamic few-shot behind `LT_FEWSHOT` (default OFF — prompt is an
+  LLM-cache key): graded `nearest_cases` rendered into the synthesis prompt; insufficient
+  analogs never shown. PIPELINE_VERSION → 0.8.0; flag in provenance knobs.
+- ▶ Data accumulates from the NEXT live/batch runs (backtests don't snapshot by design —
+  they don't call persist_run). Few-shot A/B + any prompt optimization stay gated on
+  WALK_FORWARD_PROTOCOL once ≥2 nodes have non-empty exports.
+
 ---
 
 ## Phase 12 — Fundamentals interpretation v2 (wire STORED fields; zero new data)

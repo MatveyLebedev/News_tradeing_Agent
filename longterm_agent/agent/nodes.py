@@ -892,6 +892,16 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
                   if shift.get("has_shifted") else "no significant shift")
     analog_desc = _analog_desc(analogs)
 
+    # Phase 11 first consumer — dynamic few-shot (LT_FEWSHOT, default OFF): show the
+    # graded outcomes of the nearest analog shifts as worked examples. Retrieval only —
+    # no training; the flag keeps the prompt byte-identical (LLM-cache keys) when off.
+    fewshot_desc = ""
+    if (getattr(config, "FEWSHOT_ANALOGS", False)
+            and analogs.get("nearest_cases") and not analogs.get("insufficient")):
+        cases = "\n".join(f"  - {c}" for c in analogs["nearest_cases"])
+        fewshot_desc = (f"PAST GRADED ANALOGS (closest past shifts and their realized "
+                        f"4-week returns — weigh as base-rate evidence):\n{cases}\n")
+
     # Phase 7A: fold the deep-analysis enrichment in as ADVISORY context (it never overrides
     # the matrix or the deterministic shift — see DEEP_ANALYSIS_PLAN.md §1).
     enriched = state.get("enriched_analysis") or {}
@@ -916,6 +926,7 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"expectation_gap={fund.get('expectation_gap')}\n"
         f"  long-term technicals: trend={tech.get('trend')}, window return={tech.get('return_window_pct')}%\n"
         f"ANALOG BASE RATE: {analog_desc}\n"
+        f"{fewshot_desc}"
         f"{enriched_desc}\n"
         f"{SYNTHESIS_MATRIX_RULES}"
         f"Valuation scales conviction (a positive shift at 40x sales ≠ at 12x earnings). "

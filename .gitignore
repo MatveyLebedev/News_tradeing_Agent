@@ -63,3 +63,5 @@ Thumbs.db
 temp_code.py
 *.tmp
 .pytest_cache/
+# Phase 11 training exports (regenerable from DB)
+longterm_agent/exports/

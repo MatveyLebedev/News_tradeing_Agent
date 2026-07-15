@@ -26,7 +26,11 @@ from price_fetcher import TOP_50_TICKERS
 # agent universe — TOP_50_TICKERS feeds LongTermAgentConfig.get_universe(), so it must
 # stay agent-analyzable companies only. Any default fetch has to include BOTH lists:
 # passing bare TOP_50_TICKERS froze SPY at 2026-06-15 and blocked all outcome grading.
-BENCHMARK_TICKERS = ["SPY"]
+# Sector ETFs (Phase 11): sector-relative grading benchmarks — mirrors
+# longterm_agent/sector_map.py SECTOR_ETF (kept literal here: the fetcher container
+# doesn't ship the longterm package).
+BENCHMARK_TICKERS = ["SPY", "XLB", "XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI",
+                     "XLRE", "XLK", "XLU"]
 DEFAULT_TICKERS = TOP_50_TICKERS + BENCHMARK_TICKERS
 
 logger = DatabaseLogger()

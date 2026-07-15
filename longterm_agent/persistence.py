@@ -82,11 +82,21 @@ def persist_run(db_manager, state: Dict[str, Any], config, execution_time: float
                 round(execution_time, 1) if execution_time else None,
                 Json(state.get("risk_checks") or {}),
             ])
+            cur.execute("""SELECT id FROM longterm_agent_results
+                           WHERE agent_version=%s AND ticker=%s AND as_of=%s""",
+                        [config.DETECTION_VERSION, ticker.upper(), as_of.date()])
+            row = cur.fetchone()
+            result_id = row[0] if row else None
         conn.commit()
         conn.close()
     except Exception as e:
         print(f"  ⚠ results persistence failed: {e}")
         return False
+
+    # Phase 11 — replayable full-state snapshot (references + LLM outputs). Best-effort:
+    # the training set grows silently alongside results; a failure never fails the run.
+    from .snapshots import write_snapshot
+    write_snapshot(db_manager, state, config, result_id=result_id)
 
     # Append the shift fingerprint (forward-accumulating case base) when a shift fired.
     if not no_data and state.get("background_shift", {}).get("has_shifted"):

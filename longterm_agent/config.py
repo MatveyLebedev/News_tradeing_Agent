@@ -39,7 +39,7 @@ from model_config import (
 # changing LT_METRICS_VERSION in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.7.0"   # Phase 6: deep analysis v2 machinery (LT_DEEP_V2, default off)
+PIPELINE_VERSION = "0.8.0"   # Phase 11: snapshots + multi-target grading + few-shot flag
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -171,6 +171,9 @@ class LongTermAgentConfig:
     # wf_30x deep-v2 A/B earns the cutover. Both flags must be true for v2 to run.
     DEEP_V2 = os.getenv("LT_DEEP_V2", "false").lower() == "true"
     DEEP_LLM_CONCURRENCY = int(os.getenv("LT_DEEP_LLM_CONCURRENCY", "8"))  # global LLM-call cap
+    # Phase 11 — dynamic few-shot: graded analog outcomes as worked examples in the
+    # synthesis prompt. DEFAULT OFF (prompt = LLM-cache key); enable via backtest A/B.
+    FEWSHOT_ANALOGS = os.getenv("LT_FEWSHOT", "false").lower() == "true"
 
     # --- Database ---
     DB_CONFIG = {
@@ -248,6 +251,7 @@ class LongTermAgentConfig:
                 "take_profit_pct": cls.TAKE_PROFIT_PCT,
                 "deep_analysis": cls.DEEP_ANALYSIS_ENABLED,
                 "deep_v2": cls.DEEP_V2,
+                "fewshot_analogs": cls.FEWSHOT_ANALOGS,
             },
         }
 
