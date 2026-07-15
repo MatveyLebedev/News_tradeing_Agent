@@ -705,9 +705,13 @@ findings like any other evidence.
   keyed on `move_15m IS NULL` dropped fresh events from the queue once the 15m window
   filled, so `move_1d` could never fill for live events.
 - ✅ Fixed: batched selectors (`EVENT_MOVES_BATCH`, default 300/cycle), keyed on
-  `move_1d IS NULL` with a `move_checked_at` 4h retry cooldown; function returns
-  attempted counts. One-off local backfill of the 23k+39k backlog RUNNING (detached);
-  the server picks up the fix + drains its own future backlog on next fetcher deploy.
+  `move_1d IS NULL` with a `move_checked_at` 4h retry cooldown + a `move_unavailable`
+  TOMBSTONE for edges that can never fill (junk e.date — the graph carries 1978..2027;
+  tickers without historical tables; pubs older than intraday coverage, which starts
+  2026-02-23 and only accumulates forward). Verified live: real moves fill, junk
+  tombstones once. **Local backlog drain ABANDONED (remote link ≈ 4.6s/edge → 30h+);
+  the SERVER drains its own backlog in ~6h of normal 5-min cycles after the fetcher
+  deploy — add "verify AFFECTS move coverage" to the deploy checklist.**
 - Note: intraday agent's last `agent_results` row is 2026-06-06 — check the news_agent
   container on deploy day (bridge data stops there until it runs again).
 
