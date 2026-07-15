@@ -1032,6 +1032,30 @@ Server ops executed over SSH (root@DB_HOST, expect + hidden password) after user
 **Still open (user, §9 hardening — interactive session offered):** firewall for
 5544/7688, non-root SSH; VPN already present.
 
+**✅ DEPLOYED 2026-07-15 late evening (supersedes the resume steps above):**
+- Delivery switched to Docker Hub push for BOTH images (repos already existed):
+  `stock-fetcher:latest` (rebuilt — image verification pre-push caught the selective-COPY
+  Dockerfile missing the three new 9.x/14 modules, fixed in `e9e402f`) and
+  `longterm-agent:0.8.0`.
+- Server: news-fetcher swapped (previous container kept as `bloomberg_news_fetcher_old`
+  rollback), **longterm_agent running for the FIRST time** — versions verified in-container
+  `0.2.0 / 2 / 0.8.0`, scheduler up: batch Sunday 06:00 ET, grade daily 07:00 ET,
+  universe 64. Fetcher jobs verified scheduled: fundamentals Sat 03:00 · macro 18:30 ·
+  filings 19:30 · options 17:30 · graph maintenance 04:00/04:30. No tracebacks.
+- `FMP_API_KEY` + `SEC_EDGAR_USER_AGENT` appended to the server .env (values hidden).
+  `TELEGRAM_CHAT_ID` still absent → agent alerts print "[telegram disabled]" until the
+  user adds it (agent fully functional otherwise).
+- Backfills: filings/insider (1,667 + 19,291 rows, 118 tickers, 12 months) and
+  macro_series done from the local session — the server jobs run forward-only on top.
+  Graph move_* backlog drains via the fetcher's 5-min cycles (~9h; check
+  `MATCH ()-[r:AFFECTS]->() RETURN count(r.move_1d)` next session).
+- First live milestones to watch: grade run 2026-07-16 07:00 ET (also stamps
+  regime_context + Phase 11 targets on matured rows), options/macro/filings jobs same
+  evening, FIRST live batch Sunday 2026-07-19 06:00 ET (snapshots + risk_checks land).
+- Rollback: `docker rm -f bloomberg_news_fetcher && docker rename
+  bloomberg_news_fetcher_old bloomberg_news_fetcher && docker start …` (fetcher);
+  `docker rm -f longterm_agent` (agent — nothing depended on it before).
+
 ---
 
 ## Open decisions (flagged, non-blocking)
