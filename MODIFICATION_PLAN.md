@@ -473,6 +473,13 @@ weekly key limit (403 mid-sweep, fallback-NEUTRAL contamination) — rows delete
 re-run on a healthy key. Run it from a pre-Phase-12 checkout (commit `1162a76`'s parent
 `4d148aa`) OR accept the fundamentals-v2 confound and compare against wf_30x_f12 instead.**
 
+**VERDICT 2026-07-15 — (a): the nudge HELPS (docs/BACKTESTS_2026Q2_PH6_12_13.md §2).**
+Re-run clean (zero 403s), baseline = wf_30x_f12 (same tree, confound resolved). 4w:
+win 57%→62%, mean +0.53%→+1.78%, Sharpe 0.91→1.30, stopped book +0.71%→+2.04%,
+calibration turns monotonic; 2w same direction. The ±0.2 nudge dropped 7 trades and
+improved every aggregate — it filters bad trades. Live deep ON validated; Phase 6
+deep-v2 A/B (queued #4) justified. CIs include zero (one regime) — directional, not proof.
+
 ---
 
 ## Phase 6 — Deep analysis v2 (advisory only; no label impact)
@@ -782,7 +789,13 @@ sector-contagion cases from VALIDATION_REPORT_v0.2.md §3 re-classified correctl
 ## Queued backtests (waiting on user "go" after key fix; 2026-07-12)
 
 OpenRouter weekly key limit killed the first deep A/B mid-sweep (403 → fallback-NEUTRAL
-contamination; wf_30x_v0.2_deep rows DELETED). Key has since been fixed per user. Queue:
+contamination; wf_30x_v0.2_deep rows DELETED). Key has since been fixed per user.
+
+**Status 2026-07-15:** #1 wf_30x_f12 ✅ (810 rows, +1.07pp 4w mean vs v0.2 — Phase 12
+validated) · #2 wf_30x_v0.2_deep ✅ (810 rows, deep nudge helps — see 6-pre verdict) ·
+#3 compare v2-vs-v3 + wf_30x_f12_v3 ⏳ running detached
+(/private/tmp/claude-501/-Users-lebedevmatvey-test/wf_queue2/, pinned @ 82f1ff8) ·
+#4 deep-v2 queued, now justified. Report: docs/BACKTESTS_2026Q2_PH6_12_13.md. Queue:
 
 ```bash
 # 1. deep-analysis A/B (Phase 6-pre) — NOTE the pre-Phase-12 confound choice, see 6-pre
