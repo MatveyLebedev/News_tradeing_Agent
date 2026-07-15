@@ -618,9 +618,19 @@ detection corpus (promotion = Phase 5-style detection release):
    `fundamentals_fetcher`); upgrade `priced_in_check` from realized-move-only to
    IV-percentile ("is the event already in the options?").
 5. **Short interest** (FINRA bi-monthly) — small table, slow-moving context feature.
-- Also: turn `FETCH_FULL_TEXT=true` for the corpus universe (map summaries currently see
-  headline+snippet only) — storage cost is modest, benefit flows to every bucket summary.
-  Corpus-affecting ⇒ bundle with a detection release.
+- ~~Also: turn `FETCH_FULL_TEXT=true` for the corpus universe~~ **NOT VIABLE (user,
+  2026-07-15): full-text scraping doesn't work with the current parser — the RSS sources
+  (Bloomberg/CNBC/MarketWatch) block or paywall article bodies, so the flag would fetch
+  little beyond what snippets already give.** Map summaries stay headline+snippet.
+  Consequences: (a) LLM guidance-extraction (#40-41 text side) does NOT ride on news
+  full-text — it rides on 9.1 EDGAR 8-K/press releases, which are true full text, free
+  and legal; (b) new backlog item 9.6 below.
+6. **New full-text-friendly news sources** (9.6, only if corpus depth becomes the
+   bottleneck): evaluate sources whose BODY is legally fetchable — company IR/PR feeds
+   (PR Newswire / Business Wire / GlobeNewswire RSS), EDGAR 8-K exhibits (covered by
+   9.1), free news APIs with licensing that permits storage. Each candidate goes through
+   the usual gauntlet: PIT timestamps, dedup vs existing feeds, freshness registration,
+   advisory-first; corpus-affecting ⇒ bundle with a detection release.
 
 ---
 
