@@ -856,6 +856,26 @@ Changes (expert #28, #31–33, #37):
   stay DEFERRED until a consensus source is chosen (ties into the Phase 9.3 transcript
   decision).
 
+**Consensus decision 2026-07-15 (probe-driven, see chat): per-ticker side is FREE.**
+- yfinance covers forward EPS/revenue consensus, estimate revisions (7/30/60/90d trend)
+  and EPS-surprise history — and the weekly fundamentals job has been snapshotting most
+  of it since day one (`analyst_estimates` kind; now + `growth_estimates`,
+  `earnings_history`). FMP FREE tier (`/stable/earnings`, key in .env as FMP_API_KEY)
+  adds the missing piece: per-report **revenue**Actual-vs-Estimated history + the next
+  report's street consensus → new weekly snapshot `source='fmp', kind='earnings'`
+  (250 calls/day limit vs ~50/week used — ×35 headroom).
+- Consumer shipped ADVISORY-ONLY: `read_consensus` + deep-analysis tool
+  `get_street_consensus` (forward consensus, revision trend, last-4 surprises, next
+  report). NOT added to the fundamentals verdict prompt — that's a prompt change and
+  needs its own A/B per release discipline.
+- PIT: forward snapshots are first-release by construction; FMP's in-snapshot HISTORY
+  has no first-release guarantee → historical fields stay advisory until forward data
+  covers the window (same stance as hy_oas percentile).
+- Still PAID-blocked (unchanged): FMP `economic-calendar` (macro consensus → surprise
+  engine) and `earning-call-transcript` (Phase 9.3) — both 402 on free; decide Starter
+  vs API-Ninjas only when we actually schedule those phases. yfinance v3 legacy API
+  note: new FMP keys work ONLY against /stable/ endpoints.
+
 Acceptance: `macro_series` populated daily with backfill from FRED/yfinance history;
 every new signal carries `regime_context`; forward report gains regime-split tables.
 

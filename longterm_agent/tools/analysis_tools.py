@@ -18,7 +18,7 @@ from typing import Any, List, Optional
 
 from langchain_core.tools import tool
 
-from .fundamentals_tool import read_fundamentals
+from .fundamentals_tool import read_consensus, read_fundamentals
 from .technical_tool import compute_daily_technicals
 from .news_corpus_tool import get_company_news_corpus
 from .shift_library_tool import find_similar_shifts
@@ -157,6 +157,18 @@ def build_deep_analysis_tools(
             default=str)
 
     @tool
+    def get_street_consensus(ticker: str = None) -> str:
+        """Street consensus and realized earnings surprises for a company — DEFAULTS to the
+        company under analysis; pass a PEER ticker to compare. Returns forward EPS/revenue
+        consensus (current + next quarter, analyst count), the EPS-estimate trend (now vs
+        30/90 days ago — are analysts revising up or down?), the last 4 reports' realized
+        EPS/revenue surprises vs street, and the next report date with its consensus. Use to
+        judge whether a shift is already in expectations or fights them. Args: ticker —
+        company (default: under analysis)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_consensus(db_manager, t, as_of), default=str)
+
+    @tool
     def search_company_news(query: str, ticker: str = None, limit: int = 8) -> str:
         """Re-query a company's point-in-time news corpus for headlines whose title or summary
         mention the query terms — DEFAULTS to the company under analysis; pass a PEER ticker to
@@ -200,7 +212,7 @@ def build_deep_analysis_tools(
 
     tools: List[Any] = [
         get_fundamentals_detail, get_long_term_technicals,
-        search_company_news, find_historical_analogs,
+        search_company_news, find_historical_analogs, get_street_consensus,
     ]
 
     # Sector/competitor read — reuse the short-term agent's as-of-aware factory verbatim.

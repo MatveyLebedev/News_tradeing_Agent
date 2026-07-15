@@ -11,7 +11,7 @@ The fetcher stores normalized values only; all derived metrics (growth, margins,
 debt, expectation gap) are computed HERE at read time, so definitions can change without
 re-backfilling.
 """
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from datetime import datetime, date, timedelta
 
 import psycopg2
@@ -362,6 +362,84 @@ def peer_forward_pe(db_manager, ticker: str, sector: str, as_of: datetime) -> Di
             "peer_median_fpe": round(median, 2),
             "peer_percentile": round(pct, 2),
             "gap_vs_median": round(own / median - 1, 3) if median else None}
+
+
+# --- street consensus & realized surprises (advisory; guidance-vs-consensus groundwork) ---
+def _fmp_latest(db_manager, ticker, as_of):
+    rows = _rows(db_manager, """
+        SELECT data FROM fundamentals
+        WHERE ticker=%s AND source='fmp' AND kind='earnings' AND fetch_date <= %s
+        ORDER BY fetch_date DESC LIMIT 1
+    """, [ticker.upper(), as_of.date()])
+    return rows[0][0] if rows else None
+
+
+def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date) -> Dict[str, Any]:
+    """Pure: latest yfinance analyst_estimates snapshot + FMP earnings snapshot → compact
+    consensus view. PIT inside the snapshot too: FMP rows dated AFTER as_of are the
+    upcoming reports (their actuals must be null at as_of by construction); rows ≤ as_of
+    with actuals are the realized-surprise history."""
+    out: Dict[str, Any] = {"available": False}
+    if est:
+        fwd = {}
+        for row in est.get("earnings_estimate") or []:
+            p = row.get("period") or row.get("index")
+            if p in ("0q", "+1q"):
+                fwd[f"eps_{p}"] = {k: row.get(k) for k in ("avg", "low", "high", "numberOfAnalysts")}
+        for row in est.get("revenue_estimate") or []:
+            p = row.get("period") or row.get("index")
+            if p in ("0q", "+1q"):
+                fwd[f"revenue_{p}"] = {k: row.get(k) for k in ("avg", "low", "high")}
+        if fwd:
+            out.update({"available": True, "street_forward": fwd})
+        trend = {}
+        for row in est.get("eps_trend") or []:
+            if (row.get("period") or row.get("index")) == "0q":
+                trend = {k: row.get(k) for k in ("current", "30daysAgo", "90daysAgo")}
+        if trend:
+            out["eps_trend_0q"] = trend
+
+    if fmp and fmp.get("records"):
+        past, upcoming = [], []
+        for r in fmp["records"]:
+            d = str(r.get("date") or "")
+            if not d:
+                continue
+            if d <= str(as_of_date) and r.get("epsActual") is not None:
+                past.append(r)
+            elif d > str(as_of_date):
+                upcoming.append(r)
+        past.sort(key=lambda r: r["date"], reverse=True)
+        upcoming.sort(key=lambda r: r["date"])
+        surprises = []
+        for r in past[:4]:
+            ea, ee = r.get("epsActual"), r.get("epsEstimated")
+            ra, re_ = r.get("revenueActual"), r.get("revenueEstimated")
+            surprises.append({
+                "date": r["date"],
+                "eps_surprise_pct": round((ea - ee) / abs(ee) * 100, 1) if ea is not None and ee else None,
+                "revenue_surprise_pct": round((ra - re_) / abs(re_) * 100, 1) if ra is not None and re_ else None,
+            })
+        if surprises:
+            out.update({"available": True, "recent_surprises": surprises})
+        if upcoming:
+            nxt = upcoming[0]
+            out.update({"available": True,
+                        "next_report": {"date": nxt.get("date"),
+                                        "eps_estimated": nxt.get("epsEstimated"),
+                                        "revenue_estimated": nxt.get("revenueEstimated")}})
+    if not out["available"]:
+        out["note"] = "no consensus snapshots as-of (collection starts 2026-07-15 forward)"
+    return out
+
+
+def read_consensus(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
+    """AS-OF street consensus + realized surprise history (yfinance + FMP snapshots).
+    ADVISORY: feeds the deep-analysis tool, not the fundamentals verdict prompt (adding
+    it there is a prompt change → needs its own A/B per the release discipline)."""
+    est = _yf_latest(db_manager, ticker, as_of, "analyst_estimates")
+    fmp = _fmp_latest(db_manager, ticker, as_of)
+    return format_consensus(est, fmp, as_of.date())
 
 
 def read_fundamentals(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:

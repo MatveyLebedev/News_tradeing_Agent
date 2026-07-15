@@ -82,6 +82,11 @@ FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, o
 MACRO_FETCH_ENABLED = os.getenv("MACRO_FETCH_ENABLED", "true").lower() == "true"
 MACRO_FETCH_TIME = os.getenv("MACRO_FETCH_TIME", "18:30")  # ET — after FRED daily updates
 
+# FMP free tier (consensus groundwork, 2026-07-15): per-ticker earnings history with
+# revenue/EPS actual-vs-estimated + forward report consensus. Key absent → FMP snapshots
+# are skipped silently (yfinance/EDGAR unaffected). Env name tolerated in either case.
+FMP_API_KEY = os.getenv("FMP_API_KEY") or os.getenv("FMP_API_key", "")
+
 # Graph maintenance (Neo4j story lifecycle + pgvector retention)
 # Without these, the news->graph fan-out grows unbounded: stale Stories are never
 # closed, duplicate Stories never merged, and graph_event_embeddings has no TTL.

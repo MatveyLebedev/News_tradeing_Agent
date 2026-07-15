@@ -21,11 +21,12 @@ import math
 from datetime import datetime, date
 
 import pytz
+import requests
 import yfinance as yf
 import psycopg2
 from psycopg2.extras import Json, execute_values
 
-from config import DB_CONFIG
+from config import DB_CONFIG, FMP_API_KEY
 from logger import DatabaseLogger
 from edgar_fetcher import fetch_fundamentals_edgar, load_cik_map, _session as edgar_session
 from price_fetcher import TOP_50_TICKERS
@@ -187,13 +188,16 @@ def build_yfinance_records(ticker, fetch_date):
     except Exception as e:
         print(f"  ⚠ {ticker}: earnings_dates failed: {e}")
 
-    # 3. analyst estimates (forward EPS/revenue) + trend
+    # 3. analyst estimates (forward EPS/revenue) + trend + realized surprises
     try:
         est = {
             "earnings_estimate": _df_to_records(t.earnings_estimate),
             "revenue_estimate": _df_to_records(t.revenue_estimate),
             "eps_trend": _df_to_records(t.eps_trend),
             "price_targets": _to_jsonable(getattr(t, "analyst_price_targets", None)),
+            # consensus-side additions (guidance-vs-consensus groundwork, 2026-07-15):
+            "growth_estimates": _df_to_records(getattr(t, "growth_estimates", None)),
+            "earnings_history": _df_to_records(getattr(t, "earnings_history", None)),
         }
         if any(est.values()):
             add("analyst_estimates", est)
@@ -231,6 +235,38 @@ def build_edgar_records(ticker, fetch_date, cik_map, session):
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
+# FMP side (free tier) — per-ticker earnings history + forward consensus
+# ---------------------------------------------------------------------------
+def build_fmp_records(ticker, fetch_date, api_key):
+    """Snapshot FMP /stable/earnings for one ticker: past reports with epsActual/
+    epsEstimated AND revenueActual/revenueEstimated (the revenue-surprise history
+    yfinance lacks) + upcoming report dates with street consensus.
+
+    PIT note: forward snapshots (this weekly job) are first-release by construction;
+    the HISTORY inside a snapshot has no first-release guarantee from FMP (estimates
+    may be frozen at report time, but that's their claim, not ours) — backtest features
+    built on the historical part stay ADVISORY until forward data covers the window."""
+    if not api_key:
+        return []
+    url = f"https://financialmodelingprep.com/stable/earnings?symbol={ticker}&apikey={api_key}"
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        print(f"  ⚠ {ticker}: FMP earnings failed: {type(e).__name__}: {str(e).replace(api_key, '***')}")
+        return []
+    if not isinstance(data, list) or not data:
+        return []
+    return [{
+        "ticker": ticker, "source": "fmp", "kind": "earnings",
+        "period_end": None, "fiscal_period": None, "filed_date": None,
+        "fetch_date": fetch_date,
+        "dedup_key": _dedup_key(ticker, "fmp", "earnings", None, None, None, fetch_date),
+        "data": {"records": data},
+    }]
+
+
 def fetch_fundamentals(tickers=None, include_edgar=True, include_yf=True, verbose=True):
     """Fetch fundamentals for all tickers and persist them."""
     if tickers is None:
@@ -243,10 +279,14 @@ def fetch_fundamentals(tickers=None, include_edgar=True, include_yf=True, verbos
     if include_edgar:
         session = edgar_session()
         cik_map = load_cik_map(session)
+    fmp_key = FMP_API_KEY
+    if not fmp_key and verbose:
+        print("  (FMP_API_KEY not set — skipping FMP earnings snapshots)")
 
-    results = {"tickers": len(tickers), "edgar_rows": 0, "yf_rows": 0, "failed": []}
+    results = {"tickers": len(tickers), "edgar_rows": 0, "yf_rows": 0, "fmp_rows": 0, "failed": []}
     logger.info("FUND_FETCH_START", f"Fundamentals fetch for {len(tickers)} tickers",
-                details={"tickers": len(tickers), "edgar": include_edgar, "yfinance": include_yf})
+                details={"tickers": len(tickers), "edgar": include_edgar, "yfinance": include_yf,
+                         "fmp": bool(fmp_key)})
 
     for idx, ticker in enumerate(tickers, 1):
         if verbose:
@@ -258,6 +298,9 @@ def fetch_fundamentals(tickers=None, include_edgar=True, include_yf=True, verbos
             if include_yf:
                 y = build_yfinance_records(ticker, fetch_date)
                 results["yf_rows"] += save_records(y)
+            if fmp_key:
+                f = build_fmp_records(ticker, fetch_date, fmp_key)
+                results["fmp_rows"] += save_records(f)
         except Exception as ex:
             print(f"  ✗ {ticker}: {ex}")
             results["failed"].append(ticker)
@@ -268,11 +311,13 @@ def fetch_fundamentals(tickers=None, include_edgar=True, include_yf=True, verbos
         print(f"FUNDAMENTALS FETCH COMPLETE  ({fetch_date})")
         print(f"  EDGAR statement rows:  {results['edgar_rows']}")
         print(f"  yfinance snapshot rows: {results['yf_rows']}")
+        print(f"  FMP earnings rows:      {results['fmp_rows']}")
         print(f"  Failed: {len(results['failed'])} {results['failed'] or ''}")
         print(f"{'=' * 70}\n")
 
     logger.info("FUND_FETCH_COMPLETE",
-                f"Fundamentals fetch complete: {results['edgar_rows']} edgar, {results['yf_rows']} yf",
+                f"Fundamentals fetch complete: {results['edgar_rows']} edgar, {results['yf_rows']} yf, "
+                f"{results['fmp_rows']} fmp",
                 details=results)
     return results
 
