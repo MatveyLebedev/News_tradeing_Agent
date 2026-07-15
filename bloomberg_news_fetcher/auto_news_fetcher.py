@@ -14,6 +14,10 @@ from config import (
     GRAPH_MERGE_WEEKDAY, GRAPH_MERGE_TIME, EVENT_EMBEDDING_RETENTION_DAYS,
 )
 from config import MACRO_FETCH_ENABLED, MACRO_FETCH_TIME
+from config import (
+    FILINGS_FETCH_ENABLED, FILINGS_FETCH_TIME, FILINGS_LOOKBACK_DAYS,
+    OPTIONS_FETCH_ENABLED, OPTIONS_FETCH_TIME,
+)
 from graph_db import (
     update_price_movements,
     close_stale_stories,
@@ -118,6 +122,32 @@ def scheduled_macro_fetch(verbose=True):
         fetch_all_macro(verbose=verbose)
     except Exception as e:
         print(f"❌ Macro series fetch failed: {e}")
+
+
+def scheduled_filings_fetch(verbose=True):
+    """Daily EDGAR fetch (9.1/9.2): 8-K/press-release text + Form 4 insider transactions."""
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"DAILY EDGAR FILINGS FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    try:
+        from filings_fetcher import fetch_filings
+        fetch_filings(days=FILINGS_LOOKBACK_DAYS, verbose=verbose)
+    except Exception as e:
+        print(f"❌ Filings fetch failed: {e}")
+
+
+def scheduled_options_fetch(verbose=True):
+    """Daily options ATM-IV snapshot (9.4) — forward-PIT, cannot be backfilled."""
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"DAILY OPTIONS IV SNAPSHOT - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
+    try:
+        from options_fetcher import fetch_all_options
+        fetch_all_options(verbose=verbose)
+    except Exception as e:
+        print(f"❌ Options IV fetch failed: {e}")
 
 
 def scheduled_graph_cleanup(verbose=True):
@@ -229,6 +259,20 @@ def run_scheduler(verbose=True):
             print(f"✓ Macro series fetch scheduled: daily at {MACRO_FETCH_TIME} ET")
         except Exception as e:
             print(f"⚠️  Could not schedule macro fetch: {e}")
+
+    # Daily EDGAR filings + insider (9.1/9.2) and options IV snapshot (9.4) — advisory data.
+    if FILINGS_FETCH_ENABLED:
+        try:
+            schedule.every().day.at(FILINGS_FETCH_TIME).do(lambda: scheduled_filings_fetch(verbose=verbose))
+            print(f"✓ EDGAR filings fetch scheduled: daily at {FILINGS_FETCH_TIME} ET")
+        except Exception as e:
+            print(f"⚠️  Could not schedule filings fetch: {e}")
+    if OPTIONS_FETCH_ENABLED:
+        try:
+            schedule.every().day.at(OPTIONS_FETCH_TIME).do(lambda: scheduled_options_fetch(verbose=verbose))
+            print(f"✓ Options IV snapshot scheduled: daily at {OPTIONS_FETCH_TIME} ET")
+        except Exception as e:
+            print(f"⚠️  Could not schedule options fetch: {e}")
 
     # Graph maintenance (off-market): daily close-stale + embedding purge, weekly dedup merge.
     # These bound the news->graph fan-out that otherwise grows unbounded.

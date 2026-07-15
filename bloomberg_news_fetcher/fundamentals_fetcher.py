@@ -45,6 +45,10 @@ INFO_KEYS = [
     "targetMeanPrice", "targetMedianPrice", "targetHighPrice", "targetLowPrice",
     "numberOfAnalystOpinions", "recommendationKey", "recommendationMean",
     "currentPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow",
+    # 9.5 short interest (FINRA bi-monthly figures as carried by yfinance; the weekly
+    # snapshot cadence over-samples them, which is fine — dateShortInterest disambiguates)
+    "sharesShort", "sharesShortPriorMonth", "shortRatio", "shortPercentOfFloat",
+    "dateShortInterest",
 ]
 
 

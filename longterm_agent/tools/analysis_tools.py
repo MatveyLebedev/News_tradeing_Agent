@@ -18,6 +18,8 @@ from typing import Any, List, Optional
 
 from langchain_core.tools import tool
 
+from .filings_tool import (read_insider_activity, read_options_iv, read_recent_filings,
+                           read_short_interest)
 from .fundamentals_tool import read_consensus, read_fundamentals
 from .technical_tool import compute_daily_technicals
 from .news_corpus_tool import get_company_news_corpus
@@ -169,6 +171,47 @@ def build_deep_analysis_tools(
         return json.dumps(read_consensus(db_manager, t, as_of), default=str)
 
     @tool
+    def get_recent_filings(ticker: str = None, days: int = 45) -> str:
+        """Recent SEC filings for a company (8-K corporate events with the attached
+        press-release excerpt, plus dilution-relevant S-1/S-3/424B5) — DEFAULTS to the
+        company under analysis; pass a PEER ticker to check its filings. The excerpt is
+        the company's OWN full-text words (guidance, announcements) — use it to verify
+        what news headlines claim. Args: ticker — company (default: under analysis);
+        days — lookback window (default 45)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_recent_filings(db_manager, t, as_of, days=max(7, min(days, 180))),
+                          default=str)
+
+    @tool
+    def get_insider_activity(ticker: str = None) -> str:
+        """Insider transactions (Form 4) for a company over the last 90 days — DEFAULTS to
+        the company under analysis. Open-market buys vs sells (counts, shares, $ value), a
+        cluster-selling flag (≥3 distinct insiders selling), and the latest filings. Insider
+        buying into a negative shift / cluster selling against a LONG are strong tells.
+        Args: ticker — company (default: under analysis)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_insider_activity(db_manager, t, as_of), default=str)
+
+    @tool
+    def get_options_positioning(ticker: str = None) -> str:
+        """Options-implied positioning as-of: ATM call/put IV per nearest expiries, put
+        skew, put/call open-interest ratio, and the 30-day ATM-IV change when history
+        exists. High/rising IV = the market already prices a big move (event risk); use
+        with the priced-in check. Args: ticker — company (default: under analysis)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_options_iv(db_manager, t, as_of), default=str)
+
+    @tool
+    def get_short_interest(ticker: str = None) -> str:
+        """Short interest for a company (FINRA bi-monthly figures via the weekly snapshot):
+        shares short now vs prior month, days-to-cover (shortRatio), % of float, and the
+        FINRA settlement date. High/rising short interest raises squeeze risk on SHORTs
+        and signals standing bearish positioning. Args: ticker — company (default: under
+        analysis)."""
+        t = (ticker or tk).upper()
+        return json.dumps(read_short_interest(db_manager, t, as_of), default=str)
+
+    @tool
     def search_company_news(query: str, ticker: str = None, limit: int = 8) -> str:
         """Re-query a company's point-in-time news corpus for headlines whose title or summary
         mention the query terms — DEFAULTS to the company under analysis; pass a PEER ticker to
@@ -213,6 +256,8 @@ def build_deep_analysis_tools(
     tools: List[Any] = [
         get_fundamentals_detail, get_long_term_technicals,
         search_company_news, find_historical_analogs, get_street_consensus,
+        get_recent_filings, get_insider_activity, get_options_positioning,
+        get_short_interest,
     ]
 
     # Sector/competitor read — reuse the short-term agent's as-of-aware factory verbatim.

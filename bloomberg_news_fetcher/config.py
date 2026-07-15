@@ -87,6 +87,17 @@ MACRO_FETCH_TIME = os.getenv("MACRO_FETCH_TIME", "18:30")  # ET — after FRED d
 # are skipped silently (yfinance/EDGAR unaffected). Env name tolerated in either case.
 FMP_API_KEY = os.getenv("FMP_API_KEY") or os.getenv("FMP_API_key", "")
 
+# EDGAR filings (Plan 9.1/9.2): daily 8-K/press-release text + Form 4 insider parse.
+# Off-market, after EDGAR's evening indexing settles. Incremental window heals misses.
+FILINGS_FETCH_ENABLED = os.getenv("FILINGS_FETCH_ENABLED", "true").lower() == "true"
+FILINGS_FETCH_TIME = os.getenv("FILINGS_FETCH_TIME", "19:30")   # ET
+FILINGS_LOOKBACK_DAYS = int(os.getenv("FILINGS_LOOKBACK_DAYS", "7"))
+
+# Options IV snapshots (Plan 9.4): forward-PIT ATM-IV archive; chains are ephemeral so
+# this can never be backfilled — cadence IS the dataset. After close, before macro fetch.
+OPTIONS_FETCH_ENABLED = os.getenv("OPTIONS_FETCH_ENABLED", "true").lower() == "true"
+OPTIONS_FETCH_TIME = os.getenv("OPTIONS_FETCH_TIME", "17:30")   # ET
+
 # Graph maintenance (Neo4j story lifecycle + pgvector retention)
 # Without these, the news->graph fan-out grows unbounded: stale Stories are never
 # closed, duplicate Stories never merged, and graph_event_embeddings has no TTL.

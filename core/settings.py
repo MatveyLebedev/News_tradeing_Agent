@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     fresh_prices_max_trading_days: int = 5      # weekly cadence, no midweek false alarms
     fresh_fundamentals_max_days: int = 14       # weekly job + slack for one miss
     fresh_macro_max_days: int = 5               # daily job; advisory-only (never aborts)
+    fresh_filings_max_days: int = 5             # daily EDGAR job; advisory-only
+    fresh_options_iv_max_days: int = 5          # daily IV snapshot; advisory-only
 
     @field_validator(
         "llm_model", "graph_llm_model", "embedding_model", "embedding_dimensions",

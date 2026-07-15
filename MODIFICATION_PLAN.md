@@ -527,9 +527,15 @@ LangSmith traces. `PIPELINE_VERSION` bump.
 - ✅ Per-thread oplog (`deep_thread`: tools, duration, n_evidence). PIPELINE_VERSION
   0.7.0; `deep_analysis`/`deep_v2` stamped into provenance knobs. 5 new tests
   (test_deep_v2.py) + v1 suite untouched and green.
-- ⏳ Deep-v2 backtest QUEUED (see "Queued backtests" #4) — decision rule: v2 must beat
-  BOTH wf_30x_f12 (no deep) and wf_30x_v0.2_deep (deep v1) to earn `LT_DEEP_V2=true`
-  live; if deep v1 already fails 6-pre, v2 must beat no-deep alone to justify existing.
+- ❌ **A/B VERDICT 2026-07-15: deep v2 REJECTED** (`wf_30x_f12_deepv2`, ledger #11):
+  4w mean −0.91% / Sharpe 0.39 vs deep-v1's +1.78% / 1.30 and f12's +0.53% / 0.91 —
+  loses to BOTH baselines (2w −0.96%, Sharpe −0.04; 4w SHORT book −4.75%).
+  `LT_DEEP_V2` stays false; live keeps deep v1 (the 6-pre champion). Post-mortem
+  hypotheses (only if ever revisited): the planner skips core angles v1 always covers
+  (force-include sector_breadth?), and the citation guard zeroes nudges v1 would have
+  used to filter bad trades. Minor confound noted: v2 ran with the (empty-as-of)
+  consensus tool in the toolset; irrelevant to the verdict since v2 < no-deep f12.
+  The v2 machinery stays in the codebase behind the flag — measured, documented, off.
 
 ---
 
@@ -609,15 +615,32 @@ detection corpus (promotion = Phase 5-style detection release):
 
 1. **8-K / press releases** — EDGAR full-text search, keyed by `filed_date` →
    `filings` table + `get_recent_filings` tool. Free, true PIT, immediate value.
+   **✅ SHIPPED 2026-07-15** (`filings_fetcher.py`): 8-K/8-K/A + dilution forms
+   (S-1/S-3/424B5), PRIMARY doc text + first EX-99 exhibit (usually the press release —
+   our only legal full text), first-release-only, daily 19:30 ET job, 365d backfill;
+   advisory deep tool `get_recent_filings`. Known bound: submissions API "recent" block
+   (~1000 filings) may not span a full year for the heaviest filers.
 2. **Insider transactions (Form 4)** — EDGAR, PIT by filing → `insider_trades` table +
    tool; later a risk-gate feature (cluster selling against a LONG).
+   **✅ SHIPPED 2026-07-15**: Form 4 ownership-XML parse (code/shares/price/role,
+   P/S vs awards), same daily job; advisory tool `get_insider_activity` with
+   open-market buy/sell aggregates + cluster-selling flag (≥3 distinct sellers).
+   Risk-gate promotion stays future (advisory-first discipline).
 3. **Earnings call transcripts** — richest narrative source; **decision needed** on
    provider (free scrapes have licensing risk; FMP/API-Ninjas are cheap paid options).
-   Tool first; candidate for weekly-bucket enrichment later.
+   Tool first; candidate for weekly-bucket enrichment later. **Still BLOCKED on a paid
+   key (FMP free tier 402s transcripts — probed 2026-07-15); one key → ~1h to wire.**
 4. **Options-implied vol** — snapshot yfinance option chains forward-PIT (same pattern as
    `fundamentals_fetcher`); upgrade `priced_in_check` from realized-move-only to
    IV-percentile ("is the event already in the options?").
+   **✅ SHIPPED 2026-07-15** (`options_fetcher.py`): daily 17:30 ET ATM call/put IV per
+   3 nearest expiries + put skew + P/C open interest → `options_iv` (first-release,
+   forward-only by nature); advisory tool `get_options_positioning` (+30d IV change).
+   The priced_in_check IV-percentile upgrade WAITS for forward history to accumulate.
 5. **Short interest** (FINRA bi-monthly) — small table, slow-moving context feature.
+   **✅ SHIPPED 2026-07-15**: FINRA figures ride the weekly yfinance info snapshot
+   (sharesShort/priorMonth, shortRatio, shortPercentOfFloat, dateShortInterest in
+   INFO_KEYS); advisory tool `get_short_interest`. No separate FINRA-file parser needed.
 - ~~Also: turn `FETCH_FULL_TEXT=true` for the corpus universe~~ **NOT VIABLE (user,
   2026-07-15): full-text scraping doesn't work with the current parser — the RSS sources
   (Bloomberg/CNBC/MarketWatch) block or paywall article bodies, so the flag would fetch
