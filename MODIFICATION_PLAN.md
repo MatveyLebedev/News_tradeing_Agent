@@ -605,6 +605,26 @@ Acceptance: `kill -9` mid-batch, rerun → batch completes, already-done tickers
 no duplicate rows; graph-structure test asserts the parallel branch; per-node delta unit
 tests.
 
+**Status 2026-07-15 — DONE:**
+- ✅ Delta refactor: all 9 nodes return only their changed keys and never mutate input
+  state; `_msg` → `_msg_entry` (messages ride in deltas); `messages` carries an
+  `operator.add` reducer; `sector_baseline`/`reflection_advice` declared in the schema;
+  reflection-advice "consume and clear" reimplemented as delta overwrite.
+- ✅ Parallel branches: shift_detection fans out to fundamentals_analysis ∥
+  similar_shift_analysis with a BARRIER join at deep_analysis
+  (`add_edge([both], deep)`). Reflection loop_to=fundamentals routes through a
+  `refine_fanout` passthrough that re-fans BOTH branches — re-running one alone would
+  deadlock the barrier (the analogs branch is LLM-free, so the re-run is cheap).
+- ✅ Idempotent batch resume: `batch_run_longterm` skips tickers already persisted for
+  (DETECTION_VERSION, as_of); `--force` overrides. Demonstrated live: a repeat batch
+  over already-persisted tickers = "skipping 2 … Batch complete in 5s, runs: 0".
+- ✅ Backtests untouched (their own done-set skip + cache replay already cover this).
+- ✅ 6 new tests (test_phase8.py: delta contracts, input immutability, graph fan-out/
+  barrier/refan edges, messages reducer, resume filter); deep tests updated to the
+  delta contract (assert input unmutated instead of echoed state); live cached smoke
+  through the new graph (NVDA 06-19: both branches → synthesis → risk_gate).
+  Suite 200 green, ruff clean.
+
 ---
 
 ## Phase 9 — Data breadth (rolling backlog; one source at a time)

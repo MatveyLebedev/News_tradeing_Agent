@@ -97,7 +97,8 @@ def test_v2_planner_selects_threads_and_findings_cited(monkeypatch):
     assert len(enr["map_findings"]) == 3                      # all cited → all survive
     assert all(f["evidence"] for f in enr["map_findings"])
     assert enr["conviction_adjustment"] == 0.1                # reduce value kept
-    assert out["background_shift"] == shift_before            # hard boundary intact
+    assert "background_shift" not in out                      # delta never carries the shift
+    assert state["background_shift"] == shift_before          # input not mutated either
     # planner output is visible in messages
     assert any(m.get("name") == "deep_analysis_planner" for m in out.get("messages", []))
 

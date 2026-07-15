@@ -98,8 +98,10 @@ def test_map_reduce_enriches_and_preserves_shift(monkeypatch):
     # per-result cap applied inside the map thread (1200), so context stays small
     tmsgs = [m for m in llm_map.seen if isinstance(m, ToolMessage)]
     assert tmsgs and all(len(m.content) <= _MAP_TRUNC for m in tmsgs)
-    # HARD determinism boundary: the shift label is untouched
-    assert out["background_shift"] == shift_before
+    # HARD determinism boundary: the node returns a DELTA (Phase 8) that never carries the
+    # shift, and it does not mutate the input state either.
+    assert "background_shift" not in out
+    assert state["background_shift"] == shift_before
 
 
 def test_disabled_is_noop(monkeypatch):

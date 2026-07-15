@@ -1,5 +1,12 @@
-"""State schema for the long-term agent graph."""
-from typing import TypedDict, List, Dict, Any, Optional
+"""State schema for the long-term agent graph.
+
+Phase 8: nodes return DELTAS (only the keys they changed) instead of mutating and
+returning the whole state. `messages` is the one key several nodes append to — including
+the two PARALLEL branches (fundamentals ∥ analogs) — so it carries an `operator.add`
+reducer; every other key is last-value-wins, which is exactly what a delta wants.
+"""
+import operator
+from typing import Annotated, TypedDict, List, Dict, Any, Optional
 from datetime import datetime
 
 
@@ -11,8 +18,8 @@ class LongTermAgentState(TypedDict, total=False):
     lookback_days: int
     shift_window_days: int
 
-    # --- Message history (reasoning chain, LangChain-native like news_agent) ---
-    messages: List[Dict[str, Any]]
+    # --- Message history (reasoning chain; operator.add merges parallel branches) ---
+    messages: Annotated[List[Dict[str, Any]], operator.add]
 
     # --- corpus_collection ---
     news_corpus: List[Dict[str, Any]]      # id, published, title, summary, affects_sentiment?, sources
@@ -28,6 +35,10 @@ class LongTermAgentState(TypedDict, total=False):
     # --- shift_detection (later phase) ---
     background_metrics: Dict[str, Any]
     background_shift: Dict[str, Any]
+    sector_baseline: Optional[Dict[Any, float]]   # Phase 13 (v3): computed in corpus_collection
+
+    # --- reflection advice (Phase 3: critique consumed by the loop target) ---
+    reflection_advice: Dict[str, Any]
 
     # --- fundamentals / analogs / synthesis (later phases) ---
     fundamentals: Dict[str, Any]

@@ -34,10 +34,10 @@ MAX_ARTICLES_PER_BUCKET = 12
 SUMMARY_TRUNC = 240
 
 
-def _msg(state: Dict[str, Any], name: str, content: str, data: Dict = None):
-    state.setdefault("messages", []).append(
-        {"role": "assistant", "name": name, "content": content, "data": data or {}}
-    )
+def _msg_entry(name: str, content: str, data: Dict = None) -> Dict[str, Any]:
+    """One reasoning-chain message. Phase 8: nodes RETURN messages in their delta
+    ({"messages": [...]}) — the state reducer appends; nobody mutates state in place."""
+    return {"role": "assistant", "name": name, "content": content, "data": data or {}}
 
 
 # Moved to shared infra (Phase 1); alias keeps existing call sites and tests unchanged.
@@ -117,10 +117,12 @@ def corpus_collection_node(state, db_manager, neo4j_manager, config) -> Dict[str
     articles = corpus["articles"]
     buckets = bucket_by_week(articles, as_of, lookback, bucket_days)
 
-    state["news_corpus"] = articles
-    state["corpus_provenance"] = corpus["provenance"]
-    state["period_buckets"] = buckets
-    state["article_count"] = len(articles)
+    delta: Dict[str, Any] = {
+        "news_corpus": articles,
+        "corpus_provenance": corpus["provenance"],
+        "period_buckets": buckets,
+        "article_count": len(articles),
+    }
 
     print(f"  provenance: {corpus['provenance']}")
     print(f"  weekly buckets: {[b['count'] for b in buckets]}")
@@ -135,21 +137,23 @@ def corpus_collection_node(state, db_manager, neo4j_manager, config) -> Dict[str
         except Exception as e:
             print(f"  ⚠ sector baseline failed ({e}) — v3 degrades to v2 for this run")
             base = None
-        state["sector_baseline"] = base
+        delta["sector_baseline"] = base
         print(f"  sector baseline: {'%d days' % len(base) if base else 'unavailable'}")
 
     if len(articles) < config.MIN_ARTICLES_FOR_BACKGROUND:
-        state["no_data"] = True
-        _msg(state, "corpus_collection",
-             f"NO_DATA: only {len(articles)} articles (< {config.MIN_ARTICLES_FOR_BACKGROUND})",
-             {"article_count": len(articles)})
+        delta["no_data"] = True
+        delta["messages"] = [_msg_entry(
+            "corpus_collection",
+            f"NO_DATA: only {len(articles)} articles (< {config.MIN_ARTICLES_FOR_BACKGROUND})",
+            {"article_count": len(articles)})]
         print(f"  → NO_DATA (below MIN_ARTICLES_FOR_BACKGROUND={config.MIN_ARTICLES_FOR_BACKGROUND})")
     else:
-        state["no_data"] = False
-        _msg(state, "corpus_collection",
-             f"Collected {len(articles)} articles across {len(buckets)} weekly buckets",
-             {"article_count": len(articles), "provenance": corpus["provenance"]})
-    return state
+        delta["no_data"] = False
+        delta["messages"] = [_msg_entry(
+            "corpus_collection",
+            f"Collected {len(articles)} articles across {len(buckets)} weekly buckets",
+            {"article_count": len(articles), "provenance": corpus["provenance"]})]
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +229,7 @@ def background_profiling_node(state, llm_map, llm_reduce, config, db_manager=Non
         s["_week"] = f"{b['start'].date()}..{b['end'].date()}"
         s["_count"] = b["count"]
         summaries.append(s)
-    state["bucket_summaries"] = summaries
+    delta: Dict[str, Any] = {"bucket_summaries": summaries}
     if db_manager:
         print(f"  map: {cache_hits}/{len(buckets)} buckets from cache")
     sent_timeline = [round(s.get("sentiment", 0.0), 2) for s in summaries]
@@ -235,11 +239,11 @@ def background_profiling_node(state, llm_map, llm_reduce, config, db_manager=Non
     # map output (bucket sentiments) in compute_shift_metrics, not from the reduce. So we skip
     # the expensive reduce LLM call entirely and store a minimal profile.
     if skip_reduce:
-        state["background_profile"] = {
+        delta["background_profile"] = {
             "summary": "(detection-only: reduce skipped)",
             "sentiment_timeline": sent_timeline,
         }
-        return state
+        return delta
 
     # --- REDUCE ---
     digest_lines = []
@@ -267,11 +271,11 @@ def background_profiling_node(state, llm_map, llm_reduce, config, db_manager=Non
         print(f"  ⚠ reduce failed after retries: {e}; using bucket-derived fallback profile")
         profile_d = _fallback_profile(summaries, sent_timeline)
 
-    state["background_profile"] = profile_d
-    _msg(state, "background_profiling", profile_d.get("summary", ""),
-         {"sentiment_timeline": profile_d.get("sentiment_timeline")})
+    delta["background_profile"] = profile_d
+    delta["messages"] = [_msg_entry("background_profiling", profile_d.get("summary", ""),
+                                    {"sentiment_timeline": profile_d.get("sentiment_timeline")})]
     print(f"  → {profile_d.get('summary', '')[:200]}")
-    return state
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +298,7 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
         articles=state.get("news_corpus"),
         sector_baseline=state.get("sector_baseline"),
     )
-    state["background_metrics"] = metrics
+    delta: Dict[str, Any] = {"background_metrics": metrics}
     sm = metrics["sentiment"]
     print(f"  sentiment: recent={sm['recent_mean']} baseline={sm['baseline_mean']} "
           f"z={sm['z']} | attention spike={metrics['attention']['spike_ratio']}x | "
@@ -315,7 +319,10 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
     catalysts, reasoning, inflection = [], "", metrics["inflection_week"]
     if has_shifted and characterize:
         # Consume reviewer critique on a reflection loop-back, then clear it (Phase 3).
-        critique = state.pop("reflection_advice", "") if state.get("loop_to") == "shift_detection" else ""
+        # Phase 8 deltas: "clearing" = overwriting the key in the returned delta.
+        critique = state.get("reflection_advice", "") if state.get("loop_to") == "shift_detection" else ""
+        if critique:
+            delta["reflection_advice"] = ""
         critique_line = f"\nREVIEWER CRITIQUE TO ADDRESS: {critique}\n" if critique else ""
         prompt = (
             f"The news background for {state['ticker']} HAS shifted {direction} "
@@ -350,12 +357,12 @@ def shift_detection_node(state, llm, config, neo4j_manager=None, characterize=Tr
         reasoning=reasoning,
     ).model_dump()
 
-    state["background_shift"] = shift_d
+    delta["background_shift"] = shift_d
     verdict = ("SHIFT " + (shift_d.get("direction") or "")) if shift_d.get("has_shifted") else "no shift"
-    _msg(state, "shift_detection", f"{verdict}: {shift_d.get('reasoning','')[:160]}",
-         {"metrics": metrics, "shift": shift_d})
+    delta["messages"] = [_msg_entry("shift_detection", f"{verdict}: {shift_d.get('reasoning','')[:160]}",
+                                    {"metrics": metrics, "shift": shift_d})]
     print(f"  → {verdict} (z={shift_d.get('magnitude_z')}, inflection={shift_d.get('inflection_date')})")
-    return state
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -366,8 +373,7 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
     ticker, as_of = state["ticker"], state["as_of"]
     fund = read_fundamentals(db_manager, ticker, as_of)
     tech = compute_daily_technicals(db_manager, ticker, as_of, config.LOOKBACK_DAYS_TECHNICAL_LT)
-    state["fundamentals"] = fund
-    state["technical_longterm"] = tech
+    delta: Dict[str, Any] = {"fundamentals": fund, "technical_longterm": tech}
 
     print(f"  revenue_yoy={fund['revenue_yoy']} | margins(newest)="
           f"{fund['margin_series'][0] if fund['margin_series'] else None}")
@@ -377,17 +383,21 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
           f"(available={tech.get('available')})")
 
     if not fund["has_statements"]:
-        state["fundamentals"]["verdict"] = "unknown"
-        _msg(state, "fundamentals_analysis", "No statements available — verdict unknown", {})
+        fund["verdict"] = "unknown"
+        delta["messages"] = [_msg_entry("fundamentals_analysis",
+                                        "No statements available — verdict unknown", {})]
         print("  → no statements; verdict=unknown")
-        return state
+        return delta
 
     shift = state.get("background_shift", {})
     shift_desc = (f"{shift.get('direction')} shift (z={shift.get('magnitude_z')})"
                   if shift.get("has_shifted") else "no significant news shift")
     margins = fund["margin_series"]
-    # Consume reviewer critique on a reflection loop-back to this node, then clear it (Phase 3).
-    critique = state.pop("reflection_advice", "") if state.get("loop_to") == "fundamentals_analysis" else ""
+    # Consume reviewer critique on a reflection loop-back to this node, then clear it
+    # (Phase 3; Phase 8 deltas: clearing = overwriting the key in the returned delta).
+    critique = state.get("reflection_advice", "") if state.get("loop_to") == "fundamentals_analysis" else ""
+    if critique:
+        delta["reflection_advice"] = ""
     critique_line = f"REVIEWER CRITIQUE TO ADDRESS: {critique}\n\n" if critique else ""
     # Phase 12 — structured evidence blocks (all point-in-time, wired from stored filings;
     # blocks render only when data exists so thin tickers don't get walls of None).
@@ -430,11 +440,12 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
         print(f"  ⚠ fundamentals verdict failed: {e}")
         ft_d = FundamentalsTrend(verdict="unknown", reasoning="(LLM unavailable)").model_dump()
 
-    state["fundamentals"]["trend"] = ft_d
-    _msg(state, "fundamentals_analysis",
-         f"verdict={ft_d.get('verdict')}: {ft_d.get('reasoning','')[:160]}", {"trend": ft_d})
+    fund["trend"] = ft_d
+    delta["messages"] = [_msg_entry(
+        "fundamentals_analysis",
+        f"verdict={ft_d.get('verdict')}: {ft_d.get('reasoning','')[:160]}", {"trend": ft_d})]
     print(f"  → verdict={ft_d.get('verdict')} (vs the news shift)")
-    return state
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -446,9 +457,8 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
     metrics = state.get("background_metrics", {})
     if not shift.get("has_shifted"):
         analogs = ShiftAnalogs(n_analogs=0, fundamentals_matched_note="no shift → no analog lookup").model_dump()
-        state["shift_analogs"] = analogs
         print("  → no shift; skipping analog lookup")
-        return state
+        return {"shift_analogs": analogs}
 
     causal = [s.get("label") for s in metrics.get("new_stories", [])][:8]
     analogs = find_similar_shifts(
@@ -456,7 +466,6 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
         direction=shift.get("direction"), target_z=shift.get("magnitude_z"),
         causal_types=causal, k=6, min_analogs=config.MIN_ANALOGS,
     )
-    state["shift_analogs"] = analogs
     if analogs["n_analogs"]:
         ci = analogs.get("share_positive_ci")
         suffix = " [INSUFFICIENT — not weighed]" if analogs.get("insufficient") else (
@@ -465,9 +474,11 @@ def similar_shift_analysis_node(state, db_manager, config) -> Dict[str, Any]:
               f"| share positive={analogs['share_positive']}{suffix}")
     else:
         print(f"  → {analogs['fundamentals_matched_note']}")
-    _msg(state, "similar_shift_analysis",
-         f"{analogs['n_analogs']} analogs, median 4w={analogs.get('median_fwd_return_4w')}", {"analogs": analogs})
-    return state
+    return {"shift_analogs": analogs,
+            "messages": [_msg_entry(
+                "similar_shift_analysis",
+                f"{analogs['n_analogs']} analogs, median 4w={analogs.get('median_fwd_return_4w')}",
+                {"analogs": analogs})]}
 
 
 # ---------------------------------------------------------------------------
@@ -639,9 +650,9 @@ def _deep_analysis_v2(state, llm_map, llm_reduce, db_manager, neo4j_manager, con
 
     planned, rationale, planner_ok = _v2_plan(llm_map, config, context, menu)
     print(f"  planner: {[n for n, _ in planned]} — {rationale[:100]}")
-    _msg(state, "deep_analysis_planner", f"threads={[n for n, _ in planned]}",
-         {"threads": [{"name": n, "focus": f} for n, f in planned],
-          "rationale": rationale, "planner_ok": planner_ok})
+    msgs = [_msg_entry("deep_analysis_planner", f"threads={[n for n, _ in planned]}",
+                       {"threads": [{"name": n, "focus": f} for n, f in planned],
+                        "rationale": rationale, "planner_ok": planner_ok})]
 
     cite_rules = (
         "CITATIONS REQUIRED: every finding must carry `evidence` — news_id / event_id / a short "
@@ -723,14 +734,14 @@ def _deep_analysis_v2(state, llm_map, llm_reduce, db_manager, neo4j_manager, con
         data["note"] = "no finding carried citations — advisory nudge zeroed"
         print("  ⚠ zero cited findings — advisory nudge zeroed (unverifiable enrichment)")
 
-    state["enriched_analysis"] = data
-    _msg(state, "deep_analysis",
-         f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
-         {"enriched": data})
+    msgs.append(_msg_entry(
+        "deep_analysis",
+        f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
+        {"enriched": data}))
     print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory) | "
           f"sector_wide={data.get('is_sector_wide')} | findings={len(data.get('findings') or [])}")
     print(f"    summary: {str(data.get('summary', ''))[:140]}")
-    return state
+    return {"enriched_analysis": data, "messages": msgs}
 
 
 def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, config) -> Dict[str, Any]:
@@ -741,11 +752,11 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
     print("\n=== Deep Analysis (Phase 7A, map-reduce) ===")
     if not getattr(config, "DEEP_ANALYSIS_ENABLED", False):
         print("  → disabled (LT_DEEP_ANALYSIS=false); skipping")
-        return state
+        return {}
     shift = state.get("background_shift", {})
     if state.get("no_data") or not shift.get("has_shifted"):
         print("  → no shift / no data; skipping enrichment")
-        return state
+        return {}
 
     from ..tools.analysis_tools import build_deep_analysis_tools
 
@@ -765,7 +776,7 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
         news_corpus=(state.get("news_corpus") if deep_v2 else None))
     if not tools:
         print("  → no tools available; skipping")
-        return state
+        return {}
 
     # Resolve peers deterministically so every thread has concrete comparison targets.
     peers = []
@@ -852,14 +863,14 @@ def deep_analysis_node(state, llm_map, llm_reduce, db_manager, neo4j_manager, co
         data["note"] = "no tools were called across map threads — enrichment skipped"
         print("  ⚠ no tools ran across threads — advisory nudge zeroed (enrichment skipped)")
 
-    state["enriched_analysis"] = data
-    _msg(state, "deep_analysis",
-         f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
-         {"enriched": data})
     print(f"  → conviction_adjustment={data.get('conviction_adjustment')} (advisory) | "
           f"sector_wide={data.get('is_sector_wide')} | findings={len(data.get('findings') or [])}")
     print(f"    summary: {str(data.get('summary',''))[:140]}")
-    return state
+    return {"enriched_analysis": data,
+            "messages": [_msg_entry(
+                "deep_analysis",
+                f"adj={data.get('conviction_adjustment')} tools={data.get('tools_used')}",
+                {"enriched": data})]}
 
 
 # ---------------------------------------------------------------------------
@@ -941,11 +952,12 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         sig_d = LongTermSignal(direction="NEUTRAL", conviction=0.0, horizon="n/a",
                                thesis="(synthesis unavailable)").model_dump()
 
-    state["signal"] = sig_d
-    _msg(state, "synthesis", f"{sig_d['direction']} conviction={sig_d['conviction']}: {sig_d['thesis'][:160]}",
-         {"signal": sig_d})
     print(f"  → {sig_d['direction']} (conviction={sig_d['conviction']}, horizon={sig_d.get('horizon')})")
-    return state
+    return {"signal": sig_d,
+            "messages": [_msg_entry(
+                "synthesis",
+                f"{sig_d['direction']} conviction={sig_d['conviction']}: {sig_d['thesis'][:160]}",
+                {"signal": sig_d})]}
 
 
 # ---------------------------------------------------------------------------
@@ -954,11 +966,9 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
 def reflection_node(state, llm, config) -> Dict[str, Any]:
     print("\n=== Reflection ===")
     count = state.get("reflection_count", 0)
-    state["reflection_count"] = count + 1
     if count >= config.MAX_REFLECTION_ITERATIONS:
-        state["needs_refinement"] = False
         print("  → max iterations reached; proceeding")
-        return state
+        return {"reflection_count": count + 1, "needs_refinement": False}
 
     sig = state.get("signal", {})
     shift = state.get("background_shift", {})
@@ -979,18 +989,23 @@ def reflection_node(state, llm, config) -> Dict[str, Any]:
         print(f"  ⚠ reflection failed: {e}; proceeding")
         ref_d = ReflectionOutput(needs_refinement=False).model_dump()
 
-    state["needs_refinement"] = bool(ref_d.get("needs_refinement"))
-    state["loop_to"] = ref_d.get("loop_to") or "synthesis"
-    # Feed the critique into the re-run (Phase 3): without this the loop re-executes on
-    # IDENTICAL inputs — a wasted LLM call, since the deterministic shift label can't move.
-    # The targeted node injects this into its prompt and clears it. (Label stays fixed;
-    # only the LLM CHARACTERIZATION / fundamentals verdict can be refined.)
-    state["reflection_advice"] = ref_d.get("advice", "") if state["needs_refinement"] else ""
-    _msg(state, "reflection", f"needs_refinement={state['needs_refinement']} loop_to={state.get('loop_to')}: "
-         f"{ref_d.get('advice','')[:140]}", {"reflection": ref_d})
-    print(f"  → needs_refinement={state['needs_refinement']} "
-          f"(conf={ref_d.get('confidence_in_analysis')})")
-    return state
+    needs = bool(ref_d.get("needs_refinement"))
+    delta: Dict[str, Any] = {
+        "reflection_count": count + 1,
+        "needs_refinement": needs,
+        "loop_to": ref_d.get("loop_to") or "synthesis",
+        # Feed the critique into the re-run (Phase 3): without this the loop re-executes on
+        # IDENTICAL inputs — a wasted LLM call, since the deterministic shift label can't move.
+        # The targeted node injects this into its prompt and clears it. (Label stays fixed;
+        # only the LLM CHARACTERIZATION / fundamentals verdict can be refined.)
+        "reflection_advice": ref_d.get("advice", "") if needs else "",
+    }
+    delta["messages"] = [_msg_entry(
+        "reflection",
+        f"needs_refinement={needs} loop_to={delta['loop_to']}: {ref_d.get('advice','')[:140]}",
+        {"reflection": ref_d})]
+    print(f"  → needs_refinement={needs} (conf={ref_d.get('confidence_in_analysis')})")
+    return delta
 
 
 # ---------------------------------------------------------------------------
@@ -1103,10 +1118,12 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     sig["conviction_gate"] = sig.get("conviction", 0.0)
     sig["gate"] = gate_mode
     passed = sig.get("conviction", 0.0) >= config.LONGTERM_CONFIDENCE_THRESHOLD and direction in ("LONG", "SHORT")
-    state["risk_flags"] = flags
-    state["risk_checks"] = {"priced_in": priced, "earnings": earn, "regime_context": regime}
-    state["signal"] = sig
-    state["filtered_signal"] = sig if passed else None
+    delta: Dict[str, Any] = {
+        "risk_flags": flags,
+        "risk_checks": {"priced_in": priced, "earnings": earn, "regime_context": regime},
+        "signal": sig,
+        "filtered_signal": sig if passed else None,
+    }
 
     print(f"  flags: {flags or 'none'}")
     if regime.get("available"):
@@ -1116,6 +1133,6 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
               f"brent={regime.get('brent')} [{regime.get('oil_band')}] — stamped, not gated")
     print(f"  → {'PASS' if passed else 'FILTERED'} "
           f"(conviction={sig.get('conviction')} [{gate_mode}] vs threshold {config.LONGTERM_CONFIDENCE_THRESHOLD})")
-    _msg(state, "risk_gate", f"{'PASS' if passed else 'FILTERED'}; flags={flags}",
-         {"flags": flags, "passed": passed})
-    return state
+    delta["messages"] = [_msg_entry("risk_gate", f"{'PASS' if passed else 'FILTERED'}; flags={flags}",
+                                    {"flags": flags, "passed": passed})]
+    return delta

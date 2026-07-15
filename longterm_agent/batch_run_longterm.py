@@ -44,13 +44,46 @@ def _previous_verdict(cfg, ticker, as_of) -> str:
         return None
 
 
-def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert=True, freshness=None):
-    graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
-    stats = {"runs": 0, "signals": 0, "trades": 0, "no_data": 0, "errors": 0}
-    oplog.info("BATCH_START", f"weekly batch: {len(tickers)} tickers",
-               as_of=as_of, details={"tickers": tickers, "version": cfg.AGENT_VERSION})
+def _already_done(cfg, as_of) -> set:
+    """Tickers already persisted for (DETECTION_VERSION, as_of) — the Phase 8 idempotent
+    resume set. A crashed batch (OOM, deploy, docker restart) re-runs and pays only for
+    the one half-finished ticker; completed ones are skipped, no duplicate rows. Fails
+    open (empty set): persist_run's upsert keeps a re-run harmless anyway."""
+    try:
+        conn = psycopg2.connect(**cfg.get_db_config())
+        with conn.cursor() as cur:
+            cur.execute("""SELECT ticker FROM longterm_agent_results
+                           WHERE agent_version=%s AND as_of=%s""",
+                        [cfg.DETECTION_VERSION, as_of.date()])
+            done = {r[0] for r in cur.fetchall()}
+        conn.close()
+        return done
+    except Exception:
+        return set()
 
-    for ticker in tickers:
+
+def pending_tickers(tickers, done: set, force: bool = False):
+    """Pure: batch order preserved, completed tickers dropped (unless force)."""
+    if force:
+        return list(tickers)
+    return [t for t in tickers if t.upper() not in done]
+
+
+def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert=True,
+              freshness=None, force=False):
+    graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
+    stats = {"runs": 0, "signals": 0, "trades": 0, "no_data": 0, "errors": 0, "skipped": 0}
+    done = _already_done(cfg, as_of)
+    todo = pending_tickers(tickers, done, force=force)
+    stats["skipped"] = len(tickers) - len(todo)
+    if stats["skipped"]:
+        print(f"  resume: skipping {stats['skipped']} tickers already persisted for "
+              f"({cfg.DETECTION_VERSION}, {as_of.date()})")
+    oplog.info("BATCH_START", f"weekly batch: {len(todo)} tickers ({stats['skipped']} resumed-skip)",
+               as_of=as_of, details={"tickers": todo, "version": cfg.AGENT_VERSION,
+                                     "skipped": stats["skipped"]})
+
+    for ticker in todo:
         stats["runs"] += 1
         prev = _previous_verdict(cfg, ticker, as_of)
         try:
@@ -116,6 +149,8 @@ def main():
     ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
     ap.add_argument("--skip-freshness", action="store_true",
                     help="bypass the stale-data preflight (deliberate replays only)")
+    ap.add_argument("--force", action="store_true",
+                    help="re-run tickers already persisted for this (version, as_of)")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
@@ -161,7 +196,8 @@ def main():
           f"(alerts {'OFF' if args.no_alert else 'ON' if notifier.enabled else 'unconfigured'})")
     t0 = time.time()
     stats = run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce,
-                      notifier, alert=not args.no_alert, freshness=freshness)
+                      notifier, alert=not args.no_alert, freshness=freshness,
+                      force=args.force)
     print(f"\nBatch complete in {time.time()-t0:.0f}s: {stats}")
     if neo:
         neo.close()
