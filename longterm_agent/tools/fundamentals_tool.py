@@ -366,19 +366,75 @@ def peer_forward_pe(db_manager, ticker: str, sector: str, as_of: datetime) -> Di
 
 # --- street consensus & realized surprises (advisory; guidance-vs-consensus groundwork) ---
 def _fmp_latest(db_manager, ticker, as_of):
+    """Latest FMP earnings snapshot ≤ as_of → (data, is_pit=True). If none exists (all
+    snapshots post-date as_of — the pre-2026-07-15 backtest case), fall back to the
+    EARLIEST later snapshot for HISTORY-ONLY use → (data, is_pit=False): the records
+    inside are still PIT-filtered by report date in format_consensus, and FMP claims
+    per-report estimates are frozen at report time (their claim → advisory)."""
     rows = _rows(db_manager, """
         SELECT data FROM fundamentals
         WHERE ticker=%s AND source='fmp' AND kind='earnings' AND fetch_date <= %s
         ORDER BY fetch_date DESC LIMIT 1
     """, [ticker.upper(), as_of.date()])
-    return rows[0][0] if rows else None
+    if rows:
+        return rows[0][0], True
+    rows = _rows(db_manager, """
+        SELECT data FROM fundamentals
+        WHERE ticker=%s AND source='fmp' AND kind='earnings' AND fetch_date > %s
+        ORDER BY fetch_date ASC LIMIT 1
+    """, [ticker.upper(), as_of.date()])
+    return (rows[0][0], False) if rows else (None, True)
 
 
-def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date) -> Dict[str, Any]:
+def _yf_hist_future(db_manager, ticker, as_of):
+    """earnings_history from the EARLIEST post-as_of analyst_estimates snapshot —
+    the retro fallback when neither a strict yfinance snapshot nor FMP coverage
+    exists (free FMP key covers ~40 symbols; the rest 402). History-only."""
+    rows = _rows(db_manager, """
+        SELECT data FROM fundamentals
+        WHERE ticker=%s AND source='yfinance' AND kind='analyst_estimates' AND fetch_date > %s
+          AND jsonb_array_length(COALESCE(data->'earnings_history', '[]'::jsonb)) > 0
+        ORDER BY fetch_date ASC LIMIT 1
+    """, [ticker.upper(), as_of.date()])
+    return (rows[0][0] or {}).get("earnings_history") if rows else None
+
+
+# Reporting lag buffer for quarter-end-labelled yfinance history rows: a quarter ending
+# ≤ as_of may not have been REPORTED by as_of yet, so only quarters older than this many
+# days count as realized when the row comes from a post-as_of snapshot.
+YF_HIST_REPORT_LAG_DAYS = 45
+
+
+def _yf_surprises(hist, as_of_date, buffer_days=0):
+    """yfinance earnings_history rows → recent_surprises entries (EPS only — yfinance
+    has no revenue-surprise history). Rows are quarter-end labelled."""
+    from datetime import timedelta
+    cutoff = str(as_of_date - timedelta(days=buffer_days))
+    out = []
+    for r in hist or []:
+        d = str(r.get("period") or "")[:10]
+        sp = r.get("surprisePercent")
+        if d and d <= cutoff and sp is not None:
+            out.append({"date": d, "eps_surprise_pct": round(sp * 100, 1),
+                        "revenue_surprise_pct": None})
+    out.sort(key=lambda r: r["date"], reverse=True)
+    return out[:4]
+
+
+def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date,
+                     fmp_is_pit: bool = True,
+                     yf_hist_future: Optional[list] = None) -> Dict[str, Any]:
     """Pure: latest yfinance analyst_estimates snapshot + FMP earnings snapshot → compact
     consensus view. PIT inside the snapshot too: FMP rows dated AFTER as_of are the
     upcoming reports (their actuals must be null at as_of by construction); rows ≤ as_of
-    with actuals are the realized-surprise history."""
+    with actuals are the realized-surprise history.
+
+    fmp_is_pit=False → the FMP snapshot post-dates as_of (retro backtest): the realized-
+    surprise history is still usable (report-date filtered, estimates frozen at report
+    time per FMP), but next_report is DROPPED — its estimate may embed post-as_of
+    revisions. EPS-surprise fallback chain when FMP has no history: est's own
+    earnings_history (strict snapshot, no buffer) → yf_hist_future (post-as_of snapshot,
+    45-day reporting-lag buffer on quarter-end labels)."""
     out: Dict[str, Any] = {"available": False}
     if est:
         fwd = {}
@@ -422,12 +478,21 @@ def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date) -> Di
             })
         if surprises:
             out.update({"available": True, "recent_surprises": surprises})
-        if upcoming:
+        if upcoming and fmp_is_pit:
             nxt = upcoming[0]
             out.update({"available": True,
                         "next_report": {"date": nxt.get("date"),
                                         "eps_estimated": nxt.get("epsEstimated"),
                                         "revenue_estimated": nxt.get("revenueEstimated")}})
+
+    # EPS-surprise fallback (free FMP key covers ~40 symbols; yfinance covers the rest)
+    if not out.get("recent_surprises"):
+        fallback = _yf_surprises((est or {}).get("earnings_history"), as_of_date)
+        if not fallback and yf_hist_future:
+            fallback = _yf_surprises(yf_hist_future, as_of_date,
+                                     buffer_days=YF_HIST_REPORT_LAG_DAYS)
+        if fallback:
+            out.update({"available": True, "recent_surprises": fallback})
     if not out["available"]:
         out["note"] = "no consensus snapshots as-of (collection starts 2026-07-15 forward)"
     return out
@@ -438,8 +503,14 @@ def read_consensus(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     Feeds the deep-analysis tool always; feeds the fundamentals verdict prompt too when
     LT_CONSENSUS_IN_VERDICT is on (stage B — its own A/B per the release discipline)."""
     est = _yf_latest(db_manager, ticker, as_of, "analyst_estimates")
-    fmp = _fmp_latest(db_manager, ticker, as_of)
-    return format_consensus(est, fmp, as_of.date())
+    fmp, fmp_is_pit = _fmp_latest(db_manager, ticker, as_of)
+    # Retro fallback for EPS surprises fetched lazily — only when neither strict source
+    # has any history (one extra query on exactly the paths that would otherwise be empty).
+    yf_hist_future = None
+    if not est and not (fmp or {}).get("records"):
+        yf_hist_future = _yf_hist_future(db_manager, ticker, as_of)
+    return format_consensus(est, fmp, as_of.date(),
+                            fmp_is_pit=fmp_is_pit, yf_hist_future=yf_hist_future)
 
 
 def consensus_prompt_block(cons: Dict[str, Any]) -> str:

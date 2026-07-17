@@ -7,7 +7,7 @@ Contract under test:
   - Phase 8 delta contract holds either way (input state never mutated).
 No DB, no network: read_fundamentals / read_consensus / technicals are monkeypatched.
 """
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 
 from longterm_agent.tools.fundamentals_tool import (consensus_prompt_block,
@@ -57,6 +57,49 @@ def test_posture_line():
     assert "next report 2026-07-30" in line
     assert consensus_posture_line({}) == ""
     assert consensus_posture_line({"available": False, "note": "x"}) == ""
+
+
+# --- retro fallbacks (free FMP key covers ~40 symbols; history from later snapshots) ---
+YF_HIST = [
+    {"period": "2026-03-31T00:00:00", "epsActual": 0.26, "epsEstimate": 0.30278,
+     "surprisePercent": -0.1413},
+    {"period": "2025-12-31T00:00:00", "epsActual": 0.56, "epsEstimate": 0.6639,
+     "surprisePercent": -0.1565},
+    {"period": "2025-09-30T00:00:00", "epsActual": 2.21, "epsEstimate": 2.32057,
+     "surprisePercent": -0.0476},
+]
+
+
+def test_non_pit_fmp_keeps_surprises_drops_next_report():
+    from longterm_agent.tests.test_consensus import FMP
+    from longterm_agent.tools.fundamentals_tool import format_consensus
+    out = format_consensus(None, FMP, date(2026, 5, 1), fmp_is_pit=False)
+    assert out["recent_surprises"][0]["date"] == "2026-04-30"   # report-date PIT filter holds
+    assert "next_report" not in out          # estimate may embed post-as_of revisions
+
+
+def test_yf_history_fallback_from_strict_snapshot():
+    from longterm_agent.tools.fundamentals_tool import format_consensus
+    est = {"earnings_history": YF_HIST}
+    out = format_consensus(est, None, date(2026, 7, 15))
+    s = out["recent_surprises"]
+    assert s[0] == {"date": "2026-03-31", "eps_surprise_pct": -14.1,
+                    "revenue_surprise_pct": None}
+    assert [r["date"] for r in s] == ["2026-03-31", "2025-12-31", "2025-09-30"]
+
+
+def test_yf_future_snapshot_fallback_applies_reporting_lag_buffer():
+    from longterm_agent.tools.fundamentals_tool import format_consensus
+    # as_of 2026-04-10: Q ending 03-31 has NOT been reported yet → buffered out;
+    # 2025-12-31 (100 days back) survives.
+    out = format_consensus(None, None, date(2026, 4, 10), yf_hist_future=YF_HIST)
+    dates = [r["date"] for r in out["recent_surprises"]]
+    assert "2026-03-31" not in dates and "2025-12-31" in dates
+    # FMP surprises win over the future-snapshot fallback when both exist
+    from longterm_agent.tests.test_consensus import FMP
+    both = format_consensus(None, FMP, date(2026, 5, 1), fmp_is_pit=False,
+                            yf_hist_future=YF_HIST)
+    assert both["recent_surprises"][0]["revenue_surprise_pct"] is not None
 
 
 # --- node wiring -----------------------------------------------------------------------
