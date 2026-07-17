@@ -25,11 +25,38 @@ run. Detailed write-ups live in the linked docs; raw rows in the DB. Conventions
 | 9 | 2026-07-12/15 | `wf_30x_v0.2_deep` | `82f1ff8` | 30×9 | + deep analysis v1 ON | 62% / **+1.78%** / 1.30; calibration monotone | ✅ 6-pre verdict: nudge HELPS · §2 |
 | 10 | 2026-07-15 | `wf_30x_f12_v3` | `82f1ff8` | 30×9 | detection v3 (sector-relative) | 59% / +0.55% / 0.95; 2w degrades | ⏸ no cutover; re-exam ~2026-08-06 · §3 |
 | 11 | 2026-07-15 | `wf_30x_f12_deepv2` | `9f8d601` | 30×9 | deep v2 (planner+parallel+citations) | 58% / **−0.91%** / 0.39; 2w −0.96%/−0.04 | ❌ **REJECTED** — loses to BOTH #8 and #9; `LT_DEEP_V2` stays false, deep v1 remains live |
+| 12 | 2026-07-17 | `wf_30x_f12_cons` | `59f100d` | 30×9 | consensus-in-verdict (retro = surprise-history-only block) | 59% / +0.11% / 0.45; 2w −0.19%/0.34; **4w calibration turns MONOTONIC** (top bucket 79% win, +4.33%) | ❌ flag stays false for now — decision delta −19.6pp, dominated by ONE re-introduced counter-trend INTC short (−40.8%); UBER flips were RIGHT (+36.6pp). See below. |
+
+## #12 consensus-in-verdict — detail (2026-07-17)
+
+Config delta vs #8: `LT_CONSENSUS_IN_VERDICT=true`, deep OFF, tree `59f100d` (stage B +
+retro fallbacks — 119/119 retro coverage via FMP→yfinance surprise-history chain).
+RETRO CAVEAT: pre-2026-07-15 as-ofs see only the degraded block (realized surprises; no
+forward estimates / estimate trend) — the live feature is only PARTIALLY tested here.
+
+Decision-level vs #8 (42 shared, 7 dropped, 6 added, 4 flips; 4w signed):
+- **Flips were right: +36.6pp.** UBER LONG→SHORT twice (+8.2, +11.3 — chronic-miss
+  history correctly overrode a bullish read), MSFT SHORT→LONG (+0.4).
+- **Added trades: −55.2pp, of which ONE trade is −40.8pp**: INTC 2026-04-24 SHORT —
+  the surprise-history ("chronically misses") re-created the counter-trend INTC short
+  that f12 had eliminated, straight into the April rebound. Without it added = −14.4pp
+  (AVGO/GOOGL/PFE longs mildly negative).
+- Dropped: ≈wash (+1.0pp forgone; lost AMD +20.3 but shed BAC/TSLA losers).
+- **Structural finding: 4w conviction calibration becomes MONOTONIC** (0.55-0.65:
+  −2.68% → 0.75-0.85: +4.33%, 79% win) — first run where LLM conviction is
+  sizing-trustworthy; baseline's top bucket was its worst. 2w stays non-monotonic.
+
+Verdict: net evidence negative → flag stays `false` live. But the failure mode is
+specific and guardable: surprise-history should not justify a NEW counter-trend short
+on its own. Candidate stage B.2 (own id): consensus block + an explicit instruction
+that chronic-miss history NEVER initiates counter-trend direction, only adjusts
+conviction — re-run when forward snapshots cover live cohorts (~2026-08+), where the
+un-degraded block (forward estimates + trend) is what actually ships.
 
 ## Queued / future
 
-- **Consensus-in-verdict A/B** — wire `get_street_consensus` data into the fundamentals
-  prompt (prompt change → own id), after #11 settles.
+- **Consensus stage B.2** — see #12 detail above: guarded prompt + forward-covered
+  window (~2026-08+).
 - **`LT_FEWSHOT` A/B** — graded-analog few-shot in synthesis; wait for a thicker graded
   analog base.
 - **v3 re-examination ~2026-08-06** — not a new sweep: `grade_shifts` + report once the

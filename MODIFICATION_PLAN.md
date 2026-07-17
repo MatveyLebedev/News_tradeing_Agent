@@ -953,6 +953,22 @@ Changes (expert #28, #31–33, #37):
   vs API-Ninjas only when we actually schedule those phases. yfinance v3 legacy API
   note: new FMP keys work ONLY against /stable/ endpoints.
 
+**Consensus stage B 2026-07-17 — SHIPPED behind `LT_CONSENSUS_IN_VERDICT` (default off),
+A/B verdict: stays OFF live.**
+- `adfb786`: consensus + surprise-history block in the fundamentals verdict prompt, one
+  posture line in synthesis; prompts byte-identical when off (LLM-cache keys).
+- `59f100d`: FMP top-up impossible — free key covers a FIXED ~40-symbol list (402 on the
+  other 80, not a rate limit). Retro fallbacks instead: post-as_of FMP snapshots serve
+  history-only (report-date PIT; next_report dropped), EPS-surprise chain FMP →
+  yfinance `earnings_history` (strict) → post-as_of snapshot with 45-day reporting-lag
+  buffer. Retro coverage 119/119.
+- `wf_30x_f12_cons` (ledger #12): 4w +0.11%/0.45 vs baseline +0.53%/0.91 → flag stays
+  false. Nuance worth keeping: UBER direction-flips were right (+36.6pp), 4w conviction
+  calibration turned MONOTONIC for the first time; the loss is ONE re-created
+  counter-trend INTC short (−40.8%). Stage B.2 queued: guard instruction
+  (chronic-miss history never initiates counter-trend direction) + re-run ~2026-08+
+  when forward snapshots cover live cohorts.
+
 Acceptance: `macro_series` populated daily with backfill from FRED/yfinance history;
 every new signal carries `regime_context`; forward report gains regime-split tables.
 
