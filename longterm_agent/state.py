@@ -44,6 +44,7 @@ class LongTermAgentState(TypedDict, total=False):
     fundamentals: Dict[str, Any]
     technical_longterm: Dict[str, Any]
     shift_analogs: Dict[str, Any]
+    street_consensus: Dict[str, Any]   # consensus stage B (LT_CONSENSUS_IN_VERDICT): set by fundamentals_analysis, read by synthesis
 
     # --- deep_analysis (Phase 7A; advisory tool-calling enrichment, never edits background_shift) ---
     enriched_analysis: Dict[str, Any]

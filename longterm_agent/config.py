@@ -174,6 +174,13 @@ class LongTermAgentConfig:
     # Phase 11 — dynamic few-shot: graded analog outcomes as worked examples in the
     # synthesis prompt. DEFAULT OFF (prompt = LLM-cache key); enable via backtest A/B.
     FEWSHOT_ANALOGS = os.getenv("LT_FEWSHOT", "false").lower() == "true"
+    # Consensus stage B — street consensus + realized-surprise history injected into the
+    # fundamentals verdict prompt (and a posture line in synthesis). Targets the INTC/QCOM
+    # error class: direction is set by the delta vs expectations, not absolute quality.
+    # DEFAULT OFF (prompt = LLM-cache key); enable via the wf_30x consensus A/B.
+    # Historical as-of dates degrade to FMP surprise history only (yfinance forward
+    # estimates have no history — snapshots collect from 2026-07-15 forward).
+    CONSENSUS_IN_VERDICT = os.getenv("LT_CONSENSUS_IN_VERDICT", "false").lower() == "true"
 
     # --- Database ---
     DB_CONFIG = {

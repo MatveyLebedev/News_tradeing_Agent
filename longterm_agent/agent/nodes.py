@@ -21,7 +21,8 @@ from ..schemas import (
 )
 from ..tools.news_corpus_tool import get_company_news_corpus, bucket_by_week
 from ..tools.background_metrics import compute_shift_metrics
-from ..tools.fundamentals_tool import read_fundamentals
+from ..tools.fundamentals_tool import (read_fundamentals, read_consensus,
+                                       consensus_prompt_block, consensus_posture_line)
 from ..tools.technical_tool import compute_daily_technicals
 from ..tools.shift_library_tool import find_similar_shifts
 from ..tools.risk_tool import priced_in_check, earnings_event_risk
@@ -375,6 +376,17 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
     tech = compute_daily_technicals(db_manager, ticker, as_of, config.LOOKBACK_DAYS_TECHNICAL_LT)
     delta: Dict[str, Any] = {"fundamentals": fund, "technical_longterm": tech}
 
+    # Consensus stage B (LT_CONSENSUS_IN_VERDICT, default OFF — prompt is an LLM-cache
+    # key). Fetched before the no-statements early return so synthesis still gets the
+    # posture line for thin tickers. Historical as-of dates degrade to surprise history.
+    consensus_block = ""
+    if getattr(config, "CONSENSUS_IN_VERDICT", False):
+        cons = read_consensus(db_manager, ticker, as_of)
+        delta["street_consensus"] = cons
+        consensus_block = consensus_prompt_block(cons)
+        print(f"  consensus: available={cons.get('available')} "
+              f"surprises={len(cons.get('recent_surprises') or [])}")
+
     print(f"  revenue_yoy={fund['revenue_yoy']} | margins(newest)="
           f"{fund['margin_series'][0] if fund['margin_series'] else None}")
     print(f"  valuation={ {k: fund['valuation'].get(k) for k in ['trailingPE','forwardPE']} } "
@@ -423,6 +435,7 @@ def fundamentals_analysis_node(state, llm, db_manager, config) -> Dict[str, Any]
         + _blk("STREET (target gap, recommendation, beta, 52w position)", fund.get("street"))
         + f"  analyst estimate revisions (expectation gap): {fund['expectation_gap']}\n"
         f"  long-term technicals: {tech}\n\n"
+        f"{consensus_block}"
         f"Decide the verdict:\n"
         f"  'confirms'    — fundamentals move the SAME way as the news shift\n"
         f"  'contradicts' — fundamentals move OPPOSITE (e.g. negative news shift but accelerating "
@@ -913,6 +926,13 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         fewshot_desc = (f"PAST GRADED ANALOGS (closest past shifts and their realized "
                         f"4-week returns — weigh as base-rate evidence):\n{cases}\n")
 
+    # Consensus stage B: one posture line (set by fundamentals_analysis when
+    # LT_CONSENSUS_IN_VERDICT is on; the key is simply absent when off, so the
+    # prompt stays byte-identical for the LLM cache).
+    consensus_desc = ""
+    if getattr(config, "CONSENSUS_IN_VERDICT", False):
+        consensus_desc = consensus_posture_line(state.get("street_consensus") or {})
+
     # Phase 7A: fold the deep-analysis enrichment in as ADVISORY context (it never overrides
     # the matrix or the deterministic shift — see DEEP_ANALYSIS_PLAN.md §1).
     enriched = state.get("enriched_analysis") or {}
@@ -937,6 +957,7 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"expectation_gap={fund.get('expectation_gap')}\n"
         f"  long-term technicals: trend={tech.get('trend')}, window return={tech.get('return_window_pct')}%\n"
         f"ANALOG BASE RATE: {analog_desc}\n"
+        f"{consensus_desc}"
         f"{fewshot_desc}"
         f"{enriched_desc}\n"
         f"{SYNTHESIS_MATRIX_RULES}"

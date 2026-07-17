@@ -435,11 +435,82 @@ def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date) -> Di
 
 def read_consensus(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     """AS-OF street consensus + realized surprise history (yfinance + FMP snapshots).
-    ADVISORY: feeds the deep-analysis tool, not the fundamentals verdict prompt (adding
-    it there is a prompt change → needs its own A/B per the release discipline)."""
+    Feeds the deep-analysis tool always; feeds the fundamentals verdict prompt too when
+    LT_CONSENSUS_IN_VERDICT is on (stage B — its own A/B per the release discipline)."""
     est = _yf_latest(db_manager, ticker, as_of, "analyst_estimates")
     fmp = _fmp_latest(db_manager, ticker, as_of)
     return format_consensus(est, fmp, as_of.date())
+
+
+def consensus_prompt_block(cons: Dict[str, Any]) -> str:
+    """Pure: read_consensus output → compact prompt block for the fundamentals verdict.
+    Deterministic rendering (the prompt is an LLM-cache key). Empty dict → ''."""
+    if not cons:
+        return ""
+    lines = []
+    fwd = cons.get("street_forward") or {}
+    if fwd:
+        parts = []
+        for key in ("eps_0q", "eps_+1q", "revenue_0q", "revenue_+1q"):
+            d = fwd.get(key)
+            if d:
+                seg = f"{key} avg={d.get('avg')}"
+                if d.get("numberOfAnalysts"):
+                    seg += f" (n={d['numberOfAnalysts']})"
+                parts.append(seg)
+        if parts:
+            lines.append("  forward estimates: " + "; ".join(parts))
+    trend = cons.get("eps_trend_0q") or {}
+    if trend:
+        lines.append(f"  eps estimate trend (0q): now={trend.get('current')}, "
+                     f"30d ago={trend.get('30daysAgo')}, 90d ago={trend.get('90daysAgo')}")
+    surp = cons.get("recent_surprises") or []
+    if surp:
+        segs = []
+        for s in surp:
+            e, r = s.get("eps_surprise_pct"), s.get("revenue_surprise_pct")
+            seg = f"{s.get('date')}: EPS {'n/a' if e is None else f'{e:+}%'}"
+            if r is not None:
+                seg += f" / rev {r:+}%"
+            segs.append(seg)
+        lines.append("  realized surprises (newest first): " + "; ".join(segs))
+    nxt = cons.get("next_report") or {}
+    if nxt:
+        lines.append(f"  next report: {nxt.get('date')} (street: EPS {nxt.get('eps_estimated')}, "
+                     f"revenue {nxt.get('revenue_estimated')})")
+    if not lines:
+        lines.append(f"  {cons.get('note', 'no consensus data as-of')}")
+    return (
+        "STREET CONSENSUS & SURPRISE HISTORY (direction is set by the delta vs "
+        "expectations, not absolute quality — 'good' results the street already expected "
+        "are priced in):\n" + "\n".join(lines) + "\n"
+    )
+
+
+def consensus_posture_line(cons: Dict[str, Any]) -> str:
+    """Pure: one-line consensus posture for the synthesis prompt. '' when nothing usable."""
+    if not cons or not cons.get("available"):
+        return ""
+    parts = []
+    trend = cons.get("eps_trend_0q") or {}
+    cur, d90 = trend.get("current"), trend.get("90daysAgo")
+    if cur is not None and d90 not in (None, 0):
+        chg = (cur - d90) / abs(d90) * 100
+        direction = "rising" if chg > 1 else ("falling" if chg < -1 else "flat")
+        parts.append(f"0q EPS estimates {direction} ({chg:+.1f}% over 90d)")
+    surp = [s.get("eps_surprise_pct") for s in (cons.get("recent_surprises") or [])
+            if s.get("eps_surprise_pct") is not None]
+    if surp:
+        beats = sum(1 for s in surp if s > 0)
+        parts.append(f"beat street {beats}/{len(surp)} of recent quarters "
+                     f"(EPS surprises: {', '.join(f'{s:+}%' for s in surp)})")
+    nxt = (cons.get("next_report") or {}).get("date")
+    if nxt:
+        parts.append(f"next report {nxt}")
+    if not parts:
+        return ""
+    return ("STREET CONSENSUS (advisory — weigh what is already priced in): "
+            + "; ".join(parts) + ".\n")
 
 
 def read_fundamentals(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
