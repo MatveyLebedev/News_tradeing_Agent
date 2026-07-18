@@ -53,10 +53,39 @@ that chronic-miss history NEVER initiates counter-trend direction, only adjusts
 conviction — re-run when forward snapshots cover live cohorts (~2026-08+), where the
 un-degraded block (forward estimates + trend) is what actually ships.
 
+## Anti-overfit protocol (adopted 2026-07-18)
+
+The research loop "see a failure → design a fix → test on the same data" is data
+snooping by construction. These rules bound it:
+
+1. **Burned-grid rule.** A feature designed by looking at the results of window X can
+   only be REJECTED by a re-run on X (do-no-harm filter) — never ACCEPTED. Acceptance
+   requires cohorts that did not exist when the feature was formulated (the grid grows
+   one cohort per week, so the OOS window builds itself).
+2. **Attempt counter.** Every sweep on a window burns a comparison. The standard
+   2026-04-24→06-19 grid has now hosted **13 ids** (#3–#13) — any "best of 13" on it
+   must be read with that denominator in mind. New windows reset the counter.
+3. **Hindsight guard.** A fix must be formulated as a general mechanism (structural
+   prior), not as the observed instance; it gets ONE formulation (n=1 failure → one
+   broad rule, no iterating variants against the same window), and it is written into
+   this ledger BEFORE its backtest runs (pre-registration).
+4. **Standing rules** (already in force, restated): flags default OFF and prompts stay
+   byte-identical when off; acceptance needs positive decision-level evidence, "not
+   worse" keeps the incumbent; binary architecture decisions over numeric knob fits;
+   final arbiter is the forward book, retro is only a filter.
+
 ## Queued / future
 
-- **Consensus stage B.2** — see #12 detail above: guarded prompt + forward-covered
-  window (~2026-08+).
+- **Consensus stage B.2 — PRE-REGISTERED 2026-07-18, retro run = do-no-harm only.**
+  Formulation (frozen before the run): the #12 block + one guard sentence — surprise
+  history modulates conviction only, never initiates direction (especially counter-trend
+  after a large recent move). Hypothesis: keeps the UBER-class flips (verdict-grounded),
+  drops the INTC-class initiations (history-only). Retro id `wf_30x_f12_cons2` on the
+  burned grid can only REJECT (rule 1). ACCEPTANCE criteria, fixed now: on cohorts
+  dated after 2026-07-17 (August re-run with forward-covered snapshots), decision-level
+  delta vs f12 ≥ 0 AND no new counter-trend initiation losses > stop distance AND 2w
+  book not degraded. One formulation only (rule 3) — if it fails, the feature is
+  parked, not iterated.
 - **`LT_FEWSHOT` A/B** — graded-analog few-shot in synthesis; wait for a thicker graded
   analog base.
 - **v3 re-examination ~2026-08-06** — not a new sweep: `grade_shifts` + report once the
