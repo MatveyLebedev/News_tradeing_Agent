@@ -39,8 +39,8 @@ def test_prompt_block_full():
     assert "2026-04-30: EPS +3.6% / rev +2.5%" in blk
     assert "2025-10-29: EPS -1.2%" in blk          # None revenue → no rev segment
     assert "next report: 2026-07-30" in blk
-    # Stage B.2 guard rides in EVERY rendered block (the #12 INTC failure class)
-    assert "GUARD: surprise history modulates conviction ONLY" in blk
+    # Stage B.2 guard sentence is GONE (ledger #13 rejected it) — block = #12 formulation
+    assert "GUARD" not in blk
     assert blk.endswith("\n")
 
 

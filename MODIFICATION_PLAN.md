@@ -965,9 +965,14 @@ A/B verdict: stays OFF live.**
 - `wf_30x_f12_cons` (ledger #12): 4w +0.11%/0.45 vs baseline +0.53%/0.91 → flag stays
   false. Nuance worth keeping: UBER direction-flips were right (+36.6pp), 4w conviction
   calibration turned MONOTONIC for the first time; the loss is ONE re-created
-  counter-trend INTC short (−40.8%). Stage B.2 queued: guard instruction
-  (chronic-miss history never initiates counter-trend direction) + re-run ~2026-08+
-  when forward snapshots cover live cohorts.
+  counter-trend INTC short (−40.8%).
+- Stage B.2 (guard sentence) tried and REJECTED same day (ledger #13, `wf_30x_f12_cons2`):
+  the guard referenced price action the prompt doesn't carry (INTC short traded anyway)
+  and one added sentence reshuffled 9 unrelated decisions (prompt-noise floor ≈ ±1pp
+  mean excess — recorded in the ledger's anti-overfit protocol). Guard text reverted;
+  code = stage-B formulation, eligible for the post-07-17 forward-covered re-exam.
+  The INTC failure class, if pursued, needs a DETERMINISTIC risk-gate check on
+  short-window realized moves (new feature, own pre-registration) — not a prompt fix.
 
 Acceptance: `macro_series` populated daily with backfill from FRED/yfinance history;
 every new signal carries `regime_context`; forward report gains regime-split tables.

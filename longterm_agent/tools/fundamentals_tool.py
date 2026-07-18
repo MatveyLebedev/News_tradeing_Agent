@@ -551,13 +551,10 @@ def consensus_prompt_block(cons: Dict[str, Any]) -> str:
                      f"revenue {nxt.get('revenue_estimated')})")
     if not lines:
         lines.append(f"  {cons.get('note', 'no consensus data as-of')}")
-    # Stage B.2 guard (ledger #12 post-mortem): the #12 book lost to ONE trade where
-    # chronic-miss history alone initiated a short into a +24% catalyst rebound.
-    lines.append(
-        "  GUARD: surprise history modulates conviction ONLY. Never let beat/miss "
-        "history alone initiate a direction — especially not AGAINST a large recent "
-        "price move or the prevailing trend. Direction must be grounded in the news "
-        "shift and current fundamentals; this block can strengthen or weaken it.")
+    # Stage B.2 guard sentence REMOVED (ledger #13): rejected by its own do-no-harm
+    # filter — it referenced price action the prompt doesn't carry (the targeted INTC
+    # short traded anyway) and reshuffled 9 unrelated decisions as noise. The block
+    # below is the stage-B (#12) formulation, still eligible for the August re-exam.
     return (
         "STREET CONSENSUS & SURPRISE HISTORY (direction is set by the delta vs "
         "expectations, not absolute quality — 'good' results the street already expected "
@@ -587,8 +584,7 @@ def consensus_posture_line(cons: Dict[str, Any]) -> str:
         parts.append(f"next report {nxt}")
     if not parts:
         return ""
-    return ("STREET CONSENSUS (advisory — weigh what is already priced in; modulates "
-            "conviction only, never a direction trigger by itself): "
+    return ("STREET CONSENSUS (advisory — weigh what is already priced in): "
             + "; ".join(parts) + ".\n")
 
 

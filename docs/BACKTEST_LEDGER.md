@@ -26,6 +26,7 @@ run. Detailed write-ups live in the linked docs; raw rows in the DB. Conventions
 | 10 | 2026-07-15 | `wf_30x_f12_v3` | `82f1ff8` | 30×9 | detection v3 (sector-relative) | 59% / +0.55% / 0.95; 2w degrades | ⏸ no cutover; re-exam ~2026-08-06 · §3 |
 | 11 | 2026-07-15 | `wf_30x_f12_deepv2` | `9f8d601` | 30×9 | deep v2 (planner+parallel+citations) | 58% / **−0.91%** / 0.39; 2w −0.96%/−0.04 | ❌ **REJECTED** — loses to BOTH #8 and #9; `LT_DEEP_V2` stays false, deep v1 remains live |
 | 12 | 2026-07-17 | `wf_30x_f12_cons` | `59f100d` | 30×9 | consensus-in-verdict (retro = surprise-history-only block) | 59% / +0.11% / 0.45; 2w −0.19%/0.34; **4w calibration turns MONOTONIC** (top bucket 79% win, +4.33%) | ❌ flag stays false for now — decision delta −19.6pp, dominated by ONE re-introduced counter-trend INTC short (−40.8%); UBER flips were RIGHT (+36.6pp). See below. |
+| 13 | 2026-07-18 | `wf_30x_f12_cons2` | `8b58451` | 30×9 (do-no-harm) | #12 + B.2 guard sentence | 51% / **−0.99%** / 0.30; 2w −1.04%/0.11; decision delta vs f12 **−68.2pp** | ❌ **REJECTED by its own filter — B.2 PARKED** (rule 3: one formulation). Guard did NOT remove the INTC short it targeted, and reshuffled 9 unrelated decisions as noise. See below. |
 
 ## #12 consensus-in-verdict — detail (2026-07-17)
 
@@ -74,18 +75,31 @@ snooping by construction. These rules bound it:
    worse" keeps the incumbent; binary architecture decisions over numeric knob fits;
    final arbiter is the forward book, retro is only a filter.
 
-## Queued / future
+## #13 stage B.2 — post-mortem (2026-07-18): REJECTED, feature parked
 
-- **Consensus stage B.2 — PRE-REGISTERED 2026-07-18, retro run = do-no-harm only.**
-  Formulation (frozen before the run): the #12 block + one guard sentence — surprise
-  history modulates conviction only, never initiates direction (especially counter-trend
-  after a large recent move). Hypothesis: keeps the UBER-class flips (verdict-grounded),
-  drops the INTC-class initiations (history-only). Retro id `wf_30x_f12_cons2` on the
-  burned grid can only REJECT (rule 1). ACCEPTANCE criteria, fixed now: on cohorts
-  dated after 2026-07-17 (August re-run with forward-covered snapshots), decision-level
-  delta vs f12 ≥ 0 AND no new counter-trend initiation losses > stop distance AND 2w
-  book not degraded. One formulation only (rule 3) — if it fails, the feature is
-  parked, not iterated.
+Pre-registered above; the retro do-no-harm filter rejected it same day. Two findings
+worth more than the feature:
+
+1. **The guard could not work: it references information the model does not have.**
+   "Never initiate against a large recent price move" — but the fundamentals prompt
+   carries 180d trend technicals only; the +24% catalyst day is invisible in that
+   context. INTC 04-24 SHORT (−40.8%) traded ANYWAY — the targeted failure survived
+   verbatim. A real fix for that class is a DETERMINISTIC risk-gate check on realized
+   short-window price action (code, not prompt) — if ever pursued, that is a NEW
+   feature with its own pre-registration, not a B.2 iteration.
+2. **Prompt-noise floor measured.** One added sentence, everything else identical:
+   9 of ~48 decisions reshuffled (dropped LLY +19.3 / AAPL +6.4 / MSFT +5.9, added
+   mostly losers, flipped JPM) — net −48.6pp swing vs #12 from pure decision
+   instability. Consequence for ALL future prompt-level A/Bs on this grid: deltas
+   smaller than roughly ±1pp mean excess are UNRESOLVABLE against LLM decision
+   variance; only mechanism-level evidence (does the targeted trade class change as
+   predicted?) is admissible, headline deltas alone are not.
+
+Consensus-in-verdict status after #12+#13: `LT_CONSENSUS_IN_VERDICT` stays false;
+stage B (unguarded block) may still be re-examined on post-07-17 forward-covered
+cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
+
+## Queued / future
 - **`LT_FEWSHOT` A/B** — graded-analog few-shot in synthesis; wait for a thicker graded
   analog base.
 - **v3 re-examination ~2026-08-06** — not a new sweep: `grade_shifts` + report once the
