@@ -197,6 +197,8 @@ class LongTermAgentConfig:
     LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
     LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "longterm-trading-agent")
+    # Scheduler tracing (auto_longterm_agent): LT_TRACE=false to opt out; no-op without API key.
+    TRACE = os.getenv("LT_TRACE", "true").lower() == "true"
 
     # --- Ops / Phase 6 (weekly scheduler, Telegram alerts, stats bot) ---
     # Weekly batch cadence (ET). Run after the weekly fundamentals fetch so data is fresh.

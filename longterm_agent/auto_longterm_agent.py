@@ -35,6 +35,9 @@ class Ops:
 
     def __init__(self):
         self.cfg = LongTermAgentConfig()
+        if self.cfg.TRACE:
+            # Before make_llm so callbacks attach to every call (see run_longterm_agent).
+            self.cfg.enable_tracing()
         self.notifier = TelegramNotifier()
         self.db = DBManager(db_config=self.cfg.get_db_config(), min_conn=1, max_conn=5)
         self.neo = None
