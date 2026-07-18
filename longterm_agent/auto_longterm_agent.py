@@ -62,6 +62,12 @@ class Ops:
             print(f"❌ weekly batch failed: {detail}")
         # Grade whatever matured this week right after producing new signals.
         self.daily_grade()
+        # Weekly trades digest (new / open / closed) — same text as the bot's /week.
+        try:
+            from longterm_agent.stats import weekly_report, format_weekly_report
+            self.notifier.send("📆 " + format_weekly_report(weekly_report()))
+        except Exception as e:
+            print(f"  ⚠ weekly digest failed: {e}")
 
     def daily_grade(self):
         print(f"\n--- GRADING @ {datetime.now(ET):%Y-%m-%d %H:%M} ET ---")

@@ -13,6 +13,7 @@ Vocabulary:
   * win    = strategy *excess* return vs SPY > 0 (LONG: stock−SPY; SHORT: SPY−stock).
 """
 import statistics
+from datetime import date
 from typing import List, Dict, Any
 
 import psycopg2
@@ -184,6 +185,108 @@ def ticker_status(ticker: str) -> Dict[str, Any]:
     return {"ticker": ticker.upper(), "as_of": as_of, "verdict": verdict, "traded": traded,
             "conviction": conv, "fwd_return_4w": f4, "benchmark_return_4w": b4,
             "thesis": (signal or {}).get("thesis") if isinstance(signal, dict) else None}
+
+
+def weekly_report(days: int = 7) -> Dict[str, Any]:
+    """Everything that happened to TRADES in the last `days`: opened, still open, closed.
+
+    Three sections (a trade appears in exactly one):
+      * new    — passed the gate with as_of inside the window (this week's batch);
+      * open   — older trades whose 4w outcome hasn't matured, with the CURRENT
+                 position return (last close vs entry close, direction-signed);
+      * closed — graded inside the window: realized 4w excess + how the stopped
+                 book exited (stop day N / horizon).
+    """
+    conn = _conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT ticker, as_of, verdict, conviction
+            FROM longterm_agent_results
+            WHERE agent_version=%s AND traded AND as_of >= CURRENT_DATE - %s
+            ORDER BY as_of DESC, ticker
+        """, [_version(), days])
+        new = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c}
+               for t, a, v, c in cur.fetchall()]
+
+        cur.execute("""
+            SELECT ticker, as_of, verdict, conviction
+            FROM longterm_agent_results
+            WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+              AND as_of < CURRENT_DATE - %s
+            ORDER BY as_of, ticker
+        """, [_version(), days])
+        open_rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c}
+                     for t, a, v, c in cur.fetchall()]
+        for r in open_rows:
+            cur.execute("""
+                SELECT (SELECT close FROM stock_prices_daily
+                        WHERE ticker=%(t)s AND date <= %(d)s ORDER BY date DESC LIMIT 1),
+                       (SELECT close FROM stock_prices_daily
+                        WHERE ticker=%(t)s ORDER BY date DESC LIMIT 1)
+            """, {"t": r["ticker"], "d": r["as_of"]})
+            entry, last = cur.fetchone()
+            pos = None
+            if entry and last:
+                pos = float(last) / float(entry) - 1
+                if r["verdict"] == "SHORT":
+                    pos = -pos
+            r["position_return"] = pos
+            r["days_open"] = None if r["as_of"] is None else (date.today() - r["as_of"]).days
+
+        cur.execute("""
+            SELECT ticker, as_of, verdict, fwd_return_4w, benchmark_return_4w,
+                   fwd_return_stopped, benchmark_return_stopped, exit_reason, exit_days
+            FROM longterm_agent_results
+            WHERE agent_version=%s AND traded
+              AND outcome_filled_at >= CURRENT_DATE - %s
+            ORDER BY as_of, ticker
+        """, [_version(), days])
+        closed = []
+        for t, a, v, f4, b4, fs, bs, reason, edays in cur.fetchall():
+            closed.append({"ticker": t, "as_of": a, "verdict": v,
+                           "excess": trade_excess(v, f4, b4),
+                           "excess_stopped": trade_excess(v, fs, bs),
+                           "exit_reason": reason, "exit_days": edays})
+    conn.close()
+
+    graded = [c["excess"] for c in closed if c["excess"] is not None]
+    return {"days": days, "new": new, "open": open_rows, "closed": closed,
+            "closed_wins": sum(1 for e in graded if e > 0),
+            "closed_graded": len(graded),
+            "closed_mean_excess": statistics.fmean(graded) if graded else None}
+
+
+def format_weekly_report(rep: Dict[str, Any]) -> str:
+    """Plain-text rendering shared by the bot (/week) and the post-batch push."""
+    p = _fmt_pct
+    lines = [f"WEEK IN TRADES (last {rep['days']}d, v{_version()})"]
+    lines.append(f"\nNew trades ({len(rep['new'])}):")
+    if rep["new"]:
+        for r in rep["new"]:
+            conv = f"{r['conviction']:.0%}" if isinstance(r["conviction"], (int, float)) else "—"
+            lines.append(f"  {r['as_of']} {r['ticker']:6s} {r['verdict']:5s} conv {conv}")
+    else:
+        lines.append("  none")
+    lines.append(f"\nOpen positions ({len(rep['open'])}):")
+    if rep["open"]:
+        for r in rep["open"]:
+            lines.append(f"  {r['as_of']} {r['ticker']:6s} {r['verdict']:5s} "
+                         f"day {r['days_open']:>2}  pos {p(r['position_return'])}")
+    else:
+        lines.append("  none")
+    lines.append(f"\nClosed this week ({len(rep['closed'])}):")
+    if rep["closed"]:
+        for r in rep["closed"]:
+            exit_ = (f"stop d{r['exit_days']}" if r["exit_reason"] == "stop"
+                     else r["exit_reason"] or "—")
+            stopped = f", stopped {p(r['excess_stopped'])}" if r["exit_reason"] == "stop" else ""
+            lines.append(f"  {r['as_of']} {r['ticker']:6s} {r['verdict']:5s} "
+                         f"{p(r['excess'])} vs SPY ({exit_}{stopped})")
+        lines.append(f"  → wins {rep['closed_wins']}/{rep['closed_graded']}"
+                     f", mean excess {p(rep['closed_mean_excess'])}")
+    else:
+        lines.append("  none matured")
+    return "\n".join(lines)
 
 
 def _fmt_pct(x):

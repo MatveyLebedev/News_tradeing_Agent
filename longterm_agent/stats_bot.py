@@ -57,6 +57,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — overview\n"
         "/signals [N] — latest directional signals\n"
         "/trades — trade outcomes &amp; win rate\n"
+        "/week — all trades this week: new, open, closed\n"
         "/errors [N] — recent errors\n"
         "/ticker SYM — latest call for a ticker\n"
         "/freshness — data-source freshness (news/prices/SPY/fundamentals)",
@@ -140,6 +141,15 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rep = await asyncio.to_thread(stats.weekly_report)
+    txt = stats.format_weekly_report(rep)
+    await update.message.reply_text(
+        f"📆 <b>Trades — last {rep['days']} days</b>\n<pre>{escape(txt)}</pre>",
+        parse_mode="HTML")
+
+
+@authorized
 async def cmd_errors(update: Update, context: ContextTypes.DEFAULT_TYPE):
     n = 10
     if context.args and context.args[0].isdigit():
@@ -185,6 +195,7 @@ async def _post_init(app: Application):
         BotCommand("stats", "Overview: signals, trades, errors"),
         BotCommand("signals", "Latest directional signals"),
         BotCommand("trades", "Trade outcomes & win rate"),
+        BotCommand("week", "All trades this week: new, open, closed"),
         BotCommand("errors", "Recent errors"),
         BotCommand("ticker", "Latest call for a ticker"),
     ])
@@ -200,6 +211,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("signals", cmd_signals))
     app.add_handler(CommandHandler("trades", cmd_trades))
+    app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("errors", cmd_errors))
     app.add_handler(CommandHandler("ticker", cmd_ticker))
     app.add_handler(CommandHandler("freshness", cmd_freshness))
