@@ -100,8 +100,49 @@ stage B (unguarded block) may still be re-examined on post-07-17 forward-covered
 cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ## Queued / future
+- **`wf_30x_strong` — strong-model split A/B (pre-registered 2026-07-18, NOT yet run).**
+  Mechanism: upgrade the model on exactly the three judgment-heavy advisory calls —
+  synthesis (`LongTermSignal`), fundamentals verdict (`FundamentalsTrend`), deep-analysis
+  reduce (`DeepAnalysisOutput`) — via the new `STRONG_LLM_MODEL` role (empty = off, wired
+  in `agent/graph.py`). Candidate: `anthropic/claude-sonnet-5` (pinned, non-preview).
+  Prompts stay byte-identical; detection labels untouched (map model unchanged); the three
+  upgraded calls get NEW LLM-cache keys, everything else replays. Motivation is structural,
+  not window-fitted: #4's anti-correlated conviction tails and the #8/#12 verdict error
+  class both live on these calls. Cost guard (2026-07-18 analysis, measured token volumes):
+  +106% per run, cap +200% — breached only if reasoning output ≥2× current volumes; cap
+  the thinking budget and record actual usage with the run.
+  Protocol: the standard grid hosts attempt #14 and can only REJECT (burned grid — this
+  window's failures informed the stage choice); acceptance needs post-2026-07-18 forward
+  cohorts. Per #13's noise floor, headline deltas within ±1pp are inadmissible — the
+  pre-registered mechanism-level predictions are: (a) 4w conviction calibration stays/
+  becomes monotone with the top bucket not the worst, (b) fewer high-conviction
+  counter-trend calls in the decision delta, (c) no degradation of the #9 deep-nudge
+  effect. ONE formulation: model choice and stage set are fixed here; no iterating
+  variants (a different model or stage set = a new pre-registration).
+### Pre-registered, awaiting their window (formulations frozen — see linked sections)
+
+- **Consensus stage B re-exam (~2026-08+)** — the UNGUARDED #12 block on post-07-17
+  forward-covered cohorts; acceptance criteria frozen in #12 detail. B.2 is dead (#13).
+- **v3 cutover re-examination (~2026-08-06)** — not a new sweep: `grade_shifts` + report
+  once the July semis-wave cohorts mature (the window v3 exists for). Criteria in
+  BACKTESTS_2026Q2_PH6_12_13.md §3.
+
+### Formulated, NOT yet pre-registered (each needs its own frozen entry here before any sweep)
+
+- **Catalyst-guard (deterministic risk-gate)** — veto/penalize a NEW direction initiated
+  against a >X% short-window realized move (the INTC −40.8 / QCOM −36.8 class; prompt
+  version failed — #13 finding 1). Code-level check on stock_prices_daily.
+- **H-confirm-veto** — directional signal with no `improving` sub-verdict AND no
+  confirm-language in the thesis is capped below the trade gate
+  (docs/REASONING_MARKERS_2026-07-18.md; QCOM class).
+- **H-dip-bar** — contrarian LONG (overreaction cell) requires growth/profitability
+  sub-verdict `improving`, else −0.1 conviction (same doc; the 21-trade dip-buying habit).
 - **`LT_FEWSHOT` A/B** — graded-analog few-shot in synthesis; wait for a thicker graded
-  analog base.
-- **v3 re-examination ~2026-08-06** — not a new sweep: `grade_shifts` + report once the
-  July semis-wave cohorts mature (the window v3 exists for).
-- **12w horizons** of ids #8-11 mature through ~2026-09-11 — re-run grade (idempotent).
+  analog base (~8-10 weeks of live grades).
+
+### Telemetry / maintenance (no behavior change, no registration needed)
+
+- **H-hedged-calibration** — log hedged-share / drama-share per live batch (also the
+  mechanism metric for `wf_30x_strong`).
+- **Stopped book in forward_report** — show hold + stopped side by side (reporting only).
+- **12w horizons** of ids #8-13 mature through ~2026-09-11 — re-run grade (idempotent).
