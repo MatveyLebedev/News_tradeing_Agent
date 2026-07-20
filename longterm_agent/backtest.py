@@ -62,7 +62,8 @@ def _ensure_table(cfg):
                        ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12),
                        ADD COLUMN IF NOT EXISTS fwd_return_t2 REAL,
                        ADD COLUMN IF NOT EXISTS benchmark_return_t2 REAL,
-                       ADD COLUMN IF NOT EXISTS excess_t2 REAL""")
+                       ADD COLUMN IF NOT EXISTS excess_t2 REAL,
+                       ADD COLUMN IF NOT EXISTS gate_trace JSONB""")
     conn.commit()
     conn.close()
 
@@ -203,16 +204,18 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
             cur.execute("""
                 INSERT INTO backtest_runs
                     (backtest_id, provenance, agent_version, ticker, as_of, horizon_days,
-                     direction, conviction, traded, shift_flag, shift_score, signal)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     direction, conviction, traded, shift_flag, shift_score, signal, gate_trace)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (backtest_id, ticker, as_of, horizon_days) DO UPDATE SET
                     provenance=EXCLUDED.provenance, agent_version=EXCLUDED.agent_version,
                     direction=EXCLUDED.direction, conviction=EXCLUDED.conviction,
                     traded=EXCLUDED.traded, shift_flag=EXCLUDED.shift_flag,
-                    shift_score=EXCLUDED.shift_score, signal=EXCLUDED.signal
+                    shift_score=EXCLUDED.shift_score, signal=EXCLUDED.signal,
+                    gate_trace=EXCLUDED.gate_trace
             """, [backtest_id, Json(prov), cfg.AGENT_VERSION, ticker.upper(), as_of.date(), h,
                   direction, sig.get("conviction"), traded, bool(shift.get("has_shifted")),
-                  shift.get("shift_score"), Json(filtered or sig or {})])
+                  shift.get("shift_score"), Json(filtered or sig or {}),
+                  Json(final.get("gate_trace") or {})])
     conn.commit()
     conn.close()
     print(f"  ran {as_of.date()} {ticker}: {direction} conv={sig.get('conviction')} traded={traded}")

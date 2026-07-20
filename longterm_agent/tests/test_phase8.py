@@ -49,7 +49,9 @@ def test_risk_gate_delta_keys(monkeypatch):
              "fundamentals": {"has_statements": False}, "article_count": 100}
 
     out = nodes.risk_gate_node(state, None, cfg)
-    assert set(out) == {"risk_flags", "risk_checks", "signal", "filtered_signal", "messages"}
+    # gate_trace added by P2a (docs/AB_PLAN_selection_stage.md) — reporting only
+    assert set(out) == {"risk_flags", "risk_checks", "gate_trace", "signal",
+                        "filtered_signal", "messages"}
     assert "regime_context" in out["risk_checks"]
     assert state.get("risk_flags") is None        # input not mutated
 

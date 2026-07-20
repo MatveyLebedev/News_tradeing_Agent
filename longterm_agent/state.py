@@ -57,6 +57,9 @@ class LongTermAgentState(TypedDict, total=False):
     loop_to: str
     risk_flags: List[str]
     risk_checks: Dict[str, Any]
+    # P2a: the risk gate's arithmetic (raw/final conviction, vetoes, per-penalty amounts,
+    # table-gate inputs) so gate hypotheses replay offline — docs/AB_PLAN_selection_stage.md
+    gate_trace: Dict[str, Any]
     filtered_signal: Optional[Dict[str, Any]]
 
     # --- meta ---

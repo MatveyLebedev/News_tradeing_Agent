@@ -65,7 +65,17 @@ build the thing that produces it.
   contains more than one provenance stamp — that means knobs changed mid-sweep, so the result is
   not out-of-sample. Changed the config? Use a fresh `--backtest-id` and compare across ids.
 - **Reproducibility (B0).** Run with `LT_LLM_CACHE=true LT_MAX_REFLECTION=0` so the sweep is
-  byte-reproducible and a re-run/A-B is cheap.
+  byte-reproducible and a re-run/A-B is cheap. **Caveat measured 2026-07-20 — this holds
+  WITHIN a run, not ACROSS days, when deep analysis is on.** Re-running one cached cohort a
+  day later (same code, same `as_of`) produced 10 cache misses and moved conviction
+  0.82 → 0.78. The news corpus was byte-identical, so the drift enters through a non-news
+  decision input — the Neo4j graph, which daily maintenance mutates underneath historical
+  cohorts, is the leading candidate, and the deep ReAct loop turns one differing tool output
+  into a different chain. Not lookahead; a reproducibility defect. Practical rule: **never
+  build an A/B on "re-run the pipeline with a flag flipped" when deep is on** — the flag's
+  effect and the drift are then confounded. Prefer deriving both arms from ONE run (possible
+  whenever the change is post-synthesis and deterministic, e.g. anything in the risk gate —
+  see `gate_trace` and docs/AB_PLAN_selection_stage.md).
 
 ## 3. Multiple-testing awareness
 

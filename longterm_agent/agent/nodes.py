@@ -1046,19 +1046,32 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     shift = state.get("background_shift", {})
     flags = []
 
+    # P2a (2026-07-20) — gate_trace: record the gate's ARITHMETIC, not just its result.
+    # `conviction` is one scalar doing three jobs (eligibility caps, risk penalties, model
+    # belief) before a single threshold comparison, so from a stored row you cannot tell WHY
+    # a signal was rejected — which made every gate hypothesis need a fresh sweep. With the
+    # trace, gate A/Bs replay offline for free. Reporting only: no behaviour change.
+    # See docs/AB_PLAN_selection_stage.md.
+    trace: Dict[str, Any] = {"vetoes": [], "penalties": {}, "deep_nudge": 0.0}
+
     # Phase 7 — what the threshold gates on. "llm": the model's self-reported conviction
     # (current behavior; wf_30x showed it is anti-correlated with outcomes on the tails).
     # "table": deterministic base from evidence (shift_score × fundamentals verdict) plus
     # the advisory deep-analysis nudge; the LLM number is recorded but stops gating.
     raw_conviction = sig.get("conviction", 0.0)
     gate_mode = getattr(config, "CONVICTION_GATE", "llm")
+    fund_verdict = (state.get("fundamentals", {}).get("trend") or {}).get("verdict")
+    deep_nudge = float((state.get("enriched_analysis") or {}).get("conviction_adjustment") or 0.0)
+    # table_inputs are stamped in BOTH modes on purpose: they are what a `gate=table` replay
+    # needs, and they are unrecoverable from a stored row otherwise.
+    trace["table_inputs"] = {"shift_score": shift.get("shift_score"), "verdict": fund_verdict}
+    trace["deep_nudge"] = deep_nudge
     if gate_mode == "table":
-        verdict = (state.get("fundamentals", {}).get("trend") or {}).get("verdict")
-        base = _table_conviction(config.CONVICTION_TABLE, shift.get("shift_score"), verdict)
-        nudge = float((state.get("enriched_analysis") or {}).get("conviction_adjustment") or 0.0)
-        sig["conviction"] = round(min(1.0, max(0.0, base + nudge)), 2)
-        print(f"  gate=table: base={base} (score={shift.get('shift_score')}, verdict={verdict}) "
-              f"nudge={nudge:+.2f} | llm raw={raw_conviction}")
+        base = _table_conviction(config.CONVICTION_TABLE, shift.get("shift_score"), fund_verdict)
+        sig["conviction"] = round(min(1.0, max(0.0, base + deep_nudge)), 2)
+        trace["table_base"] = base
+        print(f"  gate=table: base={base} (score={shift.get('shift_score')}, verdict={fund_verdict}) "
+              f"nudge={deep_nudge:+.2f} | llm raw={raw_conviction}")
 
     priced = priced_in_check(db_manager, state["ticker"], state["as_of"],
                              state.get("shift_window_days", config.SHIFT_WINDOW_DAYS))
@@ -1080,6 +1093,7 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
         if capped < sig.get("conviction", 0.0):
             flags.append("no usable income fundamentals (news-only) — conviction capped below threshold")
+        trace["vetoes"].append("no_usable_fundamentals")
         sig["conviction"] = round(max(0.0, capped), 2)
 
     # STALE-DATA GATE (Phase 2): entry points stamp `data_freshness` for live runs only
@@ -1091,6 +1105,7 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
         if capped < sig.get("conviction", 0.0):
             flags.append(f"stale data sources {fresh.get('stale')} — conviction capped below threshold")
+        trace["vetoes"].append("stale_data")
         sig["conviction"] = round(max(0.0, capped), 2)
 
     # NO-SHIFT GATE: this agent trades background SHIFTS. With no detected shift the matrix has
@@ -1101,6 +1116,7 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
         if capped < sig.get("conviction", 0.0):
             flags.append("no background shift — conviction capped below threshold (not actionable)")
+        trace["vetoes"].append("no_shift")
         sig["conviction"] = round(max(0.0, capped), 2)
 
     # priced-in: if the stock already moved hard in the signal's direction, cut conviction
@@ -1109,10 +1125,15 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
         same_way = (direction == "LONG" and mv > 0) or (direction == "SHORT" and mv < 0)
         if same_way and abs(mv) >= config.PRICED_IN_MOVE_PCT:
             flags.append(f"priced-in: {mv:+.1f}% already moved {direction} over the window")
+            trace["penalties"]["priced_in"] = -config.PRICED_IN_PENALTY
             sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - config.PRICED_IN_PENALTY), 2)
+        # the adverse-momentum mirror (`adv_mom`, pre-registered) would live here; its
+        # input is recorded now so its stage-1 replay is exact rather than reconstructed
+        trace["window_move_pct"] = mv
 
     if earn.get("flag"):
         flags.append(f"earnings within {config.EARNINGS_RISK_DAYS}d ({earn['upcoming']}) — binary-event risk")
+        trace["penalties"]["earnings"] = -config.EARNINGS_PENALTY
         sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - config.EARNINGS_PENALTY), 2)
 
     # COUNTER-TREND GUARD (Phase 7): a signal fighting a strong trailing trend (SHORT into
@@ -1127,7 +1148,9 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
                    or (direction == "LONG" and ret <= -config.COUNTER_TREND_PCT))
         if against:
             flags.append(f"counter-trend: {direction} against a {ret:+.1f}% trailing move")
+            trace["penalties"]["counter_trend"] = -ct_penalty
             sig["conviction"] = round(max(0.0, sig.get("conviction", 0.0) - ct_penalty), 2)
+    trace["trailing_return_pct"] = ret
 
     if state.get("article_count", 0) < config.MIN_ARTICLES_FOR_BACKGROUND * 2:
         flags.append(f"thin coverage ({state.get('article_count')} articles)")
@@ -1139,9 +1162,18 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     sig["conviction_gate"] = sig.get("conviction", 0.0)
     sig["gate"] = gate_mode
     passed = sig.get("conviction", 0.0) >= config.LONGTERM_CONFIDENCE_THRESHOLD and direction in ("LONG", "SHORT")
+    trace.update({
+        "conviction_raw": round(raw_conviction, 2),
+        "conviction_final": sig.get("conviction", 0.0),
+        "gate_mode": gate_mode,
+        "threshold": config.LONGTERM_CONFIDENCE_THRESHOLD,
+        "direction": direction,
+        "passed": passed,
+    })
     delta: Dict[str, Any] = {
         "risk_flags": flags,
         "risk_checks": {"priced_in": priced, "earnings": earn, "regime_context": regime},
+        "gate_trace": trace,
         "signal": sig,
         "filtered_signal": sig if passed else None,
     }

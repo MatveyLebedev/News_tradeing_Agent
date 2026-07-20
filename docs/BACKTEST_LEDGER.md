@@ -27,6 +27,8 @@ run. Detailed write-ups live in the linked docs; raw rows in the DB. Conventions
 | 11 | 2026-07-15 | `wf_30x_f12_deepv2` | `9f8d601` | 30×9 | deep v2 (planner+parallel+citations) | 58% / **−0.91%** / 0.39; 2w −0.96%/−0.04 | ❌ **REJECTED** — loses to BOTH #8 and #9; `LT_DEEP_V2` stays false, deep v1 remains live |
 | 12 | 2026-07-17 | `wf_30x_f12_cons` | `59f100d` | 30×9 | consensus-in-verdict (retro = surprise-history-only block) | 59% / +0.11% / 0.45; 2w −0.19%/0.34; **4w calibration turns MONOTONIC** (top bucket 79% win, +4.33%) | ❌ flag stays false for now — decision delta −19.6pp, dominated by ONE re-introduced counter-trend INTC short (−40.8%); UBER flips were RIGHT (+36.6pp). See below. |
 | 13 | 2026-07-18 | `wf_30x_f12_cons2` | `8b58451` | 30×9 (do-no-harm) | #12 + B.2 guard sentence | 51% / **−0.99%** / 0.30; 2w −1.04%/0.11; decision delta vs f12 **−68.2pp** | ❌ **REJECTED by its own filter — B.2 PARKED** (rule 3: one formulation). Guard did NOT remove the INTC short it targeted, and reshuffled 9 unrelated decisions as noise. See below. |
+| 14 | 2026-07-19 | `monday_t1` | `7dde443` | 30×12 Mon 06:30 | deploy regime, `open_d0`, deep ON | 52% / +0.89% (n=31) | ⛔ **VOID** — launched pre-PIT-audit with F1–F5 open; harness check only. See below. |
+| 15 | 2026-07-20 | `monday_t1_pit` | `b379757` | 30×12 Mon 06:30 | #14 re-run on leak-free code (pipeline 0.9.0) | 47% / **+0.18%** (n=30, **3 cohorts**); block CI [−9.61%, +1.64%]; 2w −0.82% (n=40) | ⚖️ **INCONCLUSIVE** — regime not validated, not rejected. The leak was worth ~+0.7pp (4w) / ~+1.4pp (2w). See below. |
 
 ## #12 consensus-in-verdict — detail (2026-07-17)
 
@@ -140,9 +142,109 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   No variant iteration on this window; a different day/time/config = new registration.
   Deploy note: adopting the regime live also means switching the live graders to
   `open_d0` and moving the scheduler — a separate ops change after the verdict.
+  **Run 1 (`monday_t1`, 2026-07-19, `7dde443`/pipeline 0.8.0) — VOID as a verdict:**
+  it launched hours before the PIT audit, so F1–F4 (deep tools) and F5 (post-entry
+  document leak, sharpest exactly under `open_d0`) were open. Harness verdict only:
+  360/360 runs, 0 errors, 43 traded; `open_d0` fills verified landing on the as_of
+  Monday itself with the Memorial-Day cohort correctly falling through to Tuesday.
+  Contaminated numbers, recorded so they are not silently re-derived later: 4w n=31
+  win 52% mean excess +0.89% (per-trade CI [−2.84,+4.55]); 2w n=38 win 58% +0.61%;
+  calibration non-monotonic at both horizons; 0 tickers survive BH FDR. Paired day-1
+  value (criterion b): 4w mean Δ **+0.30pp** (90% CI [−0.84,+1.48], p(>0)=0.36, day-1
+  helped 17/31), 2w mean Δ **−0.69pp** — i.e. the pre-registered ≥+0.5pp bar was NOT
+  met, which under the frozen rule points to Monday-post-close→Tuesday-open. Directional
+  only: the trade SET is contaminated, so the paired estimate is computed on trades a
+  leak-free agent might not have taken. **Run 2 (`monday_t1_pit`, launched 2026-07-20,
+  `b379757`/pipeline 0.9.0)** re-runs the identical grid and the identical frozen
+  criteria on fixed code; it, not run 1, decides the regime and the day.
+  **Run 2 verdict (2026-07-20): INCONCLUSIVE — no cutover, no rejection.**
+  360/360 runs, 0 errors, 41 traded (11% of signals), no STALE-UNGRADED rows.
+  - *(a) primary — NOT MET, inconclusive.* 4w traded mean excess **+0.18%** (n=30),
+    inside the ±1pp band; the honest cohort-block CI is **[−9.61%, +1.64%] over just
+    3 cohorts**. 2w: **−0.82%** (n=40, 5 cohorts, block CI [−3.60%, +0.32%]).
+    0 tickers survive BH FDR at either horizon; calibration non-monotonic at both,
+    with the TOP conviction bucket again the worst at 4w (0.75–0.85 → −3.48%),
+    reproducing the #4 anti-correlation. 12w shows +6.19% but n=15 in ONE cohort —
+    an ESTIMATE, not evidence.
+  - *Leak size, the most useful number here:* same grid, same criteria, only the PIT
+    fixes differ → 4w +0.89% → +0.18%, 2w +0.61% → −0.82%. **Roughly +0.7pp (4w) and
+    +1.4pp (2w) of the apparent edge was lookahead**, and what remains is indistinguishable
+    from zero. Every pre-audit deep-ON number in this ledger should be read with that
+    scale in mind (#9 especially).
+  - *(b) day-1 value — formally MET at 4w, but not trustworthy.* Paired Δ = +1.61pp
+    (per-trade 90% CI [+0.48,+2.79], p=0.009; day-1 helped 21/30). BUT the 30 trades sit
+    in 3 cohorts and 29 of them in TWO (04-27 n=15, 05-04 n=14) — a 3-block bootstrap
+    cannot produce a meaningful interval, and 2w (5 cohorts, n=40) points the OTHER way:
+    Δ = −0.71pp. Horizon-contradictory and cohort-starved ⇒ treat as no answer yet.
+  - *(c) mechanisms.* **67% of traded 4w signals had news in the Fri 16:00 → Mon 06:30
+    window** — the premise of the Monday-morning regime holds (the information is really
+    there); it is the edge that is unproven, not the freshness. Runtime is operationally
+    fine for an 06:30 batch.
+  **Action: none.** Live stays on the current schedule under `open_t1`; the scheduler
+  move and the live `open_d0` switch are NOT justified by this evidence. Revisit ~2026-08-10
+  at zero LLM cost: 9 of the 12 cohorts have not matured at 4w, and the daily grader fills
+  them automatically — the same frozen criteria then run on ~3× the cohorts. Note the grid
+  is now burned for variant iteration (rule 1); only maturation, not new formulations.
 
 ### Pre-registered, awaiting their window (formulations frozen — see linked sections)
 
+- **`sel_null` — does the selection stage add value at all? (pre-registered 2026-07-20,
+  NOT yet run; runs BEFORE `adv_mom`).** Full plan: **docs/AB_PLAN_selection_stage.md**.
+  Motivation, measured free from stored rows (all directional signals are graded, not only
+  traded ones), 4w shifted directional: gated vs ungated books are `monday_t1_pit` +0.18%
+  (n=30) vs **+1.36%** (n=42); `wf_30x_f12` +0.85% (n=46) vs **+1.20%** (n=59);
+  `wf_30x_v0.2_deep` +2.34% (n=39) vs **+2.35%** (n=55). **The gate adds value in none of
+  the three books and subtracts in two.** Splitting rejections by cause via stored
+  `conviction_raw`: "LLM itself unsure" is noise (n=1–4), but "machinery cut it"
+  (raw ≥ 0.55) returned +1.48% / +3.62% / +3.27% — i.e. the deterministic caps and penalties
+  removed trades that beat the ones kept. Diagnosis: `conviction` is one scalar doing three
+  jobs (eligibility caps, risk penalties, model belief) before a single 0.55 comparison, so
+  no component is separately measurable.
+  Frozen challenger, ONE formulation: `LT_SELECTION=vetoes_only` — trade every shifted
+  directional signal passing the eligibility vetoes, with **no conviction threshold and no
+  risk penalties**; incumbent = today's `llm` gate at 0.55; flag defaults to incumbent.
+  Deliberately the NULL, not a better gate — testing `table` first would tune a mechanism
+  whose usefulness is unestablished. Prerequisite **P2a**: stamp a `gate_trace` JSONB
+  (raw/final, vetoes, per-penalty amounts, table inputs) — no behaviour change, and it makes
+  every future gate hypothesis replayable offline for free.
+  Stage 1 ($0 replay, burned books, reject-only): rejected if the challenger loses >1pp on
+  any book, more than doubles trade count, or worsens the book's worst trade by >5pp (the
+  penalties may be buying tail protection the mean hides). Stage 2 (~$4, unburned Mondays
+  2026-01-05…04-20): accept only on >+1pp surviving the **cohort-block** CI **and net of
+  transaction costs** — which makes plan item D2 a blocking dependency, since the challenger
+  raises turnover ~40%.
+  *Disclosure (rule 1):* this slice was chosen after seeing the outcomes ⇒ mined windows
+  cannot accept it. Live gate stays ON regardless of stage 1.
+- **`adv_mom` — adverse-momentum guard (pre-registered 2026-07-20, NOT yet run;
+  DEFERRED behind `sel_null` — see below).**
+  Full plan: **docs/AB_PLAN_adverse_momentum.md**. Mechanism, frozen: mirror
+  `priced_in_check` — it penalises a move over the shift window that went WITH the signal
+  and has no branch for the opposite case, so add one (penalise when a move of the same
+  size went AGAINST the proposed direction). **Every constant is inherited, not chosen**:
+  window = `SHIFT_WINDOW_DAYS` 14d, threshold = `PRICED_IN_MOVE_PCT` 8.0, penalty =
+  `PRICED_IN_PENALTY` 0.2. Motivation is the #15 failure analysis: the 180d `counter_trend`
+  guard fired on **0 of 7** shorts while the book's worst trade (QCOM SHORT, conv 0.82,
+  −23.9%) carried **+34.9% over the prior 14–20 days** — the danger lives in a window
+  neither existing guard watches. Deterministic and post-synthesis, so prompts and
+  LLM-cache keys are untouched; flag defaults OFF.
+  *Disclosure (rule 1):* the pre-move and outcome of all 30 `monday_t1_pit` trades were
+  seen when this was formulated ⇒ no mined window may accept it.
+  Staging: **stage 1** — $0 offline replay across all stored grids (a conviction *penalty*
+  is exactly replayable from the stored final `conviction`, and can only remove trades);
+  reject if the guard fires on <3% of traded rows (the 180d guard's failure mode), misses
+  QCOM 05-04 / INTC 04-24, costs >1pp of mean excess on any book, or removes >half of all
+  SHORTs. **Stage 2** — acceptance only, ~$4, on Mondays 2026-01-05…04-20 (~15 cohorts no
+  sweep has touched), ON vs OFF under `adv_mom_oos`, requiring >+1pp mean 4w excess that
+  survives the **cohort-block** CI. Prerequisite: the D1 knowledge-cutoff gate, so
+  "unburned" is enforced rather than assumed. If it disappoints, the answer is NOT a
+  different threshold — that would be a new pre-registration.
+  **Sequencing (changed 2026-07-20, same day, before any run):** `adv_mom` adds ANOTHER
+  penalty to the gate, and `sel_null`'s motivating measurement says the existing penalties
+  are at best not paying for themselves — so it now starts after `sel_null` resolves, and
+  its stage-1 replay becomes exact (rather than approximate) once P2a's `gate_trace` is
+  stamped. The formulation itself is untouched and no result has been seen for it, so this
+  is a schedule change, not an iteration (rule 3 intact). If `sel_null` shows selection is
+  worth nothing, `adv_mom` is moot, not merely delayed.
 - **Consensus stage B re-exam (~2026-08+)** — the UNGUARDED #12 block on post-07-17
   forward-covered cohorts; acceptance criteria frozen in #12 detail. B.2 is dead (#13).
 - **v3 cutover re-examination (~2026-08-06)** — not a new sweep: `grade_shifts` + report
@@ -154,6 +256,13 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 - **Catalyst-guard (deterministic risk-gate)** — veto/penalize a NEW direction initiated
   against a >X% short-window realized move (the INTC −40.8 / QCOM −36.8 class; prompt
   version failed — #13 finding 1). Code-level check on stock_prices_daily.
+  **Sharpened 2026-07-20 by #15's failure analysis** (docs/FAILURE_MODES_monday_t1_pit.md):
+  the existing `counter_trend` guard is not mis-tuned, it is mis-*windowed* — it measures
+  180d and fired on **0 of 7** shorts, while the book's worst trade (QCOM SHORT, conv 0.82,
+  −23.9%) had 180d = −1.5% but **+34.9% over the prior 20 days**. `priced_in_check` cannot
+  cover this either: by construction it only fires when price moved WITH the signal. So the
+  formulation is "short-window adverse momentum", the mirror of priced-in.
+  **→ PRE-REGISTERED 2026-07-20 as `adv_mom` (see the section above); no longer open.**
 - **H-confirm-veto** — directional signal with no `improving` sub-verdict AND no
   confirm-language in the thesis is capped below the trade gate
   (docs/REASONING_MARKERS_2026-07-18.md; QCOM class).
