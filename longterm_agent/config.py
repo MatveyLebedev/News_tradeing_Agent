@@ -111,6 +111,18 @@ class LongTermAgentConfig:
     # Default stays "llm" until the A/B (docs/GATE_AB_2026Q2.md) is reviewed — switching
     # is an explicit env change, like the detection cutover.
     CONVICTION_GATE = os.getenv("LT_CONVICTION_GATE", "llm").lower()
+    # --- Selection stage (`sel_null`, docs/AB_PLAN_selection_stage.md) ---
+    # WHAT decides a trade, as opposed to what number the threshold reads:
+    #   "conviction"  — incumbent: eligibility caps + risk penalties are folded into one
+    #                   scalar, compared to LONGTERM_CONFIDENCE_THRESHOLD.
+    #   "vetoes_only" — the NULL: trade every directional signal that passes the
+    #                   deterministic eligibility vetoes (shift / usable fundamentals /
+    #                   fresh data); conviction and the risk penalties stop selecting and
+    #                   are recorded only. Motivation: across three books the gate added
+    #                   value in NONE and subtracted in two, and the signals the machinery
+    #                   cut returned +1.5…+3.6% vs the ones it kept.
+    # Defaults to the incumbent (rule 4). Pre-registered; acceptance needs unburned cohorts.
+    SELECTION_MODE = os.getenv("LT_SELECTION", "conviction").lower()
     # Rows: fundamentals-trend verdict; columns: shift_score buckets
     # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
     # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype
@@ -268,6 +280,7 @@ class LongTermAgentConfig:
                 "embed_tau": cls.EMBED_TAU,
                 "embed_top_k": cls.EMBED_TOP_K,
                 "conviction_gate": cls.CONVICTION_GATE,
+                "selection_mode": cls.SELECTION_MODE,
                 "conviction_table": {k: list(v) for k, v in cls.CONVICTION_TABLE.items()},
                 "counter_trend_pct": cls.COUNTER_TREND_PCT,
                 "counter_trend_penalty": cls.COUNTER_TREND_PENALTY,

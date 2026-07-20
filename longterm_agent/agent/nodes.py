@@ -1032,6 +1032,23 @@ def reflection_node(state, llm, config) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 7. risk_gate (priced-in, earnings-event, data sufficiency, conviction threshold)
 # ---------------------------------------------------------------------------
+def selection_passed(mode: str, direction, conviction, vetoes, threshold) -> bool:
+    """Does this signal become a trade? — the one place the selection rule lives.
+
+    Pure and shared on purpose: the live gate calls it, and the offline A/B
+    (`ab_selection.py`) calls it with values replayed out of `gate_trace`, so the two
+    arms can never drift apart. See docs/AB_PLAN_selection_stage.md.
+
+      "conviction"  — incumbent: the (capped, penalised) scalar clears the threshold.
+      "vetoes_only" — the null: deterministic eligibility only; conviction stops selecting.
+    """
+    if direction not in ("LONG", "SHORT"):
+        return False
+    if mode == "vetoes_only":
+        return not vetoes
+    return (conviction or 0.0) >= threshold
+
+
 def _table_conviction(table, shift_score, verdict):
     """Deterministic base conviction (gate=table): CONVICTION_TABLE[verdict][score bucket].
     Buckets on shift_score: [0, .4) / [.4, .7) / [.7, 1]."""
@@ -1161,7 +1178,14 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     sig["conviction_raw"] = round(raw_conviction, 2)
     sig["conviction_gate"] = sig.get("conviction", 0.0)
     sig["gate"] = gate_mode
-    passed = sig.get("conviction", 0.0) >= config.LONGTERM_CONFIDENCE_THRESHOLD and direction in ("LONG", "SHORT")
+    # WHAT decides the trade (`sel_null`): the incumbent thresholds the conviction scalar;
+    # "vetoes_only" trades on deterministic eligibility alone and lets conviction and the
+    # risk penalties be recorded rather than selective. Both arms are reconstructible from
+    # gate_trace, so the A/B needs no second pipeline run — see selection_passed().
+    selection_mode = getattr(config, "SELECTION_MODE", "conviction")
+    passed = selection_passed(selection_mode, direction, sig.get("conviction", 0.0),
+                              trace["vetoes"], config.LONGTERM_CONFIDENCE_THRESHOLD)
+    sig["selection"] = selection_mode
     trace.update({
         "conviction_raw": round(raw_conviction, 2),
         "conviction_final": sig.get("conviction", 0.0),

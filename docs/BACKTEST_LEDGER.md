@@ -188,6 +188,25 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ### Pre-registered, awaiting their window (formulations frozen — see linked sections)
 
+- **`wf_30x_deep_pit_on` / `_off` — does deep analysis earn its keep? (pre-registered
+  2026-07-20, launched same day).** Deep v1 is ON in production, costs a large share of
+  every run, and rests on #9 (+1.78%, since matured down to +1.56%), which ran with F1–F4
+  open — the holes lived in the deep path itself, and the ±0.2 advisory nudge moves the
+  traded set. **Design change vs the audit's prescription:** not a comparison against the
+  stored #9, but **two fresh legs run back-to-back on the same day** — because a
+  deep-enabled replay is not reproducible across days (measured: 10 cache misses and
+  conviction 0.82 → 0.78 on an identical cohort), so an old-vs-new comparison would
+  confound the PIT fixes with graph drift. Both legs: standard 30×9 grid
+  (2026-04-24…06-19, the most-matured window), `LT_METRICS_VERSION=2 LT_LLM_CACHE=true
+  LT_MAX_REFLECTION=0`, horizons 14/28/84, SPY, fill `open_t1`, graded at
+  `--asof-today 2026-07-20`; the ONLY difference is `LT_DEEP_ANALYSIS`.
+  **Demote-only** (burned grid, rule 1): the outcome can retire deep, never re-accept it.
+  Frozen reading: deep stays live only if ON beats OFF by >1pp mean 4w excess **and** the
+  gap survives the cohort-block CI; a gap inside ±1pp is "not worse ⇒ but not paying for
+  itself" and, given the cost, argues for `LT_DEEP_ANALYSIS=false`; ON losing by >1pp
+  retires it outright. Both legs also stamp `gate_trace`, which is what `sel_null`'s
+  stage 1 then consumes offline for free.
+
 - **`sel_null` — does the selection stage add value at all? (pre-registered 2026-07-20,
   NOT yet run; runs BEFORE `adv_mom`).** Full plan: **docs/AB_PLAN_selection_stage.md**.
   Motivation, measured free from stored rows (all directional signals are graded, not only
