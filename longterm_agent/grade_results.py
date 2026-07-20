@@ -23,6 +23,7 @@ from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _has_data_through  # shared grading guard
 from longterm_agent.exit_rules import (FILL_CONVENTION, entry_bar, fetch_price_path,
                                        simulate_exit, stopped_returns, t1_return)
+from longterm_agent.beta import beta_adjusted_excess, estimate_beta
 from longterm_agent.sector_map import SECTOR_ETF, SECTOR_OF
 from longterm_agent.targets import (classify_fundamentals_realized, classify_shift_outcome,
                                     worst_position_return)
@@ -43,7 +44,9 @@ def _ensure_exit_columns(cur):
                    ADD COLUMN IF NOT EXISTS exit_alert_at DATE,
                    ADD COLUMN IF NOT EXISTS entry_date DATE,
                    ADD COLUMN IF NOT EXISTS entry_px REAL,
-                   ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12)""")
+                   ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12),
+                   ADD COLUMN IF NOT EXISTS beta REAL,
+                   ADD COLUMN IF NOT EXISTS excess_beta REAL""")
     # Phase 11 — per-node target set (multi-horizon, sector-relative, adverse excursion,
     # realized fundamentals + shift persistence in aux_targets JSONB)
     cur.execute("""ALTER TABLE longterm_agent_results
@@ -173,7 +176,7 @@ def main():
           AND (outcome_filled_at IS NULL OR (traded AND exit_reason IS NULL)
                OR fwd_return_2w IS NULL OR fwd_return_12w IS NULL
                OR sector_benchmark IS NULL OR worst_position_return_4w IS NULL
-               OR aux_targets IS NULL
+               OR aux_targets IS NULL OR beta IS NULL
                OR NOT (aux_targets ?& array['shift_outcome','fundamentals_realized']))
         ORDER BY as_of
     """, [cfg.AGENT_VERSION])
@@ -230,6 +233,14 @@ def main():
                                exit_reason=%s, exit_days=%s WHERE id=%s""",
                         [round(stopped["fwd"], 4), round(stopped["bench"], 4),
                          stopped["reason"], stopped["days"], rid])
+        # P3 — beta-adjusted book: the same trade against a beta-matched benchmark, so
+        # "picked the stock" is separable from "picked the factor". Reporting only.
+        bta = estimate_beta(cur, ticker, e_date, BENCHMARK)
+        if bta is not None:
+            ex_b = beta_adjusted_excess(verdict, r, b, bta)
+            cur.execute("""UPDATE longterm_agent_results SET beta=%s, excess_beta=%s
+                           WHERE id=%s""",
+                        [bta, round(ex_b, 4) if ex_b is not None else None, rid])
         if already is None:
             cur.execute("""
                 UPDATE longterm_agent_results

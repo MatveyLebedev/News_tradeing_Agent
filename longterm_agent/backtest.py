@@ -63,7 +63,9 @@ def _ensure_table(cfg):
                        ADD COLUMN IF NOT EXISTS fwd_return_t2 REAL,
                        ADD COLUMN IF NOT EXISTS benchmark_return_t2 REAL,
                        ADD COLUMN IF NOT EXISTS excess_t2 REAL,
-                       ADD COLUMN IF NOT EXISTS gate_trace JSONB""")
+                       ADD COLUMN IF NOT EXISTS gate_trace JSONB,
+                       ADD COLUMN IF NOT EXISTS beta REAL,
+                       ADD COLUMN IF NOT EXISTS excess_beta REAL""")
     conn.commit()
     conn.close()
 
@@ -234,6 +236,7 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
     — the paired day-1-value study; hold-only by design (no stopped leg)."""
     from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_D0,
                                            entry_bar, stopped_returns, t1_return)
+    from longterm_agent.beta import beta_adjusted_excess, estimate_beta
     from longterm_agent.tools.regime_tool import regime_context_from_conn
     d0 = fill == "d0"
     convention = FILL_CONVENTION_D0 if d0 else FILL_CONVENTION
@@ -242,15 +245,16 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
     conn = _conn(cfg)
     cur = conn.cursor()
     cur.execute("""SELECT id, ticker, as_of, horizon_days, direction, outcome_filled_at,
-                          regime_context IS NULL
+                          regime_context IS NULL, beta IS NULL
                    FROM backtest_runs
                    WHERE backtest_id=%s AND (outcome_filled_at IS NULL
                           OR (exit_reason IS NULL AND traded AND direction IN ('LONG','SHORT'))
-                          OR regime_context IS NULL)
+                          OR regime_context IS NULL
+                          OR (beta IS NULL AND direction IN ('LONG','SHORT')))
                    ORDER BY as_of""", [backtest_id])
     rows = cur.fetchall()
-    graded = backfilled = stamped = 0
-    for rid, ticker, as_of, horizon, direction, already, no_regime in rows:
+    graded = backfilled = stamped = betas = 0
+    for rid, ticker, as_of, horizon, direction, already, no_regime, no_beta in rows:
         # Phase 14 — regime stamp is a property of as_of (not of maturity): fill it for any
         # row missing one, incl. idempotent backfill of rows graded before the stamp existed.
         # Left NULL while macro_series is empty so a later pass can still fill it.
@@ -283,6 +287,17 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
                             [round(t2["ret"], 4),
                              round(b2["ret"], 4) if b2 else None,
                              round(ex2, 4) if ex2 is not None else None, rid])
+        # beta-adjusted book (P3): did the stock beat what its own market sensitivity
+        # predicted, or was the excess just factor exposure? Reporting only; idempotent
+        # backfill for rows graded before the column existed. Beta is estimated from bars
+        # strictly BEFORE the entry, so it is knowable at decision time.
+        if no_beta and direction in ("LONG", "SHORT"):
+            bta = estimate_beta(cur, ticker, eb[0], benchmark)
+            if bta is not None:
+                ex_b = beta_adjusted_excess(direction, fwd, bench, bta)
+                cur.execute("""UPDATE backtest_runs SET beta=%s, excess_beta=%s WHERE id=%s""",
+                            [bta, round(ex_b, 4) if ex_b is not None else None, rid])
+                betas += 1
         # stopped book (traded directional rows only — the exit rule is a trade property)
         stopped = None
         if direction in ("LONG", "SHORT"):
@@ -313,7 +328,8 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
     conn.close()
     print(f"graded {graded} matured rows (today={today})"
           + (f"; stopped-book backfilled on {backfilled} already-graded rows" if backfilled else "")
-          + (f"; regime_context stamped on {stamped} rows" if stamped else ""))
+          + (f"; regime_context stamped on {stamped} rows" if stamped else "")
+          + (f"; beta estimated on {betas} rows" if betas else ""))
 
 
 # --------------------------------------------------------------------------- report
@@ -330,15 +346,17 @@ def _ci(lo, hi, pct=True):
 
 def report(cfg, backtest_id, asof_today=None):
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
+    _ensure_table(cfg)  # --report-only must work standalone on a book graded by older code
     conn = _conn(cfg)
     cur = conn.cursor()
     cur.execute("""SELECT horizon_days, ticker, as_of, direction, conviction, traded,
-                          shift_flag, regime, excess, excess_stopped, exit_reason, regime_context
+                          shift_flag, regime, excess, excess_stopped, exit_reason, regime_context,
+                          beta, excess_beta
                    FROM backtest_runs WHERE backtest_id=%s ORDER BY horizon_days, as_of""",
                 [backtest_id])
     rows = [dict(zip(("horizon", "ticker", "as_of", "direction", "conviction", "traded",
                       "shift_flag", "regime", "excess", "excess_stopped", "exit_reason",
-                      "regime_context"),
+                      "regime_context", "beta", "excess_beta"),
                      r)) for r in cur.fetchall()]
     cur.execute("""SELECT DISTINCT provenance::text FROM backtest_runs WHERE backtest_id=%s""",
                 [backtest_id])
@@ -419,6 +437,18 @@ def report(cfg, backtest_id, asof_today=None):
             print(f"  stopped book : win {M.win_rate(exs):.0%}  mean {_pct(ds['mean'])} "
                   f"CI {_ci(*s_ci)}  min {_pct(ds['min'])}  "
                   f"(exits: {n_stop} stop / {n_tp} tp / {len(stopped) - n_stop - n_tp} horizon)")
+
+        # P3 — the SAME trades scored against a beta-matched benchmark: how much of the
+        # excess was stock-picking rather than factor exposure? (reporting only)
+        betad = [r for r in graded if r["excess_beta"] is not None]
+        if betad:
+            exb = [r["excess_beta"] for r in betad]
+            db = M.distribution(exb)
+            b_ci = M.bootstrap_ci(exb, lambda s: M.distribution(s)["mean"])
+            betas = [r["beta"] for r in betad if r["beta"] is not None]
+            print(f"  beta-adj book: win {M.win_rate(exb):.0%}  mean {_pct(db['mean'])} "
+                  f"CI {_ci(*b_ci)}  (n={len(exb)}, median beta "
+                  f"{M.distribution(betas)['median']:.2f})")
 
         cal = M.calibration_curve(graded)
         print("  conviction calibration (is conviction predictive?):")

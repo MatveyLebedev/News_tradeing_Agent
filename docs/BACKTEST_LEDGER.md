@@ -273,6 +273,26 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ### Telemetry / maintenance (no behavior change, no registration needed)
 
+- **Beta-adjusted book — ADDED 2026-07-20** (`longterm_agent/beta.py`; `beta` +
+  `excess_beta` on `backtest_runs` and `longterm_agent_results`, printed beside the hold
+  and stopped books). `excess` scores every trade against SPY at an implicit beta of 1,
+  which punishes a defensive long for being defensive: in #15, PEP and KO priced at
+  beta ≈ −0.03 and carried a mechanical ~−5pp each before any judgement. `excess_beta =
+  sign · (stock − beta · bench)` — i.e. `trade_excess` with beta in place of 1, so the
+  books stay directly comparable; beta is estimated from bars strictly before the entry.
+  Reporting only, backfilled free over all books. First readings (4w traded):
+  `monday_t1_pit` +0.18% → **+0.50%** beta-adj (median beta 0.96);
+  `wf_30x_f12` +0.27% → **+0.03%**; `wf_30x_v0.2_deep` +1.56% → **+1.25%**.
+  Aggregate effect is small (beta explained ~4% of dispersion), as expected — its value
+  is per-trade attribution, which is why it belongs in the report and not in a gate.
+- **Maturation update 2026-07-20 — the two headline books DETERIORATED as cohorts
+  matured.** Re-grading at `--asof-today 2026-07-20` (previous grades used 07-10) added
+  ~60 newly matured rows to each: **#8 `wf_30x_f12` 4w +0.85% → +0.27%** (n 46 → 49) and
+  **#9 `wf_30x_v0.2_deep` +2.34% → +1.56%** (n 39 → 42). No re-run, no code change — only
+  more of the same window's outcomes arriving. Both moves are in the demote direction and
+  compound the fill-convention and PIT corrections above; #9's pending leak-free re-check
+  should be read against +1.56%, not the +1.78% originally recorded.
+
 - **Fill-convention fix `open_t1` — APPLIED 2026-07-19** (measurement only; decisions,
   labels and prompts byte-identical, LLM cache intact). Entry = open of the first bar
   strictly after as_of (was: last close ≤ as_of — for weekend live cohorts a price printed
