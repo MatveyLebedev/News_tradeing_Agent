@@ -1,9 +1,12 @@
 """
 Grade matured shift_library rows: fill fwd_return_2w/4w/12w and the SPY benchmark return.
 
-Entry = close on/before as_of; exit = close on/before as_of + N weeks. A horizon is gradable
-only once as_of + N weeks ≤ today (the outcome window has elapsed). Excess return (stock −
-benchmark) is computed in the report; here we store the raw stock returns + benchmark_return_4w.
+Fill convention `open_t1` (exit_rules): entry = open of the first bar strictly after
+as_of; exit = close on/before entry + N weeks. A horizon is gradable only once
+entry + N weeks ≤ today (the outcome window has elapsed). Excess return (stock −
+benchmark) is computed in the report; here we store the raw stock returns +
+benchmark_return_4w. The library shares the trades' convention so analog base rates
+measure the same tradable quantity.
 
     python -m longterm_agent.grade_shifts
 """
@@ -13,25 +16,20 @@ from datetime import datetime, timedelta, date
 import psycopg2
 
 from longterm_agent.config import LongTermAgentConfig
+from longterm_agent.exit_rules import (FILL_CONVENTION, close_on_or_before, entry_bar,
+                                       t1_return)
 
 BENCHMARK = "SPY"
 HORIZONS = {"fwd_return_2w": 14, "fwd_return_4w": 28, "fwd_return_12w": 84}
 
-
-def _close_on_or_before(cur, ticker, target: date, tolerance_days=7):
-    """Latest daily close on/before target (within tolerance). Returns float or None."""
-    cur.execute("""
-        SELECT close FROM stock_prices_daily
-        WHERE ticker=%s AND date <= %s AND date >= %s AND close IS NOT NULL
-        ORDER BY date DESC LIMIT 1
-    """, [ticker.upper(), target, target - timedelta(days=tolerance_days)])
-    r = cur.fetchone()
-    return float(r[0]) if r else None
+_close_on_or_before = close_on_or_before  # back-compat alias for existing importers
 
 
 def _ret(cur, ticker, entry_date: date, horizon_days: int):
-    entry = _close_on_or_before(cur, ticker, entry_date)
-    exit_ = _close_on_or_before(cur, ticker, entry_date + timedelta(days=horizon_days))
+    """LEGACY close→close return (still correct for TRAILING windows, e.g. the regime
+    classifier). Grading paths use exit_rules.t1_return — do not grade with this."""
+    entry = close_on_or_before(cur, ticker, entry_date)
+    exit_ = close_on_or_before(cur, ticker, entry_date + timedelta(days=horizon_days))
     if entry and exit_:
         return (exit_ - entry) / entry
     return None
@@ -62,6 +60,10 @@ def main():
 
     conn = psycopg2.connect(**cfg.get_db_config())
     cur = conn.cursor()
+    cur.execute("""ALTER TABLE shift_library
+                   ADD COLUMN IF NOT EXISTS entry_date DATE,
+                   ADD COLUMN IF NOT EXISTS entry_px REAL,
+                   ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12)""")
     cur.execute("""SELECT id, ticker, as_of FROM shift_library
                    WHERE outcome_filled_at IS NULL ORDER BY as_of""")
     rows = cur.fetchall()
@@ -70,7 +72,12 @@ def main():
     graded, pending = 0, 0
     max_dates = {}
     for rid, ticker, as_of in rows:
-        t4 = as_of + timedelta(days=28)
+        eb = entry_bar(cur, ticker, as_of)
+        if eb is None:
+            pending += 1  # entry session hasn't landed in stock_prices_daily yet
+            continue
+        e_date, e_px = eb
+        t4 = e_date + timedelta(days=28)
         if t4 > today:
             continue  # primary horizon not matured yet
         # pending_data guard: BOTH the stock and the SPY benchmark series must reach
@@ -81,17 +88,19 @@ def main():
             continue
         updates, vals = [], []
         for col, days in HORIZONS.items():
-            target = as_of + timedelta(days=days)
+            target = e_date + timedelta(days=days)
             if target <= today and _has_data_through(cur, ticker, target, max_dates):
-                r = _ret(cur, ticker, as_of, days)
+                r = t1_return(cur, ticker, as_of, days)
                 if r is not None:
-                    updates.append(f"{col}=%s"); vals.append(round(r, 4))
+                    updates.append(f"{col}=%s"); vals.append(round(r["ret"], 4))
         # benchmark for the 4w window (the primary checkpoint)
-        b = _ret(cur, BENCHMARK, as_of, 28)
+        b = t1_return(cur, BENCHMARK, as_of, 28)
         if b is not None:
-            updates.append("benchmark_return_4w=%s"); vals.append(round(b, 4))
+            updates.append("benchmark_return_4w=%s"); vals.append(round(b["ret"], 4))
         if updates:
-            updates.append("outcome_filled_at=%s"); vals.append(today)
+            updates += ["entry_date=%s", "entry_px=%s", "fill_convention=%s",
+                        "outcome_filled_at=%s"]
+            vals += [e_date, e_px, FILL_CONVENTION, today]
             cur.execute(f"UPDATE shift_library SET {', '.join(updates)} WHERE id=%s", vals + [rid])
             graded += 1
 

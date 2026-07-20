@@ -18,16 +18,16 @@ MARGIN_PP = 1.0
 SHIFT_SENT_BAND = 0.05
 
 
-def worst_position_return(closes: List[Tuple[Any, float]], direction: str) -> Optional[float]:
+def worst_position_return(closes: List[Tuple[Any, float]], direction: str,
+                          entry_px: float) -> Optional[float]:
     """Max adverse excursion: the WORST direction-adjusted position return over the price
-    path [(date, close), entry first]. LONG suffers on drops, SHORT on rallies."""
-    if not closes or len(closes) < 2 or direction not in ("LONG", "SHORT"):
-        return None
-    entry = closes[0][1]
-    if not entry:
+    path [(date, close) after entry]. Entry is the open_t1 fill (passed explicitly), so
+    every close in the path counts — including the entry bar's own. LONG suffers on
+    drops, SHORT on rallies."""
+    if not closes or not entry_px or direction not in ("LONG", "SHORT"):
         return None
     sign = 1.0 if direction == "LONG" else -1.0
-    return round(min(sign * (px - entry) / entry for _, px in closes[1:]), 4)
+    return round(min(sign * (px - entry_px) / entry_px for _, px in closes), 4)
 
 
 def classify_fundamentals_realized(before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:

@@ -43,7 +43,19 @@ def _route_after_reflection(state: LongTermAgentState) -> str:
     return "proceed"
 
 
-def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager: Any, neo4j_manager: Any = None):
+def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager: Any,
+                          neo4j_manager: Any = None, llm_strong: Any = None):
+    # Strong-model split (STRONG_LLM_MODEL, default = LLM_MODEL → this stays llm_reduce):
+    # only the three judgment-heavy nodes below get it — synthesis, the fundamentals
+    # verdict, and the deep-analysis REDUCE (deep's map threads stay on llm_map). All
+    # three are advisory-path, so the split can never move a detection label.
+    if llm_strong is None:
+        _strong = getattr(config, "STRONG_LLM_MODEL", "") or ""
+        if _strong and _strong != getattr(config, "LLM_MODEL", ""):
+            llm_strong = config.make_llm(model=_strong, max_tokens=8000)
+        else:
+            llm_strong = llm_reduce
+
     g = StateGraph(LongTermAgentState)
 
     g.add_node("corpus_collection",
@@ -53,13 +65,13 @@ def create_longterm_graph(llm_map: Any, llm_reduce: Any, config: Any, db_manager
     g.add_node("shift_detection",
                lambda s: shift_detection_node(s, llm_reduce, config, neo4j_manager))
     g.add_node("fundamentals_analysis",
-               lambda s: fundamentals_analysis_node(s, llm_reduce, db_manager, config))
+               lambda s: fundamentals_analysis_node(s, llm_strong, db_manager, config))
     g.add_node("similar_shift_analysis",
                lambda s: similar_shift_analysis_node(s, db_manager, config))
     g.add_node("deep_analysis",
-               lambda s: deep_analysis_node(s, llm_map, llm_reduce, db_manager, neo4j_manager, config))
+               lambda s: deep_analysis_node(s, llm_map, llm_strong, db_manager, neo4j_manager, config))
     g.add_node("synthesis",
-               lambda s: synthesis_node(s, llm_reduce, config))
+               lambda s: synthesis_node(s, llm_strong, config))
     g.add_node("reflection",
                lambda s: reflection_node(s, llm_reduce, config))
     g.add_node("risk_gate",

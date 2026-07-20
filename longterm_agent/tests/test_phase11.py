@@ -55,11 +55,12 @@ def test_snapshot_doc_references_not_copies():
 
 
 def test_worst_position_return_direction_adjusted():
-    path = [(date(2026, 6, 1), 100.0), (date(2026, 6, 2), 92.0), (date(2026, 6, 3), 105.0)]
-    assert worst_position_return(path, "LONG") == -0.08    # the dip hurts the LONG
-    assert worst_position_return(path, "SHORT") == -0.05   # the rally hurts the SHORT
-    assert worst_position_return(path, "NEUTRAL") is None
-    assert worst_position_return([], "LONG") is None
+    # entry is the open_t1 fill, passed explicitly; every close after it counts
+    path = [(date(2026, 6, 2), 92.0), (date(2026, 6, 3), 105.0)]
+    assert worst_position_return(path, "LONG", 100.0) == -0.08    # the dip hurts the LONG
+    assert worst_position_return(path, "SHORT", 100.0) == -0.05   # the rally hurts the SHORT
+    assert worst_position_return(path, "NEUTRAL", 100.0) is None
+    assert worst_position_return([], "LONG", 100.0) is None
 
 
 def test_classify_fundamentals_realized():

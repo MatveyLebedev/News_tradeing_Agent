@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     # This role feeds the map step whose sentiments feed detection: set it explicitly
     # in the live .env and treat any change as label-affecting (DETECTION_VERSION bump).
     graph_llm_model: str = "google/gemini-3.1-flash-lite"
+    # strong reasoning (longterm agent only): the three judgment-heavy call sites —
+    # synthesis (LongTermSignal), fundamentals verdict (FundamentalsTrend), deep-analysis
+    # reduce (DeepAnalysisOutput). Empty = use llm_model (exact current behavior; the
+    # split is advisory-path only and never touches detection labels). Setting it is an
+    # eval-gated change: pre-register in docs/BACKTEST_LEDGER.md before any sweep.
+    strong_llm_model: str = ""
     embedding_model: str = "google/gemini-embedding-001"
     embedding_dimensions: int = 1536
 
@@ -100,8 +106,8 @@ class Settings(BaseSettings):
     fresh_options_iv_max_days: int = 5          # daily IV snapshot; advisory-only
 
     @field_validator(
-        "llm_model", "graph_llm_model", "embedding_model", "embedding_dimensions",
-        "db_host", "db_name", "db_user", "db_port", mode="before")
+        "llm_model", "graph_llm_model", "strong_llm_model", "embedding_model",
+        "embedding_dimensions", "db_host", "db_name", "db_user", "db_port", mode="before")
     @classmethod
     def _clean(cls, v):
         return _strip_inline_comment(v)

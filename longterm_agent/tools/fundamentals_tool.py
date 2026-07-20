@@ -4,8 +4,14 @@ Fundamentals reader + trend computation (§ fundamentals_analysis).
 Reads the `fundamentals` table (built in Phase 0) AS-OF the analysis date — never
 seeing a statement before its filing or a snapshot before its fetch:
 
-    EDGAR rows    : WHERE filed_date <= as_of   (point-in-time as-filed statements)
-    yfinance rows : WHERE fetch_date <= as_of   (valuation / estimates snapshot)
+    EDGAR rows    : WHERE filed_date <= document_cutoff(as_of)  (as-filed statements,
+                    visible only after the filing day's session close — see tools/pit.py)
+    yfinance rows : WHERE fetch_date <= as_of AND created_at <= ingest_cutoff(as_of)
+                    (snapshot visible from the moment WE pulled it)
+
+The cutoffs (rather than a bare `<= as_of.date()`) are what keep a pre-open decision
+from reading a filing accepted later that same day — which under the `open_d0` fill
+convention would be data printed after the position was already opened.
 
 The fetcher stores normalized values only; all derived metrics (growth, margins, FCF,
 debt, expectation gap) are computed HERE at read time, so definitions can change without
@@ -15,6 +21,8 @@ from typing import Any, Dict, Optional
 from datetime import datetime, date, timedelta
 
 import psycopg2
+
+from .pit import daily_bar_cutoff, document_cutoff, ingest_cutoff
 
 
 def _rows(db_manager, sql, params):
@@ -39,16 +47,21 @@ def _edgar_quarters(db_manager, ticker, as_of, kind, limit=9):
         WHERE ticker=%s AND source='edgar' AND kind=%s
           AND fiscal_period <> 'FY' AND filed_date <= %s
         ORDER BY period_end DESC LIMIT %s
-    """, [ticker.upper(), kind, as_of.date(), limit])
+    """, [ticker.upper(), kind, document_cutoff(as_of), limit])
     return [{"period_end": r[0], "fiscal_period": r[1], "filed_date": r[2], "data": r[3]} for r in rows]
 
 
 def _yf_latest(db_manager, ticker, as_of, kind):
+    """Latest yfinance snapshot visible at as_of. `fetch_date` is the coarse (indexed)
+    filter; `created_at` is the precise one — a snapshot pulled later on the as_of day
+    was not knowable to a pre-open decision. NULL created_at (pre-column rows) falls
+    back to the date filter; those rows are old by construction, never same-day."""
     rows = _rows(db_manager, """
         SELECT data FROM fundamentals
         WHERE ticker=%s AND source='yfinance' AND kind=%s AND fetch_date <= %s
+          AND (created_at IS NULL OR created_at <= %s)
         ORDER BY fetch_date DESC LIMIT 1
-    """, [ticker.upper(), kind, as_of.date()])
+    """, [ticker.upper(), kind, as_of.date(), ingest_cutoff(as_of)])
     return rows[0][0] if rows else None
 
 
@@ -135,7 +148,7 @@ def _edgar_income_all(db_manager, ticker, as_of, limit=12):
         FROM fundamentals
         WHERE ticker=%s AND source='edgar' AND kind='income_statement' AND filed_date <= %s
         ORDER BY period_end DESC LIMIT %s
-    """, [ticker.upper(), as_of.date(), limit])
+    """, [ticker.upper(), document_cutoff(as_of), limit])
     return [{"period_end": r[0], "fiscal_period": r[1], "data": r[3]} for r in rows]
 
 
@@ -145,7 +158,7 @@ def _latest_balance_equity(db_manager, ticker, as_of):
         SELECT data FROM fundamentals
         WHERE ticker=%s AND source='edgar' AND kind='balance_sheet' AND filed_date <= %s
         ORDER BY period_end DESC LIMIT 1
-    """, [ticker.upper(), as_of.date()])
+    """, [ticker.upper(), document_cutoff(as_of)])
     return rows[0][0].get("stockholders_equity") if rows else None
 
 
@@ -208,7 +221,7 @@ def valuation_pit(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     Ratios go through market cap (= close × implied diluted shares) and TTM *dollar* figures, so
     they are immune to share splits. Returns {} of metrics it can't form (missing EDGAR/price)."""
     income = _edgar_income_all(db_manager, ticker, as_of)
-    price, price_date = _close_on_or_before(db_manager, ticker, as_of.date())
+    price, price_date = _close_on_or_before(db_manager, ticker, daily_bar_cutoff(as_of))
     out: Dict[str, Any] = {"source": "edgar+price", "price": price,
                            "price_date": price_date.isoformat() if price_date else None}
     shares = _implied_shares(income)
@@ -339,8 +352,9 @@ def peer_forward_pe(db_manager, ticker: str, sector: str, as_of: datetime) -> Di
         SELECT DISTINCT ON (ticker) ticker, data->>'sector', data->>'forwardPE'
         FROM fundamentals
         WHERE source='yfinance' AND kind='info' AND fetch_date <= %s
+          AND (created_at IS NULL OR created_at <= %s)
         ORDER BY ticker, fetch_date DESC
-    """, [as_of.date()])
+    """, [as_of.date(), ingest_cutoff(as_of)])
     peers, own = [], None
     for tk, sec, fpe in rows:
         try:
@@ -374,8 +388,9 @@ def _fmp_latest(db_manager, ticker, as_of):
     rows = _rows(db_manager, """
         SELECT data FROM fundamentals
         WHERE ticker=%s AND source='fmp' AND kind='earnings' AND fetch_date <= %s
+          AND (created_at IS NULL OR created_at <= %s)
         ORDER BY fetch_date DESC LIMIT 1
-    """, [ticker.upper(), as_of.date()])
+    """, [ticker.upper(), as_of.date(), ingest_cutoff(as_of)])
     if rows:
         return rows[0][0], True
     rows = _rows(db_manager, """
@@ -428,6 +443,10 @@ def format_consensus(est: Optional[dict], fmp: Optional[dict], as_of_date,
     consensus view. PIT inside the snapshot too: FMP rows dated AFTER as_of are the
     upcoming reports (their actuals must be null at as_of by construction); rows ≤ as_of
     with actuals are the realized-surprise history.
+
+    `as_of_date` is the DOCUMENT cutoff (see tools/pit.document_cutoff), not the raw
+    as_of day: a report released after the as_of day's close belongs to the upcoming
+    side, never to the realized-surprise history.
 
     fmp_is_pit=False → the FMP snapshot post-dates as_of (retro backtest): the realized-
     surprise history is still usable (report-date filtered, estimates frozen at report
@@ -509,7 +528,10 @@ def read_consensus(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     yf_hist_future = None
     if not est and not (fmp or {}).get("records"):
         yf_hist_future = _yf_hist_future(db_manager, ticker, as_of)
-    return format_consensus(est, fmp, as_of.date(),
+    # Report dates go through document_cutoff, not as_of.date(): an earnings release
+    # printed the evening of the as_of day is NOT knowable to a pre-open decision — the
+    # sharpest case of the old day-granularity gap, since the record carries epsActual.
+    return format_consensus(est, fmp, document_cutoff(as_of),
                             fmp_is_pit=fmp_is_pit, yf_hist_future=yf_hist_future)
 
 
@@ -653,7 +675,7 @@ def read_fundamentals(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any
         SELECT data FROM fundamentals
         WHERE ticker=%s AND source='edgar' AND kind='balance_sheet' AND filed_date <= %s
         ORDER BY period_end DESC LIMIT 1
-    """, [ticker.upper(), as_of.date()])
+    """, [ticker.upper(), document_cutoff(as_of)])
     result["capital"] = _cash_flow_block(cf_quarters)
     result["balance"] = _balance_block(bal_rows[0][0] if bal_rows else None)
     result["opex"] = _opex_block(income)

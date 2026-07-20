@@ -40,13 +40,15 @@ def test_pit_pe_present_and_sane(db):
 
 
 def test_pit_uses_asof_price_not_future(db):
-    """The price input must be the close on/before as_of — never a later bar (no lookahead)."""
+    """The price input must be the close of the last session COMPLETED before as_of —
+    never a later bar, and not the as_of-day bar itself (its close prints at 16:00)."""
+    from longterm_agent.tools.pit import daily_bar_cutoff
     v = valuation_pit(db, TICKER, AS_OF)
     if v.get("price") is None:
         pytest.skip("no price near as_of")
-    close, cdate = _close_on_or_before(db, TICKER, AS_OF.date())
+    close, cdate = _close_on_or_before(db, TICKER, daily_bar_cutoff(AS_OF))
     assert v["price"] == close
-    assert date.fromisoformat(v["price_date"]) <= AS_OF.date()
+    assert date.fromisoformat(v["price_date"]) <= daily_bar_cutoff(AS_OF)
 
 
 def test_pit_is_deterministic(db):

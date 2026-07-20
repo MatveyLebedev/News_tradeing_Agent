@@ -11,6 +11,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]  # for provenance() git lookup
 from model_config import (
     LLM_MODEL as _LLM_MODEL,
     GRAPH_LLM_MODEL as _GRAPH_LLM_MODEL,
+    STRONG_LLM_MODEL as _STRONG_LLM_MODEL,
     EMBEDDING_MODEL as _EMBEDDING_MODEL,
     EMBEDDING_DIMENSIONS as _EMBEDDING_DIMENSIONS,
     OPENROUTER_BASE_URL as _OPENROUTER_BASE_URL,
@@ -39,7 +40,12 @@ from model_config import (
 # changing LT_METRICS_VERSION in the server env AFTER the walk-forward gates pass.
 METRICS_VERSION = int(os.getenv("LT_METRICS_VERSION", "1"))
 DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
-PIPELINE_VERSION = "0.8.0"   # Phase 11: snapshots + multi-target grading + few-shot flag
+# 0.9.0 (2026-07-19 PIT audit): document/ingest cutoffs on every as-of reader, code-enforced
+# no-lookahead in raw Cypher, knowledge-date gating + as-of story sizes in the graph tools,
+# maturity-masked intraday moves. Detection labels are untouched (DETECTION_VERSION stands),
+# but tool outputs and the fundamentals/characterization prompts change — so runs before and
+# after this bump are NOT like-for-like and need a fresh backtest_id.
+PIPELINE_VERSION = "0.9.0"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -149,8 +155,17 @@ class LongTermAgentConfig:
     EMBED_TOP_K = int(os.getenv("LT_EMBED_TOP_K", "400"))      # candidates per HNSW scan
 
     # --- Models (OpenRouter) ---
-    LLM_MODEL = _LLM_MODEL              # main reasoning model (reduce, shift, synthesis)
+    LLM_MODEL = _LLM_MODEL              # main reasoning model (reduce, shift, reflection)
     MAP_MODEL = _GRAPH_LLM_MODEL        # cheap model for per-bucket map summaries
+    # Strong-model split (STRONG_LLM_MODEL, default empty → LLM_MODEL, i.e. OFF): upgrades
+    # ONLY the three judgment-heavy calls — synthesis (LongTermSignal), fundamentals verdict
+    # (FundamentalsTrend), deep-analysis reduce (DeepAnalysisOutput). All three are advisory
+    # path: detection labels come from MAP_MODEL sentiments + deterministic metrics, so this
+    # split can never alter shift membership. A different model = different LLM-cache keys
+    # for those calls only; runs stop being like-for-like (stamped in provenance). Budget
+    # guard from the 2026-07-18 cost analysis: with claude-sonnet-5 this is +106% per run
+    # at measured token volumes and breaches the +200% cap only if reasoning output doubles.
+    STRONG_LLM_MODEL = _STRONG_LLM_MODEL or _LLM_MODEL
     EMBEDDING_MODEL = _EMBEDDING_MODEL
     EMBEDDING_DIMENSIONS = _EMBEDDING_DIMENSIONS
     OPENROUTER_BASE_URL = _OPENROUTER_BASE_URL
@@ -165,7 +180,6 @@ class LongTermAgentConfig:
     DEEP_ANALYSIS_ENABLED = os.getenv("LT_DEEP_ANALYSIS", "true").lower() == "true"
     MAX_TOOL_CALL_ITERATIONS = int(os.getenv("LT_MAX_TOOL_ITERS", "7"))  # same cap as news_agent
     TOOL_RESULT_MAX_CHARS = int(os.getenv("LT_TOOL_RESULT_MAX_CHARS", "3000"))  # truncate tool blobs
-    DEEP_ANALYSIS_MODEL = LLM_MODEL  # reuse the main reasoning model
     # Phase 6 — deep analysis v2 (planner + parallel threads + citations). DEFAULT OFF:
     # the v1 path stays byte-identical (prompts are LLM-cache keys) until the queued
     # wf_30x deep-v2 A/B earns the cutover. Both flags must be true for v2 to run.
@@ -236,6 +250,7 @@ class LongTermAgentConfig:
             # LLM-cache comparability — stamped so two runs are only compared like-for-like.
             "model": cls.LLM_MODEL,
             "map_model": cls.MAP_MODEL,
+            "strong_model": cls.STRONG_LLM_MODEL,
             "temperature": cls.LLM_TEMPERATURE,
             "reflection_iters": cls.MAX_REFLECTION_ITERATIONS,
             "llm_cache": cls.LLM_CACHE,

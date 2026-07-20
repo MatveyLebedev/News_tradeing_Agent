@@ -91,10 +91,27 @@ def test_row_cap_enforced():
     assert out["n"] == 50                                  # capped at max_rows (default 50)
 
 
-def test_output_truncated():
+def test_oversized_values_are_clipped_and_output_stays_parseable():
+    """The size cap must not cost the model valid JSON — or the whole row.
+
+    It used to slice the serialized string mid-token, handing back something unparseable
+    (and, on an ungated query, cutting off the pit_note that explains the missing rows).
+    Now oversized VALUES are clipped and, if still needed, whole rows are dropped.
+    """
     tool, _ = _tool([{"blob": "x" * 5000}])
-    out = tool.invoke({"cypher": "MATCH (n) RETURN n"})
-    assert out.endswith("…[truncated]") and len(out) <= 2520
+    raw = tool.invoke({"cypher": "MATCH (n) RETURN n"})
+    out = json.loads(raw)                       # must not raise
+    assert len(raw) <= 2500
+    assert out["n"] == 1 and out["rows"][0]["blob"].endswith("…")
+
+
+def test_rows_are_dropped_whole_when_the_payload_still_overflows():
+    tool, _ = _tool([{"blob": "y" * 400} for _ in range(50)])
+    raw = tool.invoke({"cypher": "MATCH (n) RETURN n"})
+    out = json.loads(raw)
+    assert len(raw) <= 2500
+    assert out.get("truncated_rows") is True
+    assert out["n"] == len(out["rows"]) < 50    # count always matches what is returned
 
 
 def test_empty_query_rejected():

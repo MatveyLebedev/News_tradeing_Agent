@@ -20,8 +20,9 @@ import psycopg2
 from psycopg2.extras import Json
 
 from longterm_agent.config import LongTermAgentConfig
-from longterm_agent.grade_shifts import _ret, _has_data_through  # shared grading helpers
-from longterm_agent.exit_rules import fetch_price_path, simulate_exit, stopped_returns
+from longterm_agent.grade_shifts import _has_data_through  # shared grading guard
+from longterm_agent.exit_rules import (FILL_CONVENTION, entry_bar, fetch_price_path,
+                                       simulate_exit, stopped_returns, t1_return)
 from longterm_agent.sector_map import SECTOR_ETF, SECTOR_OF
 from longterm_agent.targets import (classify_fundamentals_realized, classify_shift_outcome,
                                     worst_position_return)
@@ -39,7 +40,10 @@ def _ensure_exit_columns(cur):
                    ADD COLUMN IF NOT EXISTS benchmark_return_stopped REAL,
                    ADD COLUMN IF NOT EXISTS exit_reason VARCHAR(12),
                    ADD COLUMN IF NOT EXISTS exit_days INTEGER,
-                   ADD COLUMN IF NOT EXISTS exit_alert_at DATE""")
+                   ADD COLUMN IF NOT EXISTS exit_alert_at DATE,
+                   ADD COLUMN IF NOT EXISTS entry_date DATE,
+                   ADD COLUMN IF NOT EXISTS entry_px REAL,
+                   ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12)""")
     # Phase 11 — per-node target set (multi-horizon, sector-relative, adverse excursion,
     # realized fundamentals + shift persistence in aux_targets JSONB)
     cur.execute("""ALTER TABLE longterm_agent_results
@@ -53,24 +57,25 @@ def _ensure_exit_columns(cur):
                    ADD COLUMN IF NOT EXISTS aux_targets JSONB""")
 
 
-def _fill_extra_horizons(cur, rid, ticker, as_of, today, max_dates, missing):
+def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, missing):
     """Fill 2w/12w return pairs that are matured, data-complete, and still NULL."""
     filled = 0
     for tag, days in EXTRA_HORIZONS.items():
         if tag not in missing:
             continue
-        target = as_of + timedelta(days=days)
+        target = entry_date + timedelta(days=days)
         if target > today:
             continue
         if not (_has_data_through(cur, ticker, target, max_dates)
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             continue
-        r, b = _ret(cur, ticker, as_of, days), _ret(cur, BENCHMARK, as_of, days)
+        r = t1_return(cur, ticker, as_of, days)
+        b = t1_return(cur, BENCHMARK, as_of, days)
         if r is None or b is None:
             continue
         cur.execute(f"""UPDATE longterm_agent_results
                         SET fwd_return_{tag}=%s, benchmark_return_{tag}=%s WHERE id=%s""",
-                    [round(r, 4), round(b, 4), rid])
+                    [round(r["ret"], 4), round(b["ret"], 4), rid])
         filled += 1
     return filled
 
@@ -117,11 +122,15 @@ def scan_open_breaches(cur, cfg, today) -> int:
         notifier = None
     alerted = 0
     for rid, ticker, as_of, verdict in open_rows:
-        days_open = min((today - as_of).days, HORIZON_DAYS)
+        eb = entry_bar(cur, ticker, as_of)
+        if eb is None:
+            continue  # position opens at the next session's open — nothing to scan yet
+        e_date, e_px = eb
+        days_open = min((today - e_date).days, HORIZON_DAYS)
         if days_open <= 0:
             continue
         path = [(d, c) for d, c in fetch_price_path(cur, ticker, as_of, days_open) if d <= today]
-        sim = simulate_exit(path, as_of, verdict, days_open,
+        sim = simulate_exit(path, e_date, e_px, verdict, days_open,
                             stop_loss=cfg.STOP_LOSS_PCT, take_profit=cfg.TAKE_PROFIT_PCT)
         if not sim or sim["reason"] != "stop":
             continue
@@ -185,11 +194,17 @@ def main():
     max_dates = {}
     for (rid, ticker, as_of, verdict, already, no_2w, no_12w, sector_bm, no_sec_ret,
          no_worst, aux, shift_dir, fund_verdict) in rows:
+        eb = entry_bar(cur, ticker, as_of)
+        if eb is None:
+            pending += 1  # entry session hasn't landed in stock_prices_daily yet
+            continue
+        e_date, e_px = eb
         # --- Phase 11 multi-horizon fills (each matures on its own clock) --------------
         missing = {t for t, flag in (("2w", no_2w), ("12w", no_12w)) if flag}
-        extras += _fill_extra_horizons(cur, rid, ticker, as_of, today, max_dates, missing)
+        extras += _fill_extra_horizons(cur, rid, ticker, as_of, e_date, today, max_dates,
+                                       missing)
 
-        target = as_of + timedelta(days=HORIZON_DAYS)
+        target = e_date + timedelta(days=HORIZON_DAYS)
         if target > today:
             continue  # 4w horizon not matured yet
         # pending_data guard (Phase 2): both series must actually reach the exit date,
@@ -199,11 +214,12 @@ def main():
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             pending += 1
             continue
-        r = _ret(cur, ticker, as_of, HORIZON_DAYS)
-        b = _ret(cur, BENCHMARK, as_of, HORIZON_DAYS)
-        if r is None or b is None:
+        tr = t1_return(cur, ticker, as_of, HORIZON_DAYS)
+        br = t1_return(cur, BENCHMARK, as_of, HORIZON_DAYS)
+        if tr is None or br is None:
             pending += 1
             continue
+        r, b = tr["ret"], br["ret"]
         # stopped book (Phase 5.5) — same trade under the structural exit rule
         stopped = stopped_returns(cur, ticker, as_of, verdict, HORIZON_DAYS,
                                   benchmark=BENCHMARK, stop_loss=cfg.STOP_LOSS_PCT,
@@ -217,8 +233,9 @@ def main():
         if already is None:
             cur.execute("""
                 UPDATE longterm_agent_results
-                SET fwd_return_4w=%s, benchmark_return_4w=%s, outcome_filled_at=%s WHERE id=%s
-            """, [round(r, 4), round(b, 4), today, rid])
+                SET fwd_return_4w=%s, benchmark_return_4w=%s, outcome_filled_at=%s,
+                    entry_date=%s, entry_px=%s, fill_convention=%s WHERE id=%s
+            """, [round(r, 4), round(b, 4), today, e_date, e_px, FILL_CONVENTION, rid])
             graded += 1
         else:
             backfilled += 1
@@ -230,16 +247,17 @@ def main():
             cur.execute("UPDATE longterm_agent_results SET sector_benchmark=%s WHERE id=%s",
                         [sector_bm, rid])
         if no_sec_ret and sector_bm and sector_bm != "NONE":
-            sb = _ret(cur, sector_bm, as_of, HORIZON_DAYS)
-            if sb is not None:
+            sbr = t1_return(cur, sector_bm, as_of, HORIZON_DAYS)
+            if sbr is not None:
                 cur.execute("""UPDATE longterm_agent_results
                                SET sector_benchmark_return_4w=%s WHERE id=%s""",
-                            [round(sb, 4), rid])
+                            [round(sbr["ret"], 4), rid])
                 extras += 1
         # max adverse excursion over the horizon (exit-discipline / sizing target)
         if no_worst:
-            worst = worst_position_return(fetch_price_path(cur, ticker, as_of, HORIZON_DAYS),
-                                          verdict)
+            h_path = [(d, c) for d, c in fetch_price_path(cur, ticker, as_of, HORIZON_DAYS)
+                      if d <= e_date + timedelta(days=HORIZON_DAYS)]
+            worst = worst_position_return(h_path, verdict, e_px)
             if worst is not None:
                 cur.execute("""UPDATE longterm_agent_results
                                SET worst_position_return_4w=%s WHERE id=%s""", [worst, rid])

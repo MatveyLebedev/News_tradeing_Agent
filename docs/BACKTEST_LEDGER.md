@@ -119,6 +119,28 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   counter-trend calls in the decision delta, (c) no degradation of the #9 deep-nudge
   effect. ONE formulation: model choice and stage set are fixed here; no iterating
   variants (a different model or stage set = a new pre-registration).
+- **`monday_t1` — deploy-regime grid (pre-registered 2026-07-19, launched same day).**
+  Question: does the agent work in the regime it will actually trade — decide Monday
+  pre-open on fully digested weekend news, fill at Monday's open? ONE formulation:
+  cohorts Mondays 06:30 ET 2026-04-27..2026-07-13 (12; 4w fully matured through the
+  06-15 cohort at launch, the rest mature forward), the standard 30-ticker wf_30x set,
+  `LT_METRICS_VERSION=2 LT_DEEP_ANALYSIS=true LT_LLM_CACHE=true LT_MAX_REFLECTION=0`,
+  PIT feature cutoff active (tools/pit.py — Monday's session is NOT an input), fill
+  `open_d0` (Monday's own open; entry after every decision input), dual book:
+  T+2 diagnostic (Tuesday open, hold-only, `*_t2` columns) grades the SAME decisions.
+  Frozen criteria (before any results seen):
+  (a) primary — traded 4w mean excess vs SPY > +1pp (the #13 noise floor) ⇒ regime
+      validated; within ±1pp ⇒ inconclusive, no cutover claims; < −1pp ⇒ not validated;
+  (b) day-1 value — paired per-trade Δ = excess − excess_t2: mean Δ ≥ +0.5pp with
+      bootstrap 90% CI > 0 ⇒ keep morning-decide→Monday-open; otherwise switch the live
+      plan to Monday-post-close→Tuesday-open (information dominates);
+  (c) report-only mechanisms — share of traded signals whose driving news landed
+      Fri 16:00–Mon 06:30; conviction calibration no worse than wf_30x_f12; per-cohort
+      runtime (operational feasibility of an 06:30 live batch).
+  No variant iteration on this window; a different day/time/config = new registration.
+  Deploy note: adopting the regime live also means switching the live graders to
+  `open_d0` and moving the scheduler — a separate ops change after the verdict.
+
 ### Pre-registered, awaiting their window (formulations frozen — see linked sections)
 
 - **Consensus stage B re-exam (~2026-08+)** — the UNGUARDED #12 block on post-07-17
@@ -142,7 +164,47 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ### Telemetry / maintenance (no behavior change, no registration needed)
 
+- **Fill-convention fix `open_t1` — APPLIED 2026-07-19** (measurement only; decisions,
+  labels and prompts byte-identical, LLM cache intact). Entry = open of the first bar
+  strictly after as_of (was: last close ≤ as_of — for weekend live cohorts a price printed
+  before ~38h of news the decision had read); horizon anchors at entry; benchmarks same;
+  stop walk includes the entry-day close; decision-side price reads now use the
+  completed-session cutoff (`tools/pit.py` — no-op for weekend/pre-open as_of, PIT-correct
+  for future backtest cohorts). All measured books re-graded (6,215 rows; backup + full
+  side-by-side in `longterm_agent/reports/regrade_open_t1_2026-07-19.md`). Measured impact:
+  Friday backtest cohorts nearly unchanged (all-trades mean excess −0.18pp → +0.03pp;
+  per-experiment verdicts #1–#13 all survive, wf_30x_f12 4w traded excess +0.53pp → +0.85pp,
+  deep +1.78pp → +2.34pp — the old convention slightly UNDERSTATED them), traded-row mean
+  untradable gap ≈ +3bp; `shift_library` mean 4w +4.63% → +3.59% (−104bp) — analog base
+  rates were inflated by the untradable day-0/overnight component and now measure the
+  tradable quantity; 105 rows whose new exit window hasn't matured were reopened and
+  re-grade automatically. Live book had zero graded rows — it starts clean under `open_t1`
+  (first grades ≈ 2026-07-21). NOTE: the deployed longterm-agent container still grades
+  with the old code — redeploy before the next grading milestone, then re-run
+  `python -m longterm_agent.regrade_fill_convention --apply` once (idempotent) to catch
+  any rows the old grader touched in between.
+
 - **H-hedged-calibration** — log hedged-share / drama-share per live batch (also the
   mechanism metric for `wf_30x_strong`).
 - **Stopped book in forward_report** — show hold + stopped side by side (reporting only).
 - **12w horizons** of ids #8-13 mature through ~2026-09-11 — re-run grade (idempotent).
+- **PIT audit + fixes 2026-07-19 — APPLIED** (`docs/PIT_AUDIT_2026-07-19.md`;
+  `PIPELINE_VERSION` 0.8.0 → 0.9.0). Leakage found and closed in the deep-analysis tool
+  path (raw-Cypher gate now enforced in code + `move_*` stripped; intraday `move_1d`
+  maturity-masked; `Story.article_count` replaced by an as-of count; knowledge-date
+  gating added so an event is only visible once an article reporting it exists) and in
+  same-day document granularity (`document_cutoff` / `ingest_cutoff` on every as-of
+  reader — this was a POST-ENTRY leak under `open_d0`). Also: `full_signal_backtest.py`
+  moved to `open_t1`, analog windows anchored at `entry_date`, STALE-UNGRADED rows now
+  printed instead of silently skipped, and a cohort-block bootstrap CI added beside the
+  per-trade one (~5× wider on correlated cohorts — the per-trade CIs in every entry above
+  are correspondingly too narrow). Detection labels untouched (`DETECTION_VERSION`
+  stands); tool/prompt inputs changed, so runs across the bump are not like-for-like.
+  Measured on the live graph: the knowledge-date gate alone removes **half** the events a
+  30-day window returned (8 → 4 for NVDA at 2026-05-01). Consequences for this ledger:
+  #9 (`wf_30x_v0.2_deep`) and #11 ran with those holes open — #9's ACCEPT is to be
+  re-checked leak-free (`wf_30x_deep_pit`, demote-only per burned-grid); `monday_t1`
+  launched with them open too → treat the running sweep as a contaminated harness check
+  and re-run as `monday_t1_pit` under the same frozen criteria (harness-integrity re-run,
+  like the `open_t1` regrade — not a variant iteration). Open follow-up: the novelty
+  saturation constant is mis-scaled by the article-count unit change (see audit doc).

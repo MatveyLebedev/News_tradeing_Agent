@@ -8,12 +8,45 @@ long-term deep analysis see how the market ACTUALLY treated the window's events 
 reality check on the narrative ("the news says X is bad, but every X event was bought").
 
 Advisory only, like every deep-analysis tool. Pure formatter split out for tests.
+
+MATURITY: a realized `move_1d` only exists once the day AFTER the event has traded, so
+an event published shortly before `as_of` carries a reaction that extends PAST it. Such
+events are excluded from the move lookup entirely (they simply come back ungraded) —
+the guard sits at the read, where `as_of` is known, so no downstream formatter can
+forget it.
 """
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 import psycopg2
 from psycopg2.extras import Json
+
+from .pit import as_moment
+
+# Calendar days an event must predate `as_of` before its 1-day reaction counts as
+# realized. Two spans a weekend partially and is deliberately conservative: the cost of
+# over-masking is a missing advisory data point, the cost of under-masking is lookahead.
+MOVE_MATURITY_DAYS = 2
+
+
+def mature_move_ids(rows: List[tuple], as_of) -> List[int]:
+    """news_ids whose 1-day reaction had fully played out by `as_of`.
+
+    Pure so the leakage guard itself is unit-tested: `rows` are the agent_results tuples
+    (news_id, title, published, signals_json). An event published inside the maturity
+    window is excluded outright — its move_1d would extend past the decision.
+
+    Both sides go through `as_moment` because the two clocks differ in the DB:
+    `agent_results.news_published` is `timestamp WITH time zone` (psycopg2 hands back an
+    aware datetime) while `as_of` is naive ET — comparing them directly raises TypeError.
+    """
+    cutoff = as_moment(as_of) - timedelta(days=MOVE_MATURITY_DAYS)
+    out = []
+    for r in rows:
+        pub = as_moment(r[2]) if len(r) > 2 else None
+        if r[0] is not None and pub is not None and pub <= cutoff:
+            out.append(r[0])
+    return out
 
 
 def _signal_for(signals_json: list, ticker: str) -> Optional[dict]:
@@ -26,7 +59,11 @@ def _signal_for(signals_json: list, ticker: str) -> Optional[dict]:
 def format_reactions(rows: List[tuple], moves: Dict[int, float], ticker: str,
                      lookback_days: int) -> Dict[str, Any]:
     """Pure: agent_results rows + {news_id: move_1d} → graded-reaction summary.
-    A `hit` = predicted direction matches the sign of the realized 1-day move."""
+    A `hit` = predicted direction matches the sign of the realized 1-day move.
+
+    `moves` is expected to be maturity-filtered by the caller (see MOVE_MATURITY_DAYS);
+    an event with no entry there is reported with a null move and excluded from the
+    hit-rate denominator."""
     events, hits, graded = [], 0, 0
     for news_id, title, published, signals_json in rows:
         sig = _signal_for(signals_json, ticker)
@@ -92,5 +129,7 @@ def read_intraday_reactions(db_manager, neo4j_manager, ticker: str, as_of,
         return {"available": False, "note": f"agent_results read failed: {e}"}
     finally:
         conn.close()
-    moves = _realized_moves(neo4j_manager, tk, [r[0] for r in rows if r[0] is not None])
+    # Only events whose 1-day reaction had fully played out by as_of may contribute a
+    # realized move; the rest are never looked up, so they cannot leak one.
+    moves = _realized_moves(neo4j_manager, tk, mature_move_ids(rows, as_of))
     return format_reactions(rows, moves, tk, lookback_days)

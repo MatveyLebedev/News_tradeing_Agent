@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 
+from .pit import daily_bar_cutoff
+
 PCTILE_WINDOW_YEARS = 5
 PCTILE_MIN_OBS = 60          # below this a percentile is noise → None
 DGS10_SHOCK_BP = 40.0        # expert #28: Δ ≥ 40bp / 15 sessions = "hidden hike/cut"
@@ -95,16 +97,22 @@ def compute_regime_context(series: Dict[str, List[Tuple[date, float]]], as_of_da
 
 
 def regime_context_from_conn(conn, as_of) -> Dict[str, Any]:
-    """Snapshot via an existing psycopg2 connection (grading loops reuse theirs)."""
-    as_of_date = as_of.date() if hasattr(as_of, "date") else as_of
-    if as_of_date in _cache:
-        return _cache[as_of_date]
-    start = as_of_date - timedelta(days=365 * PCTILE_WINDOW_YEARS + 30)
+    """Snapshot via an existing psycopg2 connection (grading loops reuse theirs).
+
+    Values are daily closes (VIX, HY-OAS, 10Y, oil), so they follow the same
+    completed-session rule as price bars: the value dated D is not knowable until D
+    closes. Keyed and cached by that CUTOFF, not by the as_of date — two runs on the same
+    day either side of the close legitimately see different macro.
+    """
+    cutoff = daily_bar_cutoff(as_of)
+    if cutoff in _cache:
+        return _cache[cutoff]
+    start = cutoff - timedelta(days=365 * PCTILE_WINDOW_YEARS + 30)
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT series, date, value FROM macro_series
                            WHERE date <= %s AND date >= %s ORDER BY series, date""",
-                        [as_of_date, start])
+                        [cutoff, start])
             rows = cur.fetchall()
     except Exception as e:
         conn.rollback()
@@ -112,8 +120,8 @@ def regime_context_from_conn(conn, as_of) -> Dict[str, Any]:
     series: Dict[str, List[Tuple[date, float]]] = {}
     for name, d, v in rows:
         series.setdefault(name, []).append((d, float(v)))
-    ctx = compute_regime_context(series, as_of_date)
-    _cache[as_of_date] = ctx
+    ctx = compute_regime_context(series, cutoff)
+    _cache[cutoff] = ctx
     if len(_cache) > 256:  # bound memory across long grading sweeps
         _cache.pop(next(iter(_cache)))
     return ctx

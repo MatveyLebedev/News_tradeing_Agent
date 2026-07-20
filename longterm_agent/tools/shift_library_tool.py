@@ -7,8 +7,11 @@ write_shift_row: append the current shift's fingerprint at persistence time (out
 
 find_similar_shifts: return graded past shifts that resemble the current one, as a base
     rate for synthesis. Leakage rule: only analogs whose outcome window completed before
-    the current `as_of` (as_of_analog + horizon ≤ as_of). Version-filtered so fingerprints
-    are comparable. Empty library → n_analogs=0 (cold start handled gracefully).
+    the current `as_of`. The window is anchored where the trade actually is — at the
+    ENTRY bar (`entry_date + horizon ≤ as_of`), since under `open_t1` an analog's outcome
+    runs a few days past `as_of_analog + horizon`; rows graded before entry_date existed
+    fall back to the old as_of rule. Version-filtered so fingerprints are comparable.
+    Empty library → n_analogs=0 (cold start handled gracefully).
 
 Similarity (v1, no embeddings yet): same direction, ranked by |Δ magnitude_z| + causal-type
     overlap. The pgvector embedding column is reserved for a later upgrade.
@@ -51,6 +54,13 @@ def ensure_table(db_manager):
         conn = _conn(db_manager)
         with conn.cursor() as cur:
             cur.execute(ddl)
+            # Grading columns (added by grade_shifts on existing DBs). Ensured here too so
+            # the leakage filter in find_similar_shifts can rely on entry_date existing
+            # even if the grader has never run against this database.
+            cur.execute("""ALTER TABLE shift_library
+                           ADD COLUMN IF NOT EXISTS entry_date DATE,
+                           ADD COLUMN IF NOT EXISTS entry_px REAL,
+                           ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12)""")
         conn.commit()
         conn.close()
         return True
@@ -142,7 +152,7 @@ def find_similar_shifts(db_manager, ticker, as_of, agent_version, direction,
                 WHERE agent_version = %s
                   AND outcome_filled_at IS NOT NULL
                   AND fwd_return_4w IS NOT NULL
-                  AND as_of <= %s
+                  AND COALESCE(entry_date, as_of) <= %s
                   AND (%s IS NULL OR direction = %s)
             """, [agent_version, cutoff, direction, direction])
             rows = cur.fetchall()

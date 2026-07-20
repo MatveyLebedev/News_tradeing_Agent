@@ -68,10 +68,13 @@ def main():
     ap.add_argument("--versions", nargs=2, type=int, default=[1, 2], metavar=("OLD", "NEW"),
                     help="metric versions to compare; NEW's shifts are written to shift_library")
     ap.add_argument("--dry-run", action="store_true", help="no shift_library writes")
+    ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
     args = ap.parse_args()
     v_old, v_new = args.versions
 
     cfg = LongTermAgentConfig()
+    if args.trace:
+        cfg.enable_tracing()
     assert not cfg.CORPUS_EMBED_ENABLED, "comparison assumes the shared v1 corpus (embed off)"
     print(f"provenance: {cfg.provenance()}  |  comparing v{v_old} vs v{v_new} "
           f"(writing {VERSION_STR[v_new]} rows)")

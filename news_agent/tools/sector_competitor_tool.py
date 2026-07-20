@@ -3,12 +3,73 @@ Tool for analyzing sector and competitor stocks
 
 Note: Functions in this module are NOT decorated with @tool.
 They are called directly by wrapper functions in nodes.py that have @lc_tool decorator.
+
+NO NETWORK (2026-07-19 PIT audit). Sector/industry used to come from a live
+`yf.Ticker().info` call, which in a replayed cohort meant reading TODAY's classification —
+and, worse, made a backtest depend on a network round-trip, breaking the B0 reproducibility
+guarantee. They now resolve offline, point-in-time. Measured cost of the removal: none for
+the long-term agent (the curated map covers 119 of its 120 tickers, and the one gap, SQ,
+returns None from yfinance anyway), and none for ETFs (USO/SPY/TLT have no sector there
+either). It does drop sector labels for stocks outside the tracked universe (e.g. BABA,
+DAL) in the intraday agent — accepted: the long-term agent is the primary consumer, and
+`get_industry_competitors` already degrades sanely to the index proxies.
+
+Competitor PRICES were always point-in-time (`get_price_at_time`/`get_historical_prices`
+take the analysis timestamp) and are unchanged.
 """
-from typing import Dict, Any, List
-import yfinance as yf
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from langchain_core.tools import tool
 import json
+
+
+def resolve_sector_industry(ticker: str, db_manager: Any = None,
+                            timestamp: Optional[datetime] = None) -> Tuple[str, str]:
+    """Point-in-time (sector, industry) for a ticker, without touching the network.
+
+    1. The curated static map — deterministic, available at ANY as_of, and complete for
+       the tracked universe.
+    2. The stored yfinance `info` snapshot, read as-of (only covers dates from the first
+       snapshot onward, hence second).
+    3. 'Unknown' — the honest answer, and one `get_industry_competitors` already handles.
+
+    Imports are local so this module keeps no import-time dependency on longterm_agent
+    (which imports news_agent — a package-level cycle would break both).
+    """
+    tk = (ticker or "").upper()
+    if not tk:
+        return "Unknown", "Unknown"
+
+    try:
+        from longterm_agent.sector_map import SECTOR_OF, BASELINE_GROUP_OF
+        if tk in SECTOR_OF:
+            return SECTOR_OF[tk], BASELINE_GROUP_OF.get(tk, SECTOR_OF[tk])
+    except Exception:
+        pass
+
+    if db_manager is not None and timestamp is not None:
+        try:
+            import psycopg2
+            from longterm_agent.tools.pit import ingest_cutoff
+            conn = psycopg2.connect(**db_manager.db_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT data->>'sector', data->>'industry' FROM fundamentals
+                        WHERE ticker=%s AND source='yfinance' AND kind='info'
+                          AND fetch_date <= %s
+                          AND (created_at IS NULL OR created_at <= %s)
+                        ORDER BY fetch_date DESC LIMIT 1
+                    """, [tk, timestamp.date(), ingest_cutoff(timestamp)])
+                    row = cur.fetchone()
+            finally:
+                conn.close()
+            if row and row[0]:
+                return row[0], row[1] or "Unknown"
+        except Exception:
+            pass
+
+    return "Unknown", "Unknown"
 
 
 def analyze_sector_and_competitors(
@@ -31,13 +92,10 @@ def analyze_sector_and_competitors(
     """
     
     try:
-        # Get ticker info from Yahoo Finance
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        sector = info.get('sector', 'Unknown')
-        industry = info.get('industry', 'Unknown')
-        
+        # Point-in-time, offline (see module docstring): never a live lookup, so a
+        # replayed cohort cannot read today's classification.
+        sector, industry = resolve_sector_industry(ticker, db_manager, timestamp)
+
         print(f"✓ {ticker} - Sector: {sector}, Industry: {industry}")
         
         # Get competitors (if available)

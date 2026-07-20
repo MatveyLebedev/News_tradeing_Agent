@@ -109,14 +109,26 @@ def _new_stories(ticker, recent_start, as_of, neo4j_manager) -> List[Dict[str, A
     if neo4j_manager is None:
         return []
     try:
+        # Ranked by the story's size AS-OF, not s.article_count: that property keeps
+        # growing with coverage, so ordering by it let a replayed cohort promote the
+        # stories that would go on to get big. Events also need the knowledge-date gate
+        # (an article published later can describe an earlier event) — same rule as
+        # news_agent.tools.graph_tools._known_by, inlined to keep this module standalone.
         rows = neo4j_manager.query(
             """
             MATCH (s:Story)
             WHERE $t IN s.tickers
               AND s.start_date >= datetime($rs) AND s.start_date <= datetime($ao)
+            OPTIONAL MATCH (e:Event)-[:PART_OF]->(s)
+            WHERE e.date <= datetime($ao)
+              AND EXISTS { MATCH (e)-[sf:SOURCED_FROM]->(:Article)
+                           WHERE sf.published_at IS NULL
+                              OR sf.published_at <= datetime($ao) }
+            OPTIONAL MATCH (e)-[sf2:SOURCED_FROM]->(a:Article)
+            WHERE sf2.published_at IS NULL OR sf2.published_at <= datetime($ao)
             RETURN s.label AS label, toString(s.start_date) AS start_date,
-                   s.article_count AS article_count
-            ORDER BY coalesce(s.article_count, 0) DESC
+                   count(DISTINCT a) AS article_count
+            ORDER BY article_count DESC
             LIMIT 10
             """,
             {"t": ticker.upper(), "rs": recent_start.isoformat(), "ao": as_of.isoformat()},

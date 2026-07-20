@@ -1,13 +1,20 @@
 """
 AS-OF readers over the 9.x advisory tables (filings / insider_trades / options_iv /
 short-interest snapshot) — consumed by deep-analysis tools. All reads are point-in-time
-(filed_date / snapshot_date / fetch_date ≤ as_of) and degrade to {"available": False}
-when a table is missing or empty. Pure formatters are split out for unit tests.
+and degrade to {"available": False} when a table is missing or empty. Pure formatters
+are split out for unit tests.
+
+Cutoffs (tools/pit.py): third-party `filed_date`s go through `document_cutoff` (a filing
+dated D is knowable only after D's session closes), while our own snapshots go through
+`ingest_cutoff` on the row's `fetched_at` (knowable from the moment we pulled it). A bare
+`<= as_of.date()` would let a pre-open decision read a filing accepted that afternoon.
 """
 from datetime import timedelta
 from typing import Any, Dict, List
 
 import psycopg2
+
+from .pit import document_cutoff, ingest_cutoff
 
 
 def _conn(db_manager):
@@ -35,7 +42,8 @@ def read_recent_filings(db_manager, ticker: str, as_of, days: int = 45,
             FROM filings
             WHERE ticker=%s AND filed_date <= %s AND filed_date >= %s
             ORDER BY filed_date DESC LIMIT %s
-        """, [ticker.upper(), as_of.date(), as_of.date() - timedelta(days=days), limit])
+        """, [ticker.upper(), document_cutoff(as_of),
+              as_of.date() - timedelta(days=days), limit])
     except Exception as e:
         return {"available": False, "note": f"filings read failed: {e}"}
     if not rows:
@@ -77,7 +85,8 @@ def read_insider_activity(db_manager, ticker: str, as_of, days: int = 90) -> Dic
             FROM insider_trades
             WHERE ticker=%s AND filed_date <= %s AND filed_date >= %s
             ORDER BY filed_date DESC
-        """, [ticker.upper(), as_of.date(), as_of.date() - timedelta(days=days)])
+        """, [ticker.upper(), document_cutoff(as_of),
+              as_of.date() - timedelta(days=days)])
     except Exception as e:
         return {"available": False, "note": f"insider read failed: {e}"}
     return format_insider(rows, days)
@@ -87,16 +96,21 @@ def read_insider_activity(db_manager, ticker: str, as_of, days: int = 90) -> Dic
 def read_options_iv(db_manager, ticker: str, as_of) -> Dict[str, Any]:
     """Latest IV snapshot as-of + a 30d-back reference for the trend direction."""
     try:
+        # Our own chain pull: visible from the moment it was fetched, so `fetched_at`
+        # (not the snapshot's calendar date) is the PIT key.
+        ingest = ingest_cutoff(as_of)
         rows = _q(db_manager, """
             SELECT snapshot_date, data FROM options_iv
             WHERE ticker=%s AND snapshot_date <= %s
+              AND (fetched_at IS NULL OR fetched_at <= %s)
             ORDER BY snapshot_date DESC LIMIT 1
-        """, [ticker.upper(), as_of.date()])
+        """, [ticker.upper(), as_of.date(), ingest])
         back = _q(db_manager, """
             SELECT snapshot_date, data FROM options_iv
             WHERE ticker=%s AND snapshot_date <= %s
+              AND (fetched_at IS NULL OR fetched_at <= %s)
             ORDER BY snapshot_date DESC LIMIT 1
-        """, [ticker.upper(), as_of.date() - timedelta(days=30)])
+        """, [ticker.upper(), as_of.date() - timedelta(days=30), ingest])
     except Exception as e:
         return {"available": False, "note": f"options read failed: {e}"}
     if not rows:
@@ -120,8 +134,9 @@ def read_short_interest(db_manager, ticker: str, as_of) -> Dict[str, Any]:
         rows = _q(db_manager, """
             SELECT fetch_date, data FROM fundamentals
             WHERE ticker=%s AND source='yfinance' AND kind='info' AND fetch_date <= %s
+              AND (created_at IS NULL OR created_at <= %s)
             ORDER BY fetch_date DESC LIMIT 1
-        """, [ticker.upper(), as_of.date()])
+        """, [ticker.upper(), as_of.date(), ingest_cutoff(as_of)])
     except Exception as e:
         return {"available": False, "note": f"short-interest read failed: {e}"}
     if not rows:

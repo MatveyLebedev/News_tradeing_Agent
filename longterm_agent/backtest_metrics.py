@@ -170,6 +170,45 @@ def benjamini_hochberg(pvalues: Sequence[Optional[float]], alpha: float = 0.05):
     return reject, crit
 
 
+def bootstrap_ci_blocks(
+    blocks: Sequence[Sequence[Number]],
+    stat_fn: Callable[[Sequence[Number]], Optional[float]],
+    n_boot: int = 2000,
+    alpha: float = 0.05,
+    seed: int = 1234,
+) -> Tuple[Optional[float], Optional[float]]:
+    """Percentile bootstrap CI that resamples BLOCKS (cohorts) instead of single trades.
+
+    The per-trade `bootstrap_ci` assumes independent observations, which this design does not
+    provide: weekly cohorts overlap at multi-week horizons, and every ticker inside one cohort
+    shares the same market week — so trades are positively correlated and the per-trade
+    interval comes out too narrow (overstating what the sample proves). Resampling whole
+    cohorts with replacement preserves the within-cohort dependence, so the width reflects the
+    number of INDEPENDENT time periods rather than the number of rows.
+
+    `blocks`: one sequence of values per cohort. Deterministic given `seed`, like its sibling.
+    Returns (lo, hi), or (None, None) with fewer than 2 non-empty blocks.
+    """
+    bs = [[v for v in b if v is not None] for b in blocks]
+    bs = [b for b in bs if b]
+    if len(bs) < 2:
+        return (None, None)
+    rng = random.Random(seed)
+    n = len(bs)
+    stats: List[float] = []
+    for _ in range(n_boot):
+        pooled: List[float] = []
+        for _ in range(n):
+            pooled.extend(bs[rng.randrange(n)])
+        s = stat_fn(pooled)
+        if s is not None:
+            stats.append(s)
+    if not stats:
+        return (None, None)
+    stats.sort()
+    return (_quantile(stats, alpha / 2), _quantile(stats, 1 - alpha / 2))
+
+
 def bootstrap_ci(
     values: Sequence[Number],
     stat_fn: Callable[[Sequence[Number]], Optional[float]],
@@ -178,7 +217,10 @@ def bootstrap_ci(
     seed: int = 1234,
 ) -> Tuple[Optional[float], Optional[float]]:
     """Percentile bootstrap CI for an arbitrary statistic of `values`. Deterministic given seed
-    (so a report re-run is byte-stable, matching B0). Returns (lo, hi) or (None, None)."""
+    (so a report re-run is byte-stable, matching B0). Returns (lo, hi) or (None, None).
+
+    Treats the values as independent — see `bootstrap_ci_blocks` for the cohort-aware version
+    that does not, and report the two side by side."""
     xs = [v for v in values if v is not None]
     if len(xs) < 2:
         return (None, None)

@@ -8,6 +8,11 @@ grades it against the realized forward excess return vs SPY.
 Key metric = mean STRATEGY excess: for a LONG you earn +excess, for a SHORT you earn −excess.
 Only signals that PASS the risk gate count as trades.
 
+Fill convention `open_t1` (exit_rules), same as every other book: entry = OPEN of the first
+bar strictly after as_of, horizon anchored at that entry. This script used to grade with the
+legacy close-to-close helper, which entered at the last close ≤ as_of — a price printed
+before news the decision had already read, with the untradable gap credited to the trade.
+
 Leans on the warm bucket cache (re-use the detection-replay tickers/cohorts) and runs with
 reflection off (set LT_MAX_REFLECTION=0) to keep cost down.
 
@@ -23,7 +28,7 @@ import psycopg2
 
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph
-from longterm_agent.grade_shifts import _ret
+from longterm_agent.exit_rules import FILL_CONVENTION, t1_return
 from news_agent.database.db_manager import DBManager
 
 
@@ -42,9 +47,12 @@ def main():
     ap.add_argument("--end", required=True)
     ap.add_argument("--step", type=int, default=7)
     ap.add_argument("--horizon", type=int, default=28)
+    ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
+    if args.trace:
+        cfg.enable_tracing()
     from longterm_agent.llm_cache import maybe_enable_llm_cache
     maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible backtest (B0)
     print(f"provenance: {cfg.provenance()}")
@@ -94,9 +102,9 @@ def main():
     for r in results:
         if r.get("dir") is None:
             continue
-        fwd = _ret(cur, r["tk"], r["as_of"].date(), args.horizon)
-        spy = _ret(cur, "SPY", r["as_of"].date(), args.horizon)
-        r["excess"] = (fwd - spy) if (fwd is not None and spy is not None) else None
+        fwd = t1_return(cur, r["tk"], r["as_of"].date(), args.horizon)
+        spy = t1_return(cur, "SPY", r["as_of"].date(), args.horizon)
+        r["excess"] = (fwd["ret"] - spy["ret"]) if (fwd and spy) else None
     conn.close()
 
     # ---- report ----
@@ -107,7 +115,7 @@ def main():
     traded = [r for r in results if r.get("passed") and r.get("dir") in ("LONG", "SHORT") and r.get("excess") is not None]
 
     print("\n" + "=" * 70)
-    print("FULL-SIGNAL BACKTEST RESULT")
+    print(f"FULL-SIGNAL BACKTEST RESULT  (fill convention: {FILL_CONVENTION})")
     print("=" * 70)
     print(f"runs={len(results)}  no_data={sum(1 for r in results if r.get('verdict') == 'NO_DATA')}")
     print(f"signals={len(allsig)}  direction mix={dict(Counter(r['dir'] for r in allsig))}")

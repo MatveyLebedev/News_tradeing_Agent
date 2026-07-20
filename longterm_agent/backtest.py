@@ -27,10 +27,16 @@ from psycopg2.extras import Json
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _ret
 from longterm_agent.stats import trade_excess
+from longterm_agent.tools.pit import daily_bar_cutoff
 from longterm_agent import backtest_metrics as M
 
 _DDL = Path(__file__).parent / "create_backtest_runs_table.sql"
 MIN_N = 30  # below this the report prints an ESTIMATE banner instead of a verdict
+# Grace period past a row's expected maturity before its missing outcome is reported as
+# STALE-UNGRADED. The graders skip rows whose price series never reaches the exit date
+# (halt, delisting, a ticker the fetcher dropped) — silently, which is exactly how a
+# worst-case outcome disappears from a book instead of scoring in it.
+STALE_GRACE_DAYS = 14
 
 
 # --------------------------------------------------------------------------- db helpers
@@ -50,7 +56,13 @@ def _ensure_table(cfg):
                        ADD COLUMN IF NOT EXISTS excess_stopped REAL,
                        ADD COLUMN IF NOT EXISTS exit_reason VARCHAR(12),
                        ADD COLUMN IF NOT EXISTS exit_days INTEGER,
-                       ADD COLUMN IF NOT EXISTS regime_context JSONB""")
+                       ADD COLUMN IF NOT EXISTS regime_context JSONB,
+                       ADD COLUMN IF NOT EXISTS entry_date DATE,
+                       ADD COLUMN IF NOT EXISTS entry_px REAL,
+                       ADD COLUMN IF NOT EXISTS fill_convention VARCHAR(12),
+                       ADD COLUMN IF NOT EXISTS fwd_return_t2 REAL,
+                       ADD COLUMN IF NOT EXISTS benchmark_return_t2 REAL,
+                       ADD COLUMN IF NOT EXISTS excess_t2 REAL""")
     conn.commit()
     conn.close()
 
@@ -64,8 +76,15 @@ def _weekly(start, end, step):
 
 
 def _regime(cur, as_of: date, lookback=60, band=0.03):
-    """Market regime at as_of from SPY's trailing return: bull / bear / flat."""
-    r = _ret(cur, "SPY", as_of - timedelta(days=lookback), lookback)
+    """Market regime at as_of from SPY's trailing return: bull / bear / flat.
+
+    The window ends at the last COMPLETED session, not the as_of day itself — that day's
+    close prints hours after a midnight/pre-open cohort stamp. Label only (it drives the
+    report's regime split, never a decision), but a split keyed on a same-day close is
+    still attributing outcomes to a regime the decision could not observe.
+    """
+    end = daily_bar_cutoff(as_of)
+    r = _ret(cur, "SPY", end - timedelta(days=lookback), lookback)
     if r is None:
         return None
     return "bull" if r > band else ("bear" if r < -band else "flat")
@@ -200,13 +219,21 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
 
 
 # --------------------------------------------------------------------------- grade
-def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
+def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_book=False):
     """Fill realized outcome + regime for matured rows — BOTH books: hold-to-horizon
     (fwd_return/excess, back-compat) and stopped (Phase 5.5 exit discipline). Rows graded
     before 5.5 get their stopped columns backfilled idempotently; hold columns are never
-    overwritten. `benchmark` is the comparison index (B3: SPY or a sector ETF)."""
-    from longterm_agent.exit_rules import stopped_returns
+    overwritten. `benchmark` is the comparison index (B3: SPY or a sector ETF).
+
+    fill="d0" fills PRE-OPEN cohorts at the as_of day's own open (open_d0 — legal only
+    when the run used the PIT feature cutoff, i.e. any post-2026-07-19 sweep).
+    dual_book additionally fills the diagnostic next-bar book (fwd/benchmark/excess_t2)
+    — the paired day-1-value study; hold-only by design (no stopped leg)."""
+    from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_D0,
+                                           entry_bar, stopped_returns, t1_return)
     from longterm_agent.tools.regime_tool import regime_context_from_conn
+    d0 = fill == "d0"
+    convention = FILL_CONVENTION_D0 if d0 else FILL_CONVENTION
     _ensure_table(cfg)
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
@@ -230,18 +257,36 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
                 cur.execute("UPDATE backtest_runs SET regime_context=%s WHERE id=%s",
                             [Json(ctx), rid])
                 stamped += 1
-        if as_of + timedelta(days=horizon) > today:
-            continue  # horizon not matured yet
-        fwd = _ret(cur, ticker, as_of, horizon)
-        bench = _ret(cur, benchmark, as_of, horizon)
-        if fwd is None:
+        eb = entry_bar(cur, ticker, as_of, include_asof_day=d0)
+        if eb is None:
+            continue  # entry bar not in stock_prices_daily yet; retry next run
+        if eb[0] + timedelta(days=horizon) > today:
+            continue  # horizon not matured yet (anchored at the open-entry bar)
+        tr = t1_return(cur, ticker, as_of, horizon, include_asof_day=d0)
+        br = t1_return(cur, benchmark, as_of, horizon, include_asof_day=d0)
+        if tr is None:
             continue  # missing prices; retry next run
+        fwd = tr["ret"]
+        bench = br["ret"] if br else None
+        # diagnostic next-bar book (dual_book): same decision, entry one bar later —
+        # the paired delta prices day-1 of the move
+        if dual_book:
+            t2 = t1_return(cur, ticker, as_of, horizon, nth=2, include_asof_day=d0)
+            b2 = t1_return(cur, benchmark, as_of, horizon, nth=2, include_asof_day=d0)
+            if t2 is not None:
+                ex2 = trade_excess(direction, t2["ret"], b2["ret"] if b2 else None)
+                cur.execute("""UPDATE backtest_runs SET fwd_return_t2=%s,
+                               benchmark_return_t2=%s, excess_t2=%s WHERE id=%s""",
+                            [round(t2["ret"], 4),
+                             round(b2["ret"], 4) if b2 else None,
+                             round(ex2, 4) if ex2 is not None else None, rid])
         # stopped book (traded directional rows only — the exit rule is a trade property)
         stopped = None
         if direction in ("LONG", "SHORT"):
             stopped = stopped_returns(cur, ticker, as_of, direction, horizon,
                                       benchmark=benchmark, stop_loss=cfg.STOP_LOSS_PCT,
-                                      take_profit=cfg.TAKE_PROFIT_PCT)
+                                      take_profit=cfg.TAKE_PROFIT_PCT,
+                                      include_asof_day=d0)
         if stopped:
             ex_st = trade_excess(direction, stopped["fwd"], stopped["bench"])
             cur.execute("""UPDATE backtest_runs SET fwd_return_stopped=%s,
@@ -253,9 +298,11 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY"):
         if already is None:
             ex = trade_excess(direction, fwd, bench) if direction in ("LONG", "SHORT") else None
             cur.execute("""UPDATE backtest_runs SET fwd_return=%s, benchmark_return=%s, excess=%s,
-                           regime=%s, outcome_filled_at=%s WHERE id=%s""",
+                           regime=%s, outcome_filled_at=%s,
+                           entry_date=%s, entry_px=%s, fill_convention=%s WHERE id=%s""",
                         [round(fwd, 4), round(bench, 4) if bench is not None else None,
-                         round(ex, 4) if ex is not None else None, _regime(cur, as_of), today, rid])
+                         round(ex, 4) if ex is not None else None, _regime(cur, as_of), today,
+                         eb[0], eb[1], convention, rid])
             graded += 1
         else:
             backfilled += 1
@@ -278,7 +325,8 @@ def _ci(lo, hi, pct=True):
     return f"[{f(lo)}, {f(hi)}]"
 
 
-def report(cfg, backtest_id):
+def report(cfg, backtest_id, asof_today=None):
+    today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
     cur = conn.cursor()
     cur.execute("""SELECT horizon_days, ticker, as_of, direction, conviction, traded,
@@ -321,6 +369,16 @@ def report(cfg, backtest_id):
         ex = [r["excess"] for r in graded]
         print("\n" + "-" * 74)
         print(f"HORIZON {h//7}w ({h}d):  signals={len(hr)}  traded={len(traded)}  graded={len(graded)}")
+        # A trade whose prices never arrive is dropped by the graders forever. Left silent,
+        # that is survivorship in the worst direction: a halt or delisting mid-horizon is
+        # the outcome most likely to be missing AND most likely to be catastrophic.
+        stale = [r for r in traded if r["excess"] is None
+                 and r["as_of"] + timedelta(days=h + STALE_GRACE_DAYS) < today]
+        if stale:
+            print(f"  ⚠ STALE-UNGRADED: {len(stale)} traded row(s) >{STALE_GRACE_DAYS}d past "
+                  f"maturity with no outcome (price series never reached the exit — halt / "
+                  f"delisting / missing bars). NOT in the numbers below: "
+                  f"{sorted({r['ticker'] for r in stale})}")
         if not graded:
             print("  no graded trades yet (horizons not matured / prices missing).")
             continue
@@ -329,13 +387,21 @@ def report(cfg, backtest_id):
         wr = M.win_rate(ex)
         wr_ci = M.bootstrap_ci(ex, M.win_rate)
         mean_ci = M.bootstrap_ci(ex, lambda s: M.distribution(s)["mean"])
+        # Trades inside one cohort share a market week, and weekly cohorts overlap at these
+        # horizons — so the per-trade CI is too narrow. The cohort-block CI resamples whole
+        # weeks; when the two disagree, the block one is the honest width.
+        cohort_blocks = [[r["excess"] for r in graded if r["as_of"] == c]
+                         for c in sorted({r["as_of"] for r in graded})]
+        mean_ci_blk = M.bootstrap_ci_blocks(cohort_blocks,
+                                            lambda s: M.distribution(s)["mean"])
         print(f"  win rate     : {wr:.0%}   CI {_ci(*wr_ci)}{gate}")
         print(f"  mean excess  : {_pct(d['mean'])}   CI {_ci(*mean_ci)}")
+        print(f"               : cohort-block CI {_ci(*mean_ci_blk)} "
+              f"({len(cohort_blocks)} cohorts — corrects for within-week correlation)")
         print(f"  median / IQR : {_pct(d['median'])}   [{_pct(d['p25'])}, {_pct(d['p75'])}]   "
               f"min {_pct(d['min'])}  max {_pct(d['max'])}")
         # portfolio view: per-cohort mean excess → Sharpe/IR + drawdown of the equity curve
-        series = [M.distribution([r["excess"] for r in graded if r["as_of"] == c])["mean"]
-                  for c in sorted({r["as_of"] for r in graded})]
+        series = [M.distribution(b)["mean"] for b in cohort_blocks]
         print(f"  Sharpe/IR    : {('  n/a' if M.sharpe(series) is None else f'{M.sharpe(series):.2f}')} "
               f"(per-cohort)   max drawdown {_pct(M.max_drawdown(series))}")
 
@@ -453,18 +519,35 @@ def main():
     ap.add_argument("--no-grade", action="store_true", help="skip grading")
     ap.add_argument("--benchmark", default="SPY", help="benchmark ticker (B3: SPY or a sector ETF)")
     ap.add_argument("--asof-today", help="override 'today' for grading (YYYY-MM-DD)")
+    ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
+    ap.add_argument("--at", default=None, metavar="HH:MM",
+                    help="time-of-day for every cohort as_of (e.g. 06:30 for pre-open "
+                         "Monday cohorts; default midnight)")
+    ap.add_argument("--fill", choices=["t1", "d0"], default="t1",
+                    help="fill convention for grading: t1 = open of the bar AFTER the "
+                         "as_of day (legacy grids); d0 = the as_of day's own open "
+                         "(pre-open cohorts under the PIT feature cutoff)")
+    ap.add_argument("--dual-book", action="store_true",
+                    help="also grade the diagnostic next-bar book (fwd/excess_t2) — "
+                         "paired day-1-value study")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
+    if args.trace:
+        cfg.enable_tracing()
     if not args.report_only:
         if args.tickers and args.start and args.end:
             cohorts = _weekly(datetime.strptime(args.start, "%Y-%m-%d"),
                               datetime.strptime(args.end, "%Y-%m-%d"), args.step)
+            if args.at:
+                hh, mm = map(int, args.at.split(":"))
+                cohorts = [c + timedelta(hours=hh, minutes=mm) for c in cohorts]
             run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id,
                         args.force, args.workers)
         if not args.no_grade:
-            grade(cfg, args.backtest_id, args.asof_today, args.benchmark)
-    report(cfg, args.backtest_id)
+            grade(cfg, args.backtest_id, args.asof_today, args.benchmark,
+                  fill=args.fill, dual_book=args.dual_book)
+    report(cfg, args.backtest_id, args.asof_today)
 
 
 if __name__ == "__main__":

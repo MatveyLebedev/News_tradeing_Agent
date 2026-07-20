@@ -1,6 +1,20 @@
 """
 Graph tools for TradingAgent — 12 LangChain tools backed by Neo4j + pgvector.
 All Cypher queries filter e.date <= timestamp (published_at of the article being analyzed).
+
+TWO clocks, both enforced (2026-07-19 PIT audit):
+
+  * `e.date` — when the event HAPPENED. Necessary but not sufficient: an article published
+    today can describe a probe that started in May, and `e.date <= $pub` alone would let a
+    May-dated decision read it. `_known_by()` adds the second gate — the event must be
+    sourced from an article published by $pub. (NULL `published_at` passes: ~4% of edges
+    predate the property, and the convention matches what search_events always did. On the
+    live graph this gate removes ~half the events a 30-day ticker window returns.)
+  * `Story.article_count` — a LIVE counter incremented as coverage accrues, so reading it
+    tells a replayed decision how big the narrative eventually became. It is also lossy
+    (story merges add 1 instead of absorbing the merged count, so it undercounts by an
+    order of magnitude on big stories). Both readers now count in-date sourcing articles
+    instead; see STORY_SATURATION_ARTICLES for the calibration consequence.
 """
 import json
 import os
@@ -14,6 +28,21 @@ if str(_REPO_ROOT) not in sys.path:
 from model_config import EMBEDDING_MODEL
 
 from langchain_core.tools import tool
+
+# "Fully covered story" saturation point for the novelty score. Unchanged round prior,
+# but the UNIT changed with the PIT fix (in-date sourcing articles instead of the drifting
+# Story.article_count), so the old and new scores are not comparable and the constant is
+# due a calibration pass — see docs/PIT_AUDIT_2026-07-19.md.
+STORY_SATURATION_ARTICLES = 100.0
+
+
+def _known_by(var: str = "e") -> str:
+    """Cypher predicate: event `var` was reported by an article published on/before $pub.
+
+    The knowledge-date gate that `e.date <= $pub` cannot provide (see module docstring).
+    """
+    return (f"EXISTS {{ MATCH ({var})-[sf:SOURCED_FROM]->(:Article) "
+            f"WHERE sf.published_at IS NULL OR sf.published_at <= datetime($pub) }}")
 
 
 def create_graph_tools(neo4j_manager, db_manager, timestamp):
@@ -37,8 +66,9 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
             MATCH (e:Event)-[r:AFFECTS]->(c:Company {ticker: $ticker})
             WHERE e.date <= datetime($pub)
               AND e.date >= datetime($pub) - duration({days: $days})
+              AND """ + _known_by("e") + """
             OPTIONAL MATCH (e)-[cause:CAUSES|RELATED_TO]-(other:Event)
-            WHERE other.date <= datetime($pub)
+            WHERE other.date <= datetime($pub) AND """ + _known_by("other") + """
             RETURN e.id AS id, e.name AS name, e.type AS type,
                    e.description AS description, e.date AS date,
                    r.sentiment AS sentiment, r.confidence AS confidence,
@@ -140,6 +170,7 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
               AND s.start_date <= datetime($pub)
             MATCH (e:Event)-[:PART_OF]->(s)
             WHERE e.date <= datetime($pub)
+              AND """ + _known_by("e") + """
             WITH s, collect({name: e.name, type: e.type, date: e.date}) AS events,
                  count(e) AS event_count
             ORDER BY event_count DESC LIMIT 3
@@ -184,14 +215,17 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
               AND s.start_date <= datetime($pub)
             MATCH (e:Event)-[:PART_OF]->(s)
             WHERE e.date <= datetime($pub)
-            WITH s, count(e) AS event_count,
+              AND """ + _known_by("e") + """
+            OPTIONAL MATCH (e)-[sf:SOURCED_FROM]->(a:Article)
+            WHERE sf.published_at IS NULL OR sf.published_at <= datetime($pub)
+            WITH s, count(DISTINCT e) AS event_count,
+                 count(DISTINCT a) AS article_count,
                  duration.between(s.start_date, datetime($pub)).days AS days_active
             RETURN s.label AS label, s.domain AS domain,
-                   s.article_count AS article_count,
-                   event_count, days_active,
+                   article_count, event_count, days_active,
                    CASE WHEN days_active > 0
-                        THEN toFloat(s.article_count) / days_active
-                        ELSE toFloat(s.article_count) END AS articles_per_day
+                        THEN toFloat(article_count) / days_active
+                        ELSE toFloat(article_count) END AS articles_per_day
             ORDER BY articles_per_day DESC LIMIT 5
         """, {"q": q, "pub": pub_iso})
         return json.dumps(rows, default=str)
@@ -204,9 +238,9 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
         energy stocks rally' with actual percentage moves at each link."""
         rows = neo4j_manager.query(f"""
             MATCH (start:Event {{id: $id}})
-            WHERE start.date <= datetime($pub)
+            WHERE start.date <= datetime($pub) AND {_known_by("start")}
             MATCH path = (start)-[:CAUSES|RELATED_TO*1..{int(depth)}]-(related:Event)
-            WHERE related.date <= datetime($pub)
+            WHERE related.date <= datetime($pub) AND {_known_by("related")}
             OPTIONAL MATCH (related)-[aff:AFFECTS]->(c:Company)
             WITH related, path,
                  collect(DISTINCT {{
@@ -302,23 +336,34 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
         high_sim_news = [n for n in similar_news[:5] if n.get("similarity", 0) >= STORY_SIM_THRESHOLD]
         if high_sim_news:
             news_ids = [n["id"] for n in high_sim_news]
+            # Story saturation must be measured AS-OF: s.article_count is a live counter,
+            # so it would tell a replayed decision how big the narrative eventually got.
             story_rows = neo4j_manager.query("""
-                MATCH (e:Event)-[:SOURCED_FROM]->(a:Article)
-                WHERE a.news_id IN $ids AND e.date <= datetime($pub)
-                MATCH (e)-[:PART_OF]->(s:Story)
+                MATCH (seed:Event)-[:SOURCED_FROM]->(a0:Article)
+                WHERE a0.news_id IN $ids AND seed.date <= datetime($pub)
+                MATCH (seed)-[:PART_OF]->(s:Story)
                 WHERE coalesce(s.status, 'active') = 'active'
-                RETURN DISTINCT s.label AS label, s.article_count AS article_count,
-                       s.domain AS domain
-                ORDER BY s.article_count DESC LIMIT 3
+                WITH DISTINCT s
+                OPTIONAL MATCH (e:Event)-[:PART_OF]->(s)
+                WHERE e.date <= datetime($pub)
+                  AND """ + _known_by("e") + """
+                OPTIONAL MATCH (e)-[sf:SOURCED_FROM]->(a:Article)
+                WHERE sf.published_at IS NULL OR sf.published_at <= datetime($pub)
+                RETURN s.label AS label, s.domain AS domain,
+                       count(DISTINCT a) AS article_count
+                ORDER BY article_count DESC LIMIT 3
             """, {"ids": news_ids, "pub": pub_iso})
             if story_rows:
                 max_article_count = max(r.get("article_count", 0) or 0 for r in story_rows)
 
-        # Saturation cap: 100 articles = fully covered story.
+        # Saturation cap: STORY_SATURATION_ARTICLES = fully covered story.
         # The previous cap of 15 was too aggressive — it penalised even minor
-        # coverage (15+ articles) the same as a 500-article megastory.
+        # coverage (15+ articles) the same as a 500-article megastory. NOTE: the input
+        # is now the as-of article count (see the query above), a different and larger
+        # unit than the old s.article_count — scores before/after the PIT fix are not
+        # comparable and the cap is due a calibration pass.
         similarity_factor = max(0.0, 1.0 - max_similarity)
-        article_factor = max(0.0, 1.0 - min(max_article_count / 100.0, 1.0))
+        article_factor = max(0.0, 1.0 - min(max_article_count / STORY_SATURATION_ARTICLES, 1.0))
         novelty_score = round(similarity_factor * 0.6 + article_factor * 0.4, 2)
 
         return json.dumps({
@@ -352,6 +397,7 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
             WHERE e.date <= datetime($pub)
               AND e.date >= datetime($pub) - duration({days: $days})
               AND r.move_40m IS NOT NULL
+              AND """ + _known_by("e") + """
             WITH c.ticker AS ticker, collect(r.move_40m) AS moves
             WHERE size(moves) >= 2
             RETURN ticker,

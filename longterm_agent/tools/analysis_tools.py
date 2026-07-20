@@ -24,6 +24,7 @@ from .fundamentals_tool import read_consensus, read_fundamentals
 from .intraday_tool import read_intraday_reactions
 from .technical_tool import compute_daily_technicals
 from .news_corpus_tool import get_company_news_corpus
+from .pit import as_moment, max_moment
 from .shift_library_tool import find_similar_shifts
 
 # Curated subset of create_graph_tools we expose (the rest — price/validate/macro replay —
@@ -42,15 +43,62 @@ _BLOCKED_CYPHER = re.compile(
     r"\b(CREATE|MERGE|DELETE|SET|REMOVE|DROP|DETACH|FOREACH|PERIODIC|CALL|LOAD\s+CSV)\b",
     re.IGNORECASE)
 
+# Realized post-event price reactions. The curated tools expose these with per-horizon
+# maturity masking; raw Cypher cannot be trusted to reproduce that, and a model asking
+# for `r.move_1d` on a fresh event is asking for the answer — so they are stripped here
+# unconditionally rather than gated.
+_MOVE_KEYS = {"move_15m", "move_40m", "move_4h", "move_1d"}
+
+
+def _clip_strings(node, limit):
+    """Clip oversized string values so a single blob field cannot crowd out every row."""
+    if isinstance(node, dict):
+        return {k: _clip_strings(v, limit) for k, v in node.items()}
+    if isinstance(node, (list, tuple)):
+        return [_clip_strings(v, limit) for v in node]
+    if isinstance(node, str) and len(node) > limit:
+        return node[:limit] + "…"
+    return node
+
+
+def _strip_moves(node):
+    """Recursively remove _MOVE_KEYS. Returns (scrubbed_value, stripped_anything)."""
+    if isinstance(node, dict):
+        out, hit = {}, False
+        for k, v in node.items():
+            if k in _MOVE_KEYS:
+                hit = True
+                continue
+            sv, sh = _strip_moves(v)
+            out[k] = sv
+            hit = hit or sh
+        return out, hit
+    if isinstance(node, (list, tuple)):
+        vals, hit = [], False
+        for v in node:
+            sv, sh = _strip_moves(v)
+            vals.append(sv)
+            hit = hit or sh
+        return vals, hit
+    return node, False
+
 
 def make_graph_query_tool(neo4j_manager: Any, as_of, max_rows: int = 50, max_chars: int = 2500):
-    """Factory for a READ-ONLY raw-Cypher tool bound to the graph and the analysis date.
+    """Factory for a READ-ONLY, POINT-IN-TIME raw-Cypher tool bound to the graph and the
+    analysis date.
 
     Read-only is enforced by TWO layers: (1) the blocklist above rejects writes/procedures up
     front, and (2) every query runs inside a transaction that is ALWAYS rolled back, so nothing
     it executes can ever persist — even if a write somehow slipped past the regex.
+
+    No-lookahead is likewise enforced in CODE, not by asking the model nicely: results are
+    scanned for date-like values and any row carrying a moment later than `as_of` is dropped,
+    while realized reaction fields (`move_*`) are stripped outright. The docstring still tells
+    the model to write the `$as_of` gate itself — that keeps queries efficient and the returned
+    set meaningful — but a forgotten gate is now a dropped row plus a note, not a leak.
     """
     as_of_iso = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    as_of_moment = as_moment(as_of)
 
     @tool
     def run_graph_query(cypher: str) -> str:
@@ -60,7 +108,11 @@ def make_graph_query_tool(neo4j_manager: Any, as_of, max_rows: int = 50, max_cha
         are rejected.
 
         NO-LOOKAHEAD: the analysis date is bound as $as_of — always gate events with
-        `WHERE e.date <= datetime($as_of)` so you never read the future.
+        `WHERE e.date <= datetime($as_of)` so you never read the future. This is also
+        ENFORCED: rows carrying any timestamp later than $as_of are dropped before you
+        see them, so an ungated query returns a truncated set plus a `pit_note`. Realized
+        price-reaction fields (move_15m/move_40m/move_4h/move_1d) are never returned by
+        this tool — use get_intraday_reactions for the matured ones.
 
         SCHEMA
           (:Company {ticker})
@@ -106,15 +158,47 @@ def make_graph_query_tool(neo4j_manager: Any, as_of, max_rows: int = 50, max_cha
                 tx = session.begin_transaction(timeout=15)
                 try:
                     result = tx.run(cypher, {"as_of": as_of_iso})
-                    rows = []
-                    for i, record in enumerate(result):
-                        if i >= max_rows:
+                    rows, dropped, stripped, scanned = [], 0, False, 0
+                    for record in result:
+                        # Bounded scan: an ungated query can stream far more than it
+                        # keeps, so cap the work rather than the kept rows alone.
+                        scanned += 1
+                        if scanned > max_rows * 4:
                             break
-                        rows.append(dict(record))
+                        row, hit = _strip_moves(dict(record))
+                        stripped = stripped or hit
+                        latest = max_moment(row)
+                        if (as_of_moment is not None and latest is not None
+                                and latest > as_of_moment):
+                            dropped += 1
+                            continue
+                        rows.append(_clip_strings(row, max(200, max_chars // 4)))
+                        if len(rows) >= max_rows:
+                            break
                 finally:
                     tx.rollback()  # ALWAYS rollback — nothing this tool runs can persist
-            out = json.dumps({"n": len(rows), "rows": rows}, default=str)
-            return out if len(out) <= max_chars else out[:max_chars] + "…[truncated]"
+            notes = []
+            if dropped:
+                notes.append(f"PIT guard dropped {dropped} row(s) dated after $as_of — add "
+                             f"`WHERE e.date <= datetime($as_of)` to your query")
+            if stripped:
+                notes.append("realized move_* fields are not available through this tool")
+            # pit_note goes FIRST so the size cap can never be what hides it — the ungated
+            # query is precisely the one that returns the most rows and gets trimmed.
+            payload = {}
+            if notes:
+                payload["pit_note"] = "; ".join(notes)
+            payload["n"] = len(rows)
+            payload["rows"] = rows
+            # Trim whole rows rather than slicing the serialized string: the old cap cut
+            # mid-token and handed the model unparseable JSON.
+            out = json.dumps(payload, default=str)
+            while len(out) > max_chars and payload["rows"]:
+                payload["rows"] = payload["rows"][:-1]
+                payload["n"] = len(payload["rows"])
+                payload["truncated_rows"] = True
+                out = json.dumps(payload, default=str)
+            return out
         except Exception as e:
             return json.dumps({"error": str(e)[:300]})
 

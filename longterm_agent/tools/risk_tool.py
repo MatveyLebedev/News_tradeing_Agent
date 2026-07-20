@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 
 import psycopg2
 
+from .pit import daily_bar_cutoff, ingest_cutoff
+
 
 def _conn(db_manager):
     return psycopg2.connect(**db_manager.db_config)
@@ -29,7 +31,7 @@ def priced_in_check(db_manager, ticker: str, as_of: datetime, shift_window_days:
                 SELECT date, close FROM stock_prices_daily
                 WHERE ticker=%s AND date <= %s AND date >= %s
                 ORDER BY date
-            """, [ticker.upper(), as_of.date(), start])
+            """, [ticker.upper(), daily_bar_cutoff(as_of), start])
             rows = cur.fetchall()
     except Exception as e:
         return {"available": False, "note": f"price read failed: {e}"}
@@ -53,8 +55,9 @@ def earnings_event_risk(db_manager, ticker: str, as_of: datetime, within_days: i
                 SELECT data FROM fundamentals
                 WHERE ticker=%s AND source='yfinance' AND kind='earnings_dates'
                   AND fetch_date <= %s
+                  AND (created_at IS NULL OR created_at <= %s)
                 ORDER BY fetch_date DESC LIMIT 1
-            """, [ticker.upper(), as_of.date()])
+            """, [ticker.upper(), as_of.date(), ingest_cutoff(as_of)])
             row = cur.fetchone()
     except Exception as e:
         return {"available": False, "note": f"earnings read failed: {e}"}

@@ -168,6 +168,33 @@ def test_analyze_sector_and_competitors(db_manager, past_timestamp):
     assert isinstance(result["competitors"], list)
 
 
+def test_sector_resolution_is_offline_and_point_in_time():
+    """Sector/industry must never come from a live lookup (2026-07-19 PIT audit).
+
+    A replayed cohort would otherwise read today's classification, and — just as bad — a
+    backtest would depend on a network round-trip, which breaks B0 reproducibility.
+    Resolution works with no db_manager and no timestamp because the curated map answers
+    for the tracked universe; anything unknown degrades to 'Unknown' rather than reaching out.
+    """
+    from news_agent.tools import sector_competitor_tool as sct
+
+    assert not hasattr(sct, "yf"), "yfinance must not be imported at module level"
+    assert sct.resolve_sector_industry("NVDA") == ("Technology", "Semiconductors")
+    assert sct.resolve_sector_industry("JPM")[0] == "Financial Services"
+    # off-universe names and ETFs degrade instead of triggering a lookup
+    assert sct.resolve_sector_industry("USO") == ("Unknown", "Unknown")
+    assert sct.resolve_sector_industry("") == ("Unknown", "Unknown")
+
+
+def test_sector_resolution_is_deterministic_across_as_of():
+    """Same ticker, different analysis dates → same labels (no drifting live source)."""
+    from datetime import datetime
+    from news_agent.tools.sector_competitor_tool import resolve_sector_industry
+    a = resolve_sector_industry("NVDA", None, datetime(2026, 4, 1))
+    b = resolve_sector_industry("NVDA", None, datetime(2026, 7, 1))
+    assert a == b
+
+
 # ---------------------------------------------------------------------------
 # Similar news (vector search — may return empty list if embeddings absent)
 # ---------------------------------------------------------------------------

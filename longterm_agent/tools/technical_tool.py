@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 
 import psycopg2
 
+from .pit import daily_bar_cutoff
+
 
 def compute_daily_technicals(db_manager, ticker: str, as_of: datetime, lookback_days: int = 180) -> Dict[str, Any]:
     start = (as_of - timedelta(days=lookback_days * 2)).date()  # pull extra for MA warmup
@@ -20,7 +22,7 @@ def compute_daily_technicals(db_manager, ticker: str, as_of: datetime, lookback_
                 SELECT date, close FROM stock_prices_daily
                 WHERE ticker=%s AND date <= %s AND date >= %s
                 ORDER BY date
-            """, [ticker.upper(), as_of.date(), start])
+            """, [ticker.upper(), daily_bar_cutoff(as_of), start])
             rows = cur.fetchall()
     finally:
         conn.close()
