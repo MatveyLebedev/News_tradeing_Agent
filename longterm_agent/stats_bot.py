@@ -19,6 +19,7 @@ finds the bot (fine for a private bot, but set it).
     python -m longterm_agent.stats_bot
 """
 import asyncio
+import logging
 from functools import wraps
 from html import escape
 
@@ -29,6 +30,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent import stats
 from longterm_agent import forward_report
+
+log = logging.getLogger(__name__)
 
 _cfg = LongTermAgentConfig()
 ALLOWED_IDS = {int(x) for x in _cfg.TELEGRAM_ALLOWED_USER_IDS.split(",") if x.strip().isdigit()}
@@ -58,6 +61,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/signals [N] — latest directional signals\n"
         "/trades — trade outcomes &amp; win rate\n"
         "/week — all trades this week: new, open, closed\n"
+        "/gate — what the risk gate filtered, and whether it paid\n"
+        "/health — failure rate, price freshness, grader backlog\n"
         "/errors [N] — recent errors\n"
         "/ticker SYM — latest call for a ticker\n"
         "/freshness — data-source freshness (news/prices/SPY/fundamentals)",
@@ -94,6 +99,15 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"  excess vs SPY: mean {_pct(tr['mean_excess'])} · median {_pct(tr['median_excess'])}\n\n"
         f"<b>Errors</b> (last {err['days']}d): {err['errors']} errors, {err['warnings']} warnings"
     )
+    # Open exposure is the part a win-rate line hides: most of the book is usually
+    # unmatured, and a mean over the graded minority is not "how the agent is doing".
+    h = await asyncio.to_thread(stats.health_report)
+    if h["pending"] or h["overdue"]:
+        text += f"\n\n<b>Open</b>: {h['pending']} not matured"
+        if h["next_mature"]:
+            text += f" · next {h['next_mature']}"
+        if h["overdue"]:
+            text += f"\n  ⚠️ {h['overdue']} matured but ungraded"
     if err["last_error_time"]:
         text += f"\n  last: {escape(str(err['last_error_time'])[:19])}"
     await update.message.reply_text(text, parse_mode="HTML")
@@ -143,10 +157,42 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @authorized
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rep = await asyncio.to_thread(stats.weekly_report)
-    txt = stats.format_weekly_report(rep)
-    await update.message.reply_text(
-        f"📆 <b>Trades — last {rep['days']} days</b>\n<pre>{escape(txt)}</pre>",
-        parse_mode="HTML")
+    # HTML, not <pre>: a code block renders as Telegram's monospace "copy" card, which
+    # reads as a dump. Text first, then the charts — a caption is capped at 1024 chars
+    # and the digest outgrows it as soon as a week has more than a few positions.
+    await update.message.reply_text(stats.format_weekly_report_html(rep), parse_mode="HTML")
+    await _send_charts(update, rep)
+
+
+async def _send_charts(update: Update, rep) -> None:
+    """Send whatever charts the data supports. Each builder returns None when a chart
+    would imply more than the data holds; silence is the correct output then."""
+    try:
+        from longterm_agent import charts
+    except Exception as e:                                   # matplotlib absent
+        log.warning("charts unavailable: %s", e)
+        return
+    for build, arg in ((charts.open_positions_chart, rep["new"] + rep["open"]),
+                       (charts.closed_trades_chart, rep["closed"])):
+        try:
+            png = await asyncio.to_thread(build, arg)
+        except Exception:
+            log.exception("chart build failed")
+            continue
+        if png:
+            await update.message.reply_photo(png)
+
+
+@authorized
+async def cmd_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    g = await asyncio.to_thread(stats.gate_breakdown)
+    await update.message.reply_text(stats.format_gate_breakdown(g), parse_mode="HTML")
+
+
+@authorized
+async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    h = await asyncio.to_thread(stats.health_report)
+    await update.message.reply_text(stats.format_health(h), parse_mode="HTML")
 
 
 @authorized
@@ -196,6 +242,8 @@ async def _post_init(app: Application):
         BotCommand("signals", "Latest directional signals"),
         BotCommand("trades", "Trade outcomes & win rate"),
         BotCommand("week", "All trades this week: new, open, closed"),
+        BotCommand("gate", "What the risk gate filtered, and whether it paid"),
+        BotCommand("health", "Failure rate, price freshness, grader backlog"),
         BotCommand("errors", "Recent errors"),
         BotCommand("ticker", "Latest call for a ticker"),
     ])
@@ -212,6 +260,8 @@ def main():
     app.add_handler(CommandHandler("signals", cmd_signals))
     app.add_handler(CommandHandler("trades", cmd_trades))
     app.add_handler(CommandHandler("week", cmd_week))
+    app.add_handler(CommandHandler("gate", cmd_gate))
+    app.add_handler(CommandHandler("health", cmd_health))
     app.add_handler(CommandHandler("errors", cmd_errors))
     app.add_handler(CommandHandler("ticker", cmd_ticker))
     app.add_handler(CommandHandler("freshness", cmd_freshness))

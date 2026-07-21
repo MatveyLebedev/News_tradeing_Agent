@@ -217,21 +217,11 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
         """, [_version(), days])
         open_rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c}
                      for t, a, v, c in cur.fetchall()]
-        for r in open_rows:
-            cur.execute("""
-                SELECT (SELECT close FROM stock_prices_daily
-                        WHERE ticker=%(t)s AND date <= %(d)s ORDER BY date DESC LIMIT 1),
-                       (SELECT close FROM stock_prices_daily
-                        WHERE ticker=%(t)s ORDER BY date DESC LIMIT 1)
-            """, {"t": r["ticker"], "d": r["as_of"]})
-            entry, last = cur.fetchone()
-            pos = None
-            if entry and last:
-                pos = float(last) / float(entry) - 1
-                if r["verdict"] == "SHORT":
-                    pos = -pos
-            r["position_return"] = pos
-            r["days_open"] = None if r["as_of"] is None else (date.today() - r["as_of"]).days
+        # Live P&L on BOTH lists: a position opened this week is "new" for the digest but
+        # is just as open, and a blank return on the freshest trades is what makes the
+        # chart empty exactly when there is most to look at.
+        for r in open_rows + new:
+            _stamp_position(cur, r)
 
         cur.execute("""
             SELECT ticker, as_of, verdict, fwd_return_4w, benchmark_return_4w,
@@ -254,6 +244,41 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
             "closed_wins": sum(1 for e in graded if e > 0),
             "closed_graded": len(graded),
             "closed_mean_excess": statistics.fmean(graded) if graded else None}
+
+
+def _stamp_position(cur, r) -> None:
+    """Attach the current direction-signed return and days held to a live position.
+
+    Entry price comes from the stamped `entry_px` (the open of the first bar after the
+    decision) whenever the grader has written one. The close-on-or-before-as_of lookup is
+    only a fallback for rows graded before that stamp existed: it is the RETIRED
+    convention, and it prices the trade at a close the decision could not have traded at.
+    """
+    cur.execute("""SELECT entry_px, entry_date FROM longterm_agent_results
+                   WHERE ticker=%s AND as_of=%s AND agent_version=%s LIMIT 1""",
+                [r["ticker"], r["as_of"], _version()])
+    row = cur.fetchone()
+    entry = float(row[0]) if row and row[0] else None
+    entry_date = row[1] if row else None
+    if entry is None:
+        cur.execute("""SELECT close FROM stock_prices_daily
+                       WHERE ticker=%s AND date <= %s ORDER BY date DESC LIMIT 1""",
+                    [r["ticker"], r["as_of"]])
+        got = cur.fetchone()
+        entry = float(got[0]) if got and got[0] else None
+    cur.execute("""SELECT close FROM stock_prices_daily
+                   WHERE ticker=%s ORDER BY date DESC LIMIT 1""", [r["ticker"]])
+    got = cur.fetchone()
+    last = float(got[0]) if got and got[0] else None
+
+    pos = None
+    if entry and last:
+        pos = last / entry - 1
+        if r["verdict"] == "SHORT":
+            pos = -pos
+    r["position_return"] = pos
+    ref = entry_date or r["as_of"]
+    r["days_open"] = None if ref is None else (date.today() - ref).days
 
 
 def format_weekly_report(rep: Dict[str, Any]) -> str:
@@ -321,3 +346,186 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def format_weekly_report_html(rep: Dict[str, Any]) -> str:
+    """Telegram-HTML rendering of the same report.
+
+    Not `<pre>`: wrapping the whole digest in a code block is what gives Telegram's
+    monospace "copy" card, which reads as a dump rather than a report. Telegram's HTML
+    has no tables, headings or lists, so structure comes from <b> lines and spacing, and
+    <code> is reserved for individual values so numbers still align at a glance.
+    """
+    p = _fmt_pct
+    esc = lambda s: (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    out = [f"📆 <b>Week in trades</b> · last {rep['days']}d · <code>v{esc(_version())}</code>"]
+
+    out.append(f"\n<b>New</b> ({len(rep['new'])})")
+    for r in rep["new"]:
+        conv = f"{r['conviction']:.0%}" if isinstance(r["conviction"], (int, float)) else "—"
+        out.append(f"  <b>{esc(r['ticker'])}</b> {esc(r['verdict'])} · conv <code>{conv}</code>"
+                   f" · {esc(r['as_of'])}")
+    if not rep["new"]:
+        out.append("  <i>none</i>")
+
+    out.append(f"\n<b>Open</b> ({len(rep['open'])})")
+    for r in rep["open"]:
+        out.append(f"  <b>{esc(r['ticker'])}</b> {esc(r['verdict'])} · day "
+                   f"<code>{r['days_open']}</code> · <code>{p(r['position_return'])}</code>")
+    if not rep["open"]:
+        out.append("  <i>none</i>")
+
+    out.append(f"\n<b>Closed</b> ({len(rep['closed'])})")
+    for r in rep["closed"]:
+        extra = ""
+        if r["exit_reason"] == "stop":
+            extra = f" · <i>stopped d{r['exit_days']}</i> {p(r['excess_stopped'])}"
+        elif r["exit_reason"] and r["exit_reason"] != "horizon":
+            extra = f" · <i>{esc(r['exit_reason'])}</i>"
+        out.append(f"  <b>{esc(r['ticker'])}</b> {esc(r['verdict'])} · "
+                   f"<code>{p(r['excess'])}</code> vs SPY{extra}")
+    if rep["closed"]:
+        out.append(f"  → wins <b>{rep['closed_wins']}/{rep['closed_graded']}</b>, "
+                   f"mean <code>{p(rep['closed_mean_excess'])}</code>")
+        if rep["closed_graded"] < 10:
+            # Deliberate: a mean over a handful of trades is noise, and this project has
+            # already been misled once by reading a small book as a result.
+            out.append(f"  <i>⚠ {rep['closed_graded']} graded trades — not a sample size; "
+                       f"read as a log, not a performance figure.</i>")
+    else:
+        out.append("  <i>none matured</i>")
+    return "\n".join(out)
+
+
+# --- /gate: what the selection stage actually did ----------------------------------------
+def gate_breakdown(days: int = 90) -> Dict[str, Any]:
+    """Which vetoes and penalties fired, and how the FILTERED signals then performed.
+
+    The open question this bot exists to make visible: across six backtest books the gate
+    added value in none and subtracted in two, and the signals its machinery cut beat the
+    ones it kept. Live rows are the only uncontaminated evidence that will ever accumulate,
+    so they are worth watching from the first week.
+
+    `gate_trace` is written by persistence from pipeline 0.9.0 onward; rows written by
+    older builds have none and are reported as uncovered rather than guessed at.
+    """
+    conn = _conn()
+    with conn.cursor() as cur:
+        cur.execute("""SELECT count(*) FROM information_schema.columns
+                       WHERE table_name='longterm_agent_results' AND column_name='gate_trace'""")
+        if not cur.fetchone()[0]:
+            # No column at all: every row predates 0.9.0. Distinct from "no signals" —
+            # reporting the wrong reason sends someone hunting a problem that isn't there.
+            conn.close()
+            return {"days": days, "covered": 0, "total": 0, "vetoes": {}, "penalties": {},
+                    "filtered": [], "traded": [], "column_missing": True}
+        cur.execute("""
+            SELECT verdict, traded, gate_trace, fwd_return_4w, benchmark_return_4w
+            FROM longterm_agent_results
+            WHERE agent_version=%s AND as_of >= CURRENT_DATE - %s
+              AND verdict IN ('LONG','SHORT')
+        """, [_version(), days])
+        rows = cur.fetchall()
+    conn.close()
+
+    vetoes: Dict[str, int] = {}
+    penalties: Dict[str, int] = {}
+    filtered, traded, covered = [], [], 0
+    for verdict, was_traded, gt, f4, b4 in rows:
+        if not gt:
+            continue
+        covered += 1
+        for v in (gt.get("vetoes") or []):
+            vetoes[v] = vetoes.get(v, 0) + 1
+        for p in (gt.get("penalties") or {}):
+            penalties[p] = penalties.get(p, 0) + 1
+        ex = trade_excess(verdict, f4, b4)
+        if ex is not None:
+            (traded if was_traded else filtered).append(ex)
+    return {"days": days, "covered": covered, "total": len(rows),
+            "vetoes": vetoes, "penalties": penalties,
+            "filtered": filtered, "traded": traded}
+
+
+def format_gate_breakdown(g: Dict[str, Any]) -> str:
+    p = _fmt_pct
+    if g.get("column_missing"):
+        return ("🚦 <b>Gate</b>\n<i>No gate traces stored yet — every row predates "
+                "pipeline 0.9.0. The column is created on the next batch write.</i>")
+    if not g["total"]:
+        return "🚦 <b>Gate</b>\n<i>No directional signals in the window.</i>"
+    if not g["covered"]:
+        return ("🚦 <b>Gate</b>\n"
+                f"<i>{g['total']} directional signals, none carrying a gate trace — those "
+                f"rows predate pipeline 0.9.0. Traces start with the next batch.</i>")
+    out = [f"🚦 <b>Gate</b> · last {g['days']}d · {g['covered']}/{g['total']} traced"]
+    out.append("\n<b>Vetoes</b> (hard caps below the threshold)")
+    out += ([f"  {k} · <code>{v}</code>" for k, v in
+             sorted(g["vetoes"].items(), key=lambda x: -x[1])] or ["  <i>none fired</i>"])
+    out.append("\n<b>Penalties</b> (subtracted from conviction)")
+    out += ([f"  {k} · <code>{v}</code>" for k, v in
+             sorted(g["penalties"].items(), key=lambda x: -x[1])] or ["  <i>none fired</i>"])
+
+    f, t = g["filtered"], g["traded"]
+    out.append("\n<b>Did filtering pay?</b> (graded 4w excess)")
+    out.append(f"  kept    n=<code>{len(t)}</code> mean "
+               f"<code>{p(statistics.fmean(t)) if t else '—'}</code>")
+    out.append(f"  cut     n=<code>{len(f)}</code> mean "
+               f"<code>{p(statistics.fmean(f)) if f else '—'}</code>")
+    if t and f:
+        d = statistics.fmean(t) - statistics.fmean(f)
+        out.append(f"  → kept − cut: <b>{p(d)}</b>"
+                   + ("  <i>(gate helping)</i>" if d > 0 else "  <i>(gate costing)</i>"))
+    if len(t) + len(f) < 20:
+        out.append("  <i>⚠ too few graded rows to mean anything — this is a log, not a verdict.</i>")
+    return "\n".join(out)
+
+
+# --- /health: is the pipeline telling the truth today? -----------------------------------
+def health_report(days: int = 30) -> Dict[str, Any]:
+    """Failure rate, price freshness, grader backlog.
+
+    Each of these has already bitten once: a 14% synthesis-failure rate nearly passed for
+    a finding, and a price feed one trading day behind silently blocked a matured trade
+    from grading. None of them raise an error on their own — they have to be looked at.
+    """
+    from longterm_agent import backtest_metrics as M
+    conn = _conn()
+    with conn.cursor() as cur:
+        cur.execute("""SELECT signal FROM longterm_agent_results
+                       WHERE agent_version=%s AND as_of >= CURRENT_DATE - %s""",
+                    [_version(), days])
+        sigs = [r[0] for r in cur.fetchall()]
+        cur.execute("SELECT max(date) FROM stock_prices_daily")
+        price_max = cur.fetchone()[0]
+        cur.execute("""SELECT count(*) FROM longterm_agent_results
+                       WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+                         AND as_of + 28 <= CURRENT_DATE""", [_version()])
+        overdue = cur.fetchone()[0]
+        cur.execute("""SELECT count(*), min(as_of + 28) FROM longterm_agent_results
+                       WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+                         AND as_of + 28 > CURRENT_DATE""", [_version()])
+        pending, next_mature = cur.fetchone()
+    conn.close()
+    return {"days": days, "runs": len(sigs), "failure_rate": M.failure_rate(sigs),
+            "price_max": price_max,
+            "price_lag_days": None if price_max is None else (date.today() - price_max).days,
+            "overdue": overdue, "pending": pending, "next_mature": next_mature}
+
+
+def format_health(h: Dict[str, Any]) -> str:
+    ok = lambda good: "✅" if good else "⚠️"
+    fr = h["failure_rate"]
+    lag = h["price_lag_days"]
+    out = ["🩺 <b>Health</b>"]
+    out.append(f"{ok(fr <= 0.05)} synthesis failures: <code>{fr:.1%}</code> of {h['runs']} runs "
+               f"(last {h['days']}d)")
+    if fr > 0.05:
+        out.append("  <i>failed calls fall back to NEUTRAL — trade counts are deflated.</i>")
+    out.append(f"{ok(lag is not None and lag <= 4)} prices through <code>{h['price_max']}</code>"
+               + (f" · {lag}d behind" if lag is not None else ""))
+    out.append(f"{ok(h['overdue'] == 0)} grader backlog: <code>{h['overdue']}</code> matured "
+               f"but ungraded")
+    out.append(f"⏳ open: <code>{h['pending']}</code>"
+               + (f" · next matures <code>{h['next_mature']}</code>" if h["next_mature"] else ""))
+    return "\n".join(out)
