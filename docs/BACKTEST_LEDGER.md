@@ -186,6 +186,132 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   them automatically — the same frozen criteria then run on ~3× the cohorts. Note the grid
   is now burned for variant iteration (rule 1); only maturation, not new formulations.
 
+### HOLDOUT RUN — pre-registered 2026-07-20, BEFORE launch (`holdout_mar_deep_on` / `_off`)
+
+**The last untouched historical data.** Every one of the 21 as_of dates used by the 17
+existing books falls on/after 2026-04-24. The news corpus is dense from 2026-03-01 and was
+ingested in real time (41 of 6549 March rows arrived >2d late, 1 of 8060 in April), so a
+March backtest sees what March saw. C2 probe: gap +8.3pp, under the +10pp bar ⇒ usable,
+marginally. **Grid:** Mondays 2026-03-16, 03-23, 03-30, 04-06, 04-13, 04-20 — six cohorts;
+the corpus only starts 2026-02-24, so 03-02 and 03-09 lack a full 14d shift window and are
+excluded. Same 30 tickers, horizons 14/28, SPY, fill `open_t1`, `LT_METRICS_VERSION=2
+LT_LLM_CACHE=true LT_MAX_REFLECTION=0`, graded `--asof-today 2026-07-20`.
+**Provider pinned** (`LLM_PROVIDER=novita`, `only`, fallbacks off) — see the provider-pin
+entry; without it the two legs could be served at different quantisations.
+**Two questions on six cohorts — multiplicity acknowledged.** Running both deep legs answers
+deep AND (free, via `gate_trace`) `sel_null` on the same data. Two looks at six cohorts
+raises the chance one flatters by luck, so both criteria are frozen here, before launch, and
+the second is read at a stricter bar:
+- **Q1 deep (primary).** ON beats OFF by >1pp mean 4w `excess_beta` net of D2 costs AND the
+  cohort-block CI excludes zero ⇒ deep keeps its place; inside ±1pp ⇒ demote confirmed;
+  ON losing by >1pp ⇒ retired outright. This is an INDEPENDENT test of B1's fragile
+  verdict (+0.97pp on `excess` / +1.09pp on `excess_beta`), which is why it is worth the data.
+- **Q2 `sel_null` (secondary, stricter).** Unburned window ⇒ it CAN accept, but at
+  **>+1pp AND the cohort-block CI excluding zero AND net of costs** — not stage 1's
+  reject-only bar. Anything weaker is recorded as "survives again", not as acceptance.
+- **Both**: with six cohorts a block CI is wide by construction. A result that needs a
+  narrow interval to look good is not a result. No variant iteration on this window ever.
+**Known limitation, measured BEFORE the run — coverage ramps across the window.** Tickers
+clearing `MIN_ARTICLES_FOR_BACKGROUND=8` over the 60d corpus lookback: 14 (03-16), 17, 18,
+22, 24, 25 (04-20) of 30, against 25–28 in the burned window. The corpus only begins
+2026-02-24, so early cohorts see an empty older half. Consequences, stated so they are not
+rediscovered as a finding: (a) **cross-window comparison is invalid** — a March number
+against the April–June books would confound edge with a different, attention-selected
+universe; (b) **within-window contrasts stay valid** — both deep legs and both `sel_null`
+arms see the identical universe, so N shrinks but the contrast is unbiased. Q1/Q2 are
+within-window by construction, which is why the run is still worth making.
+**RESULT 2026-07-21 — 360/360 runs, 0 errors, 0 provider 404s, 6 cohorts, `gate_trace` on
+all 360 rows. Neither question is settled; the window is now spent.**
+- **Q1 deep — the frozen rule does not resolve this case, and I will not pick a branch.**
+  4w net of costs: ON **+4.95%** (n=79) vs OFF **+2.34%** (n=76) = **+2.61pp**, above the
+  1pp bar — but the gap's cohort-paired block CI is **[−0.17, +5.59]pp**, which covers zero.
+  The rule required BOTH, and its three branches ("keeps its place" / "inside ±1pp ⇒ demote"
+  / "loses by >1pp ⇒ retired") have no case for *large point estimate, interval covering
+  zero*. That is a defect in the pre-registration, logged as such. 2w contradicts outright:
+  **+0.32pp**. Per-cohort the gap swings −2.74 … +7.81pp.
+  *Where it comes from:* not the shared book. Of ON's 79 trades, **18 were taken by ON
+  alone and averaged +9.39%**, against 15 OFF-only at +0.35%; the 61 shared trades run
+  +3.64% vs +2.84% (3 direction flips). So ~18 trades carry the entire result — the same
+  shape as B1, where 3 trades carried it, pointing the other way.
+  *Mechanism differs from B1 and that matters:* on the burned grid deep changed direction on
+  0 of 55 signals and only filtered 3 out. Here it changed the traded set substantially and
+  flipped 3 directions. Deep does not behave the same on the two windows, so neither window
+  generalises to the other.
+  **Net effect on B1: the demote is NOT confirmed.** The holdout leans the other way without
+  reaching the bar. `LT_DEEP_ANALYSIS=false` should not be deployed on this evidence, and
+  the earlier recommendation is withdrawn pending the ~2026-08-10 maturation re-read.
+- **Q2 `sel_null` — NOT accepted: the two legs disagree in sign.** Cohort-paired delta net
+  of costs: on `_off` **+1.13pp**, CI **[+0.26, +2.24]** (excludes zero, would meet the
+  strict bar); on `_on` **−0.26pp**, CI **[−1.33, +0.73]**. An estimate whose sign depends
+  on an unrelated flag is not an estimate. Also fragile within the passing leg: 3 of its 6
+  cohorts show a gap of ~0.00 and the whole effect sits in the other 3. Recorded as
+  "survives a sixth time, still unaccepted" — the null has now failed to die on 6 books
+  while never once clearing an acceptance bar.
+- **Both books are outlier-driven.** ON median **+1.68%** / 54% winners; OFF median
+  **−0.90%** / 46% winners. Positive means resting on a minority of large winners, on 6
+  cohorts, is exactly the configuration in which a block CI is wide for a real reason.
+- **Standing conclusion:** six cohorts cannot settle either question. The remaining honest
+  sources are maturation (free, ~2026-08-10) and forward accumulation (~1 cohort/week,
+  permanently uncontaminated). No further historical window exists.
+
+**Aborted first launch, 2026-07-20 — no data burned.** The provider pin was applied to every
+role, and novita does not serve `gemini-3.1-flash-lite` (only `google-ai-studio` does), so
+map calls 404'd and cohorts degraded to NO_DATA. Killed after 18 rows, all NO_DATA, all in
+one cohort; rows deleted, so no decision was recorded and the window is intact. Fix: the pin
+now applies to `llm_model` only, with a regression test. Logged because a silently degraded
+run on irreplaceable cohorts is the most expensive failure available here.
+
+### D2 — transaction costs and borrow (implemented 2026-07-20, frozen before the holdout)
+
+`longterm_agent/costs.py`, per the audit's spec: flat spread per side + borrow on SHORTs,
+printed as a third book. Frozen defaults: 5bp/side stock, 1bp/side hedge, 50bp/yr borrow
+pro-rated by days held ⇒ **12bp round trip on a long, ~16bp on a 28d short**. The hedge leg
+is charged because `excess` is a pair (stock vs SPY), not a bare stock return. `stress()`
+is a 4× preset for sensitivity only, never for a verdict.
+| book (4w, beta-adj) | gross | net | net @ stress×4 |
+|---|---|---|---|
+| `wf_30x_deep_pit_on` | +2.31% | +2.18% | +1.75% |
+| `wf_30x_deep_pit_off` | +1.22% | +1.09% | +0.66% |
+| `monday_t1_pit` | +0.50% | +0.37% | **−0.03%** |
+**The audit's warning is confirmed on the leak-free book:** `monday_t1_pit`'s entire edge
+sits inside the cost band once costs are pessimistic. That, not arm-differentiation, is
+what D2 buys.
+**CORRECTION — D2 is NOT a blocking dependency of `sel_null`, and my stated reason for
+making it one was wrong.** The ledger claimed "the challenger raises turnover ~40%, so
+costs must be netted first". Measured: costs move the incumbent −13bp and the challenger
+−13bp, i.e. the N1 delta is unchanged to four decimals (+0.0085 → +0.0086). The challenger
+raises **breadth** (55 positions vs 47), not **frequency** — both arms hold 28 days, so at
+fixed capital split equally the cost per dollar is identical. Breadth and turnover are
+different things and I conflated them. `sel_null` stage 2 is therefore unblocked; D2 stays
+because it changes every book's absolute level, which is decision-relevant on its own.
+
+### C2 — does the model RECALL the holdout? (probe run 2026-07-20)
+
+`longterm_agent/knowledge_probe.py`. The data-side canaries prove no reader returns
+post-decision data; they say nothing about the checkpoint's memory. We call
+`deepseek/deepseek-v4-pro` **unpinned**, so OpenRouter serves whatever is deployed — per the
+operator, the GA builds rolling out as of July 2026 carry an **April 2026** cutoff, which
+would put a March 2026 holdout INSIDE the training window (and the current 04-24…06-19 grid
+outside it — i.e. the holdout is the riskier window, not the safer one).
+Design: difference-in-difference, never absolute accuracy — equities drift up, so an
+absolute hit rate proves nothing. Same 10 mega-caps, no news/fundamentals/prices in the
+prompt, 6 Mondays inside the claimed cutoff (treatment) vs 6 after it (control).
+**Run 1 — VOID (harness bug, not a result).** `max_tokens=16` against a reasoning model
+returned empty content on 73% of calls; the survivors were those answered without
+deliberation, i.e. selected for confident recall — a selection that manufactures the very
+gap being tested. It read +35.7pp. Recorded so the re-run is not mistaken for a second
+attempt at a disliked answer: the re-run was forced by missing data, and the criterion was
+never touched. The probe now aborts above 5% unparsed.
+**Run 2 (max_tokens=2048, 60/60 both arms, zero dropped):** treatment **61.7%**
+(p=0.045 vs a coin), control **53.3%** (p=0.348), **gap +8.3pp** — under the pre-registered
++10pp bar ⇒ **USABLE**. Read it as a marginal pass, not a clean one: the treatment CI is
+[50.0%, 75.0%], touching chance, and n=60 per arm. No strong evidence of recall; not proof
+of its absence.
+*Consequence beyond C2:* the unpinned model ID is now the leading explanation for the
+measured replay drift (10 cache misses, conviction 0.82 → 0.78 on an identical corpus),
+displacing graph maintenance — a preview→GA rollover would produce exactly that. **Pin the
+model** before any further A/B, or every future comparison inherits this confound.
+
 ### Pre-registered, awaiting their window (formulations frozen — see linked sections)
 
 - **`wf_30x_deep_pit_on` / `_off` — does deep analysis earn its keep? (pre-registered
@@ -206,6 +332,34 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   itself" and, given the cost, argues for `LT_DEEP_ANALYSIS=false`; ON losing by >1pp
   retires it outright. Both legs also stamp `gate_trace`, which is what `sel_null`'s
   stage 1 then consumes offline for free.
+  **Verdict (2026-07-20): deep does NOT pay for itself ⇒ demote to `LT_DEEP_ANALYSIS=false`.**
+  540/540 runs, 0 errors, 55 directional rows per leg, `gate_trace` on all 270 rows each.
+  4w traded mean excess: ON **+2.77%** (n=44) vs OFF **+1.81%** (n=47) = **+0.96pp**, inside
+  the ±1pp band ⇒ the frozen "not worse, but not paying for itself" branch. Neither leg's
+  cohort-block CI excludes zero (ON [−0.40,+6.49], OFF [−2.39,+5.96]). 2w agrees and is
+  weaker still: +2.59% vs +2.13% = +0.46pp.
+  - *A cohort-weighted gap would read +1.11pp (block CI [+0.05,+3.01]) and clear the bar.
+    It is NOT the verdict:* the pre-registered statistic is the book's mean 4w excess
+    (trade-weighted), and this alternative was computed after seeing the data. Recorded
+    so the choice is visible, not so it can be swapped in.
+  - *Mechanism — the finding that outlasts the verdict.* **Deep changed direction on 0 of
+    55 signals.** Every shared trade has a bit-identical excess; the two books differ ONLY
+    in that ON's conviction nudge pushed 3 signals below 0.55 (AVGO 04-24 LONG −6.06%,
+    GOOGL 05-01 LONG −7.74%, ADBE 06-19 SHORT −23.27%). So deep's entire causal channel is
+    *conviction → threshold*, and the whole +0.96pp is 3 lucky exclusions out of 55 — one
+    of them (ADBE) carrying two thirds of it. That is far too thin to fund a large share
+    of every run's cost.
+  - *Interaction with `sel_null`, decisive.* In the `vetoes_only` arm both legs produce the
+    **identical** book (n=55, +2.93%) — with no conviction threshold, deep is a measured
+    no-op. If `sel_null` retires the threshold, deep is worthless by construction; if the
+    threshold stays, deep buys 3 coin-flips. Both branches point the same way.
+  - *Version asymmetry, disclosed:* leg ON ran before `74e2965` landed (`selection_mode`
+    absent from its provenance), leg OFF after. The refactor is behaviour-preserving by
+    test, and independently: `ab_selection`'s new `selection_passed()` reproduces the ON
+    leg's stored `traded` set exactly (44/44), decisions that were made by the old inline
+    code. Noted anyway — it is the failure mode this ledger keeps catching.
+  **Action: recommend `LT_DEEP_ANALYSIS=false` in the Track A redeploy bundle** (demote-only,
+  reversible, cuts a large share of per-run cost). Awaiting the operator's go.
 
 - **`sel_null` — does the selection stage add value at all? (pre-registered 2026-07-20,
   NOT yet run; runs BEFORE `adv_mom`).** Full plan: **docs/AB_PLAN_selection_stage.md**.
@@ -234,6 +388,20 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   raises turnover ~40%.
   *Disclosure (rule 1):* this slice was chosen after seeing the outcomes ⇒ mined windows
   cannot accept it. Live gate stays ON regardless of stage 1.
+  **Stage 1 run 2026-07-20 ($0, on the two `wf_30x_deep_pit` legs, the first books carrying
+  `gate_trace`): the null SURVIVES on all three criteria, in both books.**
+  Sanity check passed first — the incumbent arm reproduces each stored `traded` set exactly
+  (44/44 and 47/47), so the replay is faithful and the arms differ only by the rule.
+  | book | incumbent | vetoes_only | N1 Δ | N2 count | N3 worst |
+  |---|---|---|---|---|---|
+  | `_on`  | +2.77% (n=44) | **+2.93%** (n=55) | +0.16pp PASS | 1.25× PASS | +0.00 PASS |
+  | `_off` | +1.81% (n=47) | **+2.93%** (n=55) | +1.13pp PASS | 1.17× PASS | +0.00 PASS |
+  Ungated beats gated in both, the worst trade is **unchanged** (−23.87% is a trade the gate
+  kept, so the penalties are not buying the tail protection they were suspected of buying),
+  and turnover rises well under the 2× cap. This is now **five books** pointing the same way.
+  Still NOT an acceptance: burned grid, reject-only (rule 1) — it means the null was given a
+  fair chance to die and did not. Next is stage 2 on the unburned Mondays, blocked on D2
+  (transaction costs), since the challenger's edge must survive ~20–25% more turnover.
 - **`adv_mom` — adverse-momentum guard (pre-registered 2026-07-20, NOT yet run;
   DEFERRED behind `sel_null` — see below).**
   Full plan: **docs/AB_PLAN_adverse_momentum.md**. Mechanism, frozen: mirror
@@ -304,6 +472,30 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   `wf_30x_f12` +0.27% → **+0.03%**; `wf_30x_v0.2_deep` +1.56% → **+1.25%**.
   Aggregate effect is small (beta explained ~4% of dispersion), as expected — its value
   is per-trade attribution, which is why it belongs in the report and not in a gate.
+- **METHODOLOGY CHANGE 2026-07-20 — `excess_beta` becomes the primary metric, forward only**
+  (`LT_PRIMARY_METRIC`, default `excess_beta`; recorded in provenance knobs). Rationale:
+  scoring at an implicit beta of 1 mis-attributes factor exposure to skill in BOTH
+  directions — it flattered the beta-1.15 longs of `wf_30x_deep_pit_on` (+3.19% → +2.69%)
+  and booked a SHORT of a beta-1.26 name that LAGGED its own beta as a loss
+  (`monday_t1_pit` shorts −0.63% → +0.63%). Beta is estimated from bars **strictly before
+  entry** (`date < entry_date`), so it is known at decision time and adds no lookahead —
+  it is legitimate to pre-register a criterion against it.
+  **Scope, and why the boundary matters.** Applies ONLY to experiments whose results do not
+  yet exist. Verdicts already frozen under `excess` are NOT re-read, because here the ruler
+  decides the answer: **the deep ON/OFF gap is +0.97pp under `excess` and +1.09pp under
+  `excess_beta`, either side of the pre-registered 1pp bar.** Re-reading B1 would reverse a
+  frozen verdict by changing the metric after seeing the result, which is exactly the
+  failure this ledger exists to prevent. B1 therefore stands as recorded: demote.
+  *Checked before adopting:* `sel_null` stage 1 is unaffected — N1 is +0.16pp (`excess`) vs
+  −0.23pp (`excess_beta`) on `_on` and +1.13pp vs +0.85pp on `_off`, all far from the −1pp
+  rejection bar, so the null survives under either ruler.
+  **Consequence for B1, recorded honestly:** a verdict that sits at 0.97 vs 1.09 across two
+  defensible metrics is *fragile*, not robust — and both cohort-block CIs still cover zero.
+  The mechanism finding is what carries weight (deep changed direction on 0 of 55 signals;
+  the whole gap is 3 trades, two thirds of it one ADBE). The clean resolution is the free
+  ~2026-08-10 maturation re-read under `excess_beta`, pre-registered **now**, before those
+  results exist. `ab_selection` prints the secondary metric beside the primary on every run,
+  so a ruler-dependent verdict can never again be invisible.
 - **Maturation update 2026-07-20 — the two headline books DETERIORATED as cohorts
   matured.** Re-grading at `--asof-today 2026-07-20` (previous grades used 07-10) added
   ~60 newly matured rows to each: **#8 `wf_30x_f12` 4w +0.85% → +0.27%** (n 46 → 49) and

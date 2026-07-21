@@ -81,6 +81,25 @@ class Settings(BaseSettings):
     strong_llm_model: str = ""
     embedding_model: str = "google/gemini-embedding-001"
     embedding_dimensions: int = 1536
+    # --- Provider pinning (added 2026-07-20) ---
+    # A model id is NOT enough to make a replay reproducible: OpenRouter routes each
+    # request across many backends, and for deepseek/deepseek-v4-pro there are 17 serving
+    # it at fp8, fp4 and undeclared quantisations. Same prompt + different numerics =
+    # different output, which is the leading explanation for the measured replay drift
+    # (10 cache misses, conviction 0.82 → 0.78 on an identical corpus) — it displaces both
+    # graph maintenance and a checkpoint rollover, since OpenRouter lists exactly one V4
+    # Pro build (canonical slug deepseek/deepseek-v4-pro-20260423, created 2026-04-24).
+    # Empty = today's behaviour (route freely). Set it before any A/B whose arms are
+    # compared across runs. Trade-off: pinning one provider with fallbacks off means a
+    # provider outage fails the run instead of silently changing the model under you —
+    # for an experiment that is the safer failure.
+    # Value is an OpenRouter provider SLUG (lowercase `tag` prefix from the model's
+    # /endpoints listing), e.g. "novita" — not the display name. Comma-separated = the
+    # allowed set. Measured 2026-07-20: the first-party "deepseek" endpoint is refused for
+    # this account ("no endpoints matching your data policy"), so the pin must name a
+    # third-party backend; novita/fp8 had the best 1d uptime (99.47%) of the fp8 set.
+    llm_provider: str = ""
+    llm_provider_allow_fallbacks: bool = False
 
     # --- Telegram (LT_* variants take precedence for the long-term agent) ---
     telegram_bot_token: str = ""

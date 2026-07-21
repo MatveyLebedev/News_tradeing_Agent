@@ -19,6 +19,33 @@ def test_default_is_the_incumbent():
     assert "selection_mode" in LongTermAgentConfig.provenance()["knobs"]
 
 
+# --- primary metric (methodology change 2026-07-20) ---------------------------------------
+def test_primary_metric_default_and_provenance():
+    """Beta-adjusted is primary going forward, and every run records which ruler it used."""
+    assert LongTermAgentConfig.PRIMARY_METRIC == "excess_beta"
+    assert LongTermAgentConfig.provenance()["knobs"]["primary_metric"] == "excess_beta"
+
+
+def test_ab_selection_scores_on_the_chosen_metric():
+    """Same arm, same rows, different column ⇒ different book. Guards the metric switch."""
+    from longterm_agent.ab_selection import METRIC_IDX, _arm_book
+    assert METRIC_IDX == {"excess": 4, "excess_beta": 5}
+    gt = {"conviction_final": 0.90, "vetoes": []}
+    #      ticker as_of direction traded excess excess_beta gate_trace
+    rows = [("NVDA", "d1", "LONG", True, 0.10, 0.04, gt)]
+    assert _arm_book(rows, "incumbent", TH, "excess")[0] == [("d1", 0.10)]
+    assert _arm_book(rows, "incumbent", TH, "excess_beta")[0] == [("d1", 0.04)]
+
+
+def test_ab_selection_skips_rows_missing_the_primary_metric():
+    """An ungraded beta must drop the row, not be read as a zero return."""
+    from longterm_agent.ab_selection import _arm_book
+    gt = {"conviction_final": 0.90, "vetoes": []}
+    rows = [("NVDA", "d1", "LONG", True, 0.10, None, gt)]
+    book, selected = _arm_book(rows, "incumbent", TH, "excess_beta")
+    assert selected == 1 and book == []
+
+
 def test_incumbent_thresholds_conviction():
     assert selection_passed("conviction", "LONG", 0.60, [], TH) is True
     assert selection_passed("conviction", "LONG", 0.50, [], TH) is False

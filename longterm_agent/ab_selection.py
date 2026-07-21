@@ -24,15 +24,20 @@ from statistics import mean, median
 import psycopg2
 
 from longterm_agent import backtest_metrics as M
+from longterm_agent import costs
 from longterm_agent.agent.nodes import selection_passed
 from longterm_agent.config import LongTermAgentConfig
 
 ARMS = ("incumbent", "vetoes_only")
 
 
+# row layout from _fetch; METRIC_IDX maps a metric name to its slot
+METRIC_IDX = {"excess": 4, "excess_beta": 5}
+
+
 def _fetch(cur, backtest_id, horizon):
     cur.execute("""
-        SELECT ticker, as_of, direction, traded, excess, gate_trace
+        SELECT ticker, as_of, direction, traded, excess, excess_beta, gate_trace
         FROM backtest_runs
         WHERE backtest_id=%s AND horizon_days=%s AND direction IN ('LONG','SHORT')
         ORDER BY as_of, ticker
@@ -40,17 +45,27 @@ def _fetch(cur, backtest_id, horizon):
     return cur.fetchall()
 
 
-def _arm_book(rows, arm, threshold):
-    """[(as_of, excess)] selected by `arm`, plus the count of rows it selected."""
+def _arm_book(rows, arm, threshold, metric="excess_beta", net_days=None):
+    """[(as_of, value)] selected by `arm` scored on `metric`, plus rows selected.
+
+    `net_days` charges D2 costs over that holding period. Costs matter here specifically
+    because the arms trade at different rates — a gross-only comparison flatters whichever
+    arm is busier, which is exactly the challenger.
+    """
+    idx = METRIC_IDX[metric]
     book, selected = [], 0
-    for _tk, as_of, direction, _traded, excess, gt in rows:
+    for row in rows:
+        as_of, direction, gt = row[1], row[2], row[6]
         mode = "conviction" if arm == "incumbent" else "vetoes_only"
         if not selection_passed(mode, direction, (gt or {}).get("conviction_final"),
                                 (gt or {}).get("vetoes") or [], threshold):
             continue
         selected += 1
-        if excess is not None:
-            book.append((as_of, excess))
+        v = row[idx]
+        if v is None:
+            continue
+        book.append((as_of, v if net_days is None
+                     else costs.net_excess(v, direction, net_days)))
     return book, selected
 
 
@@ -88,7 +103,7 @@ def evaluate(cfg, backtest_id, horizon=28):
         print(f"\n=== {backtest_id} ({horizon}d): no directional rows ===")
         return None
 
-    covered = [r for r in rows if r[5]]
+    covered = [r for r in rows if r[6]]
     print(f"\n{'='*74}\n{backtest_id}  ({horizon}d)  directional rows={len(rows)}  "
           f"with gate_trace={len(covered)}\n{'='*74}")
     if not covered:
@@ -100,13 +115,28 @@ def evaluate(cfg, backtest_id, horizon=28):
               f"(partial coverage weakens the comparison)")
 
     th = cfg.LONGTERM_CONFIDENCE_THRESHOLD
+    primary = getattr(cfg, "PRIMARY_METRIC", "excess_beta")
+    if primary not in METRIC_IDX:
+        raise SystemExit(f"unknown LT_PRIMARY_METRIC={primary!r}; "
+                         f"expected one of {sorted(METRIC_IDX)}")
+    secondary = "excess" if primary == "excess_beta" else "excess_beta"
+    print(f"  primary metric: {primary}  (secondary shown for contrast: {secondary})")
+
+    print(f"  {costs.describe()}")
+
     out = {}
     for arm in ARMS:
-        book, selected = _arm_book(covered, arm, th)
-        s = _stats(book)
-        out[arm] = {"stats": s, "selected": selected}
+        book, selected = _arm_book(covered, arm, th, primary)
+        alt, _ = _arm_book(covered, arm, th, secondary)
+        net, _ = _arm_book(covered, arm, th, primary, net_days=horizon)
+        s, s_alt, s_net = _stats(book), _stats(alt), _stats(net)
+        out[arm] = {"stats": s, "alt": s_alt, "net": s_net, "selected": selected}
         print(f"\n{arm}:  selected {selected}/{len(covered)}")
         print(_fmt(s))
+        if s_alt:
+            print(f"       [{secondary}] mean {s_alt['mean']:+.4f}")
+        if s_net:
+            print(f"       [net of costs] mean {s_net['mean']:+.4f}")
 
     # sanity: the incumbent arm must reproduce the stored `traded` flag
     stored = sum(1 for r in covered if r[3])
@@ -121,13 +151,26 @@ def evaluate(cfg, backtest_id, horizon=28):
     if a and b:
         delta = b["mean"] - a["mean"]
         ratio = out["vetoes_only"]["selected"] / max(1, out["incumbent"]["selected"])
-        print(f"\n  DELTA (vetoes_only − incumbent): {delta:+.4f} mean excess")
+        print(f"\n  DELTA (vetoes_only − incumbent): {delta:+.4f} mean {primary}")
+        aa, ab = out["incumbent"]["alt"], out["vetoes_only"]["alt"]
+        if aa and ab:
+            # printed always: a verdict that depends on the ruler is a fragile verdict
+            print(f"  same delta on {secondary}: {ab['mean'] - aa['mean']:+.4f}")
         print(f"  trade-count ratio: {ratio:.2f}x   worst-trade change: "
               f"{b['worst'] - a['worst']:+.4f}")
         # frozen stage-1 criteria (reject-only on burned windows)
+        na, nb = out["incumbent"]["net"], out["vetoes_only"]["net"]
+        net_delta = (nb["mean"] - na["mean"]) if (na and nb) else None
+        if net_delta is not None:
+            print(f"  net of costs: {net_delta:+.4f}  "
+                  f"(costs cost the challenger {net_delta - delta:+.4f} vs the incumbent)")
+
         print("\n  frozen stage-1 criteria (burned window ⇒ can only REJECT):")
         print(f"    N1 challenger not worse by >1pp : "
               f"{'PASS' if delta > -0.01 else 'REJECT'}  ({delta:+.2%})")
+        if net_delta is not None:
+            print(f"    N1 net of costs (§7.4)          : "
+                  f"{'PASS' if net_delta > -0.01 else 'REJECT'}  ({net_delta:+.2%})")
         print(f"    N2 trade count ≤ 2x             : "
               f"{'PASS' if ratio <= 2.0 else 'REJECT'}  ({ratio:.2f}x)")
         print(f"    N3 worst trade not >5pp worse   : "

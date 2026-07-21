@@ -123,6 +123,29 @@ class LongTermAgentConfig:
     #                   cut returned +1.5…+3.6% vs the ones it kept.
     # Defaults to the incumbent (rule 4). Pre-registered; acceptance needs unburned cohorts.
     SELECTION_MODE = os.getenv("LT_SELECTION", "conviction").lower()
+    # --- Primary metric (methodology change 2026-07-20) ---
+    # Which column a pre-registered criterion is read against.
+    #   "excess"      — stock vs SPY at an implicit beta of 1
+    #   "excess_beta" — stock vs a beta-matched benchmark; beta is estimated from bars
+    #                   STRICTLY BEFORE entry (longterm_agent/beta.py), so it is known at
+    #                   decision time and adds no lookahead.
+    # Switched to excess_beta because scoring at beta 1 mis-attributes factor exposure to
+    # skill in BOTH directions: it flattered high-beta longs in a rising market and read a
+    # short of a beta-1.26 name that LAGGED its own beta as a loss.
+    # Applies to experiments whose results do not yet exist. Verdicts already frozen under
+    # "excess" are NOT re-read — see the ledger's methodology entry: the deep ON/OFF gap is
+    # +0.97pp under excess and +1.09pp under excess_beta, i.e. re-reading it would reverse
+    # a frozen verdict by changing the ruler after seeing the result.
+    PRIMARY_METRIC = os.getenv("LT_PRIMARY_METRIC", "excess_beta").lower()
+    # --- What synthesis is told about fundamentals (longterm_agent/synth_fundamentals.py) ---
+    #   "thin" — incumbent: verdict label + revenue_yoy + trailing/forward P/E + gap
+    #   "rich" — also the latest margins vs the same quarter a year earlier, the five
+    #            sub-verdicts and four trend phrases the FundamentalsTrend call already
+    #            produces (and nothing currently reads), and P/B / P/S when P/E is None.
+    # Measured motivation: P/E is None on 20% of traded decisions, margin_series reaches
+    # synthesis on 0%, and deep analysis re-reads margin_series directly — so deep may be
+    # buying back what this compression discards. Changing this INVALIDATES the LLM cache.
+    SYNTH_FUNDAMENTALS = os.getenv("LT_SYNTH_FUNDAMENTALS", "thin").lower()
     # Rows: fundamentals-trend verdict; columns: shift_score buckets
     # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
     # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype
@@ -260,6 +283,9 @@ class LongTermAgentConfig:
             "git_revision": rev,
             # A model change (or these knobs) shifts prompts/labels and invalidates
             # LLM-cache comparability — stamped so two runs are only compared like-for-like.
+            # Which backend served the run, not just which model was asked for: an
+            # unpinned request can land on any of 17 providers at differing quantisation.
+            "llm_provider": cls.llm_provider_routing(),
             "model": cls.LLM_MODEL,
             "map_model": cls.MAP_MODEL,
             "strong_model": cls.STRONG_LLM_MODEL,
@@ -281,6 +307,8 @@ class LongTermAgentConfig:
                 "embed_top_k": cls.EMBED_TOP_K,
                 "conviction_gate": cls.CONVICTION_GATE,
                 "selection_mode": cls.SELECTION_MODE,
+                "primary_metric": cls.PRIMARY_METRIC,
+                "synth_fundamentals": cls.SYNTH_FUNDAMENTALS,
                 "conviction_table": {k: list(v) for k, v in cls.CONVICTION_TABLE.items()},
                 "counter_trend_pct": cls.COUNTER_TREND_PCT,
                 "counter_trend_penalty": cls.COUNTER_TREND_PENALTY,
@@ -322,6 +350,12 @@ class LongTermAgentConfig:
         os.environ["LANGCHAIN_PROJECT"] = cls.LANGCHAIN_PROJECT
         print(f"✓ LangSmith tracing enabled → project '{cls.LANGCHAIN_PROJECT}'")
         return True
+
+    @classmethod
+    def llm_provider_routing(cls):
+        """The OpenRouter provider pin in force, or None when routing is free."""
+        from core.llm import provider_routing
+        return provider_routing()
 
     @classmethod
     def make_llm(cls, model: str = None, max_tokens: int = None):

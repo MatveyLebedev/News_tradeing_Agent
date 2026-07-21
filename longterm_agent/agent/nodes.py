@@ -28,6 +28,7 @@ from ..tools.shift_library_tool import find_similar_shifts
 from ..tools.risk_tool import priced_in_check, earnings_event_risk
 from ..tools.regime_tool import regime_context
 from ..tools import bucket_cache
+from ..synth_fundamentals import fundamentals_block
 from datetime import timedelta
 
 # Cap articles fed to the map model per bucket (keeps token cost bounded).
@@ -953,9 +954,10 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         f"NEWS BACKGROUND: {profile.get('summary','')}\n"
         f"NEWS SHIFT: {shift_desc}. {shift.get('reasoning','')}\n"
         f"FUNDAMENTALS verdict vs shift: {trend.get('verdict','unknown')} — {trend.get('reasoning','')}\n"
-        f"  revenue YoY={fund.get('revenue_yoy')}, valuation={ {k: fund.get('valuation',{}).get(k) for k in ('trailingPE','forwardPE')} }, "
-        f"expectation_gap={fund.get('expectation_gap')}\n"
-        f"  long-term technicals: trend={tech.get('trend')}, window return={tech.get('return_window_pct')}%\n"
+        # `thin` = the incumbent text, byte-identical (the LLM cache is content-addressed).
+        # `rich` surfaces material the verdict step already saw and compressed away — see
+        # longterm_agent/synth_fundamentals.py for the measurements that motivate it.
+        f"{fundamentals_block(getattr(config, 'SYNTH_FUNDAMENTALS', 'thin'), fund, trend, tech)}"
         f"ANALOG BASE RATE: {analog_desc}\n"
         f"{consensus_desc}"
         f"{fewshot_desc}"
