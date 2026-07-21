@@ -261,6 +261,45 @@ one cohort; rows deleted, so no decision was recorded and the window is intact. 
 now applies to `llm_model` only, with a regression test. Logged because a silently degraded
 run on irreplaceable cohorts is the most expensive failure available here.
 
+### `rich_synth` — is deep just re-surfacing data? (pre-registered 2026-07-21, BEFORE launch)
+
+Motivated by the structural audit: `synthesis` decides direction and conviction from the
+verdict label plus four numbers (both P/E None on 20% of traded rows, `margin_series` on
+0%), while `fundamentals_analysis` already saw everything and compressed it away — and
+`analysis_tools.py` re-reads `margin_series` directly, so deep may be an expensive path back
+to exactly that. **Run:** `holdout_mar_rich_off` — `LT_SYNTH_FUNDAMENTALS=rich` with
+`LT_DEEP_ANALYSIS=false`, identical grid/tickers/horizons/provider pin to the two holdout
+legs, graded `--asof-today 2026-07-21`. Compared against the STORED legs, not a re-run.
+**Burned window ⇒ reject-only. This cannot promote `rich`; it can only rule things out.**
+Frozen reading, on 4w `excess_beta` net of D2 costs:
+- `rich_off` lands within 1pp of `deep_on` (+4.95%) ⇒ **deep's contribution is data
+  surfacing**, obtainable at zero LLM cost ⇒ retire deep, keep `rich`, re-test forward.
+- `rich_off` stays within 1pp of `deep_off` (+2.34%) ⇒ **deep does something beyond
+  surfacing data**; the prompt fix is not a substitute and `rich` is not the answer.
+- In between ⇒ partial, and on 6 cohorts that is *no answer* — record and move on.
+Caveat stated in advance: the prompt edit invalidates the content-addressed LLM cache, so
+this leg is entirely fresh calls and is NOT cache-comparable to the stored legs. That makes
+it a weaker comparison than the deep ON/OFF pair, which ran back-to-back; a difference here
+carries the prompt change AND whatever the fresh sampling adds.
+**RUN 1 (2026-07-21) — VOID. Not a result: a 14.4% synthesis failure rate.**
+It completed cleanly by every signal I had been checking — exit 0, 180/180 decisions, 0
+tracebacks, 0 provider 404s, the same 42 NO_DATA rows as both comparators — and read
+**+2.43% net (n=59)**, i.e. within 0.08pp of `deep_off` and 2.52pp under `deep_on`, which
+under the frozen rule says "deep does something beyond surfacing data". That reading is
+withdrawn. **26 of 180 synthesis calls failed after retries** (7 "provider returned error",
+~17 "invalid request", 3 a None returned into `.model_dump()`), and each fallback is
+`NEUTRAL / conviction 0` — indistinguishable from a decision to stay flat. Comparators:
+`deep_on` 1.1%, `deep_off` 1.7%. So the leg's 74 directional signals vs 87, and 59 trades vs
+76, are mostly *suppressed calls*, and would have been reported as "the rich prompt is more
+selective". The pin (`allow_fallbacks=False`) is what surfaced the provider flakiness as
+errors rather than silent rerouting — working as intended, but the pipeline then buried it.
+**Fix landed:** the fallback now carries `synthesis_failed` + `synthesis_error`;
+`backtest_metrics.synthesis_failed/failure_rate` also detect legacy rows by their sentinel
+thesis; `ab_selection` prints the rate and refuses to let a >5% book be read against another.
+**Audit of every stored book:** `wf_30x_f12_v3` 0.7%, `wf_2026q2_v0.1` 1.4%, holdout legs
+1.1%/1.7% — all low and, for the deep pair, symmetric (2 vs 3 rows), so **Q1 and Q2 stand**.
+Re-run needed before `rich_synth` has any reading at all.
+
 ### D2 — transaction costs and borrow (implemented 2026-07-20, frozen before the holdout)
 
 `longterm_agent/costs.py`, per the audit's spec: flat spread per side + borrow on SHORTs,

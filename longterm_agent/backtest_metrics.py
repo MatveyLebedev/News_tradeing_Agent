@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import random
 import statistics
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 Number = float
 
@@ -236,3 +236,32 @@ def bootstrap_ci(
         return (None, None)
     stats.sort()
     return (_quantile(stats, alpha / 2), _quantile(stats, 1 - alpha / 2))
+
+
+# --- run health ------------------------------------------------------------------------
+# A synthesis call that failed after retries falls back to NEUTRAL/conviction 0. That row
+# is MISSING DATA, not a decision to stay flat, and left unmarked it enters a book as an
+# ordinary abstention — deflating the trade count in a way that reads like selectivity.
+# Measured 2026-07-21: 14.4% on one leg (voided) vs 1.1–1.7% on its comparators.
+SYNTHESIS_FAILED_THESIS = "(synthesis unavailable)"
+
+
+def synthesis_failed(signal: Optional[Dict[str, Any]]) -> bool:
+    """True if this row is a failed synthesis rather than a real NEUTRAL.
+
+    Checks the explicit flag first, then falls back to the sentinel thesis so books graded
+    before the flag existed stay auditable.
+    """
+    if not signal:
+        return False
+    if signal.get("synthesis_failed"):
+        return True
+    return (signal.get("thesis") or "") == SYNTHESIS_FAILED_THESIS
+
+
+def failure_rate(signals: Sequence[Optional[Dict[str, Any]]]) -> float:
+    """Share of rows whose synthesis failed. Compare arms BEFORE comparing their returns:
+    an asymmetric rate means the arms did not face the same experiment."""
+    if not signals:
+        return 0.0
+    return sum(1 for s in signals if synthesis_failed(s)) / len(signals)

@@ -972,8 +972,15 @@ def synthesis_node(state, llm, config) -> Dict[str, Any]:
         sig_d = sig.model_dump()
     except Exception as e:
         print(f"  ⚠ synthesis failed after retries: {e}")
+        # A failed call is MISSING DATA, not a decision to stay flat. Left unmarked it
+        # enters a book as an ordinary NEUTRAL and silently suppresses the trade count —
+        # measured 2026-07-21, a 14.4% failure rate cut a leg from 87 directional signals
+        # to 74 and would have read as "the new prompt is more selective". The flag makes
+        # such rows excludable; `thesis` alone was only ever auditable by accident.
         sig_d = LongTermSignal(direction="NEUTRAL", conviction=0.0, horizon="n/a",
                                thesis="(synthesis unavailable)").model_dump()
+        sig_d["synthesis_failed"] = True
+        sig_d["synthesis_error"] = f"{type(e).__name__}: {e}"[:300]
 
     print(f"  → {sig_d['direction']} (conviction={sig_d['conviction']}, horizon={sig_d.get('horizon')})")
     return {"signal": sig_d,

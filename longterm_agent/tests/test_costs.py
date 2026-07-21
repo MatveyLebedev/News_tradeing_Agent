@@ -62,3 +62,21 @@ def test_costs_are_small_but_not_negligible_at_measured_magnitudes():
     """Sanity on the frozen scale: ~12-16bp, i.e. material against a +0.18% book."""
     assert 0.0010 < costs.round_trip_cost("LONG", 28) < 0.0020
     assert 0.0010 < costs.round_trip_cost("SHORT", 28) < 0.0020
+
+
+# --- run health: a failed synthesis is missing data, not an abstention -------------------
+def test_synthesis_failure_detected_by_flag_and_by_legacy_sentinel():
+    from longterm_agent import backtest_metrics as M
+    assert M.synthesis_failed({"synthesis_failed": True}) is True
+    # books graded before the flag existed must stay auditable
+    assert M.synthesis_failed({"thesis": "(synthesis unavailable)"}) is True
+    assert M.synthesis_failed({"thesis": "real thesis", "direction": "NEUTRAL"}) is False
+    assert M.synthesis_failed(None) is False
+    assert M.synthesis_failed({}) is False
+
+
+def test_failure_rate_is_a_share_of_all_rows():
+    from longterm_agent import backtest_metrics as M
+    sigs = [{"synthesis_failed": True}, {"thesis": "ok"}, {"thesis": "ok"}, {"thesis": "ok"}]
+    assert M.failure_rate(sigs) == 0.25
+    assert M.failure_rate([]) == 0.0

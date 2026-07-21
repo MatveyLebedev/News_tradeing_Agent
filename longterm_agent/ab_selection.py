@@ -45,6 +45,16 @@ def _fetch(cur, backtest_id, horizon):
     return cur.fetchall()
 
 
+def _health(cur, backtest_id, horizon):
+    """Failed-synthesis rate. Checked before any return is compared: a failure silently
+    becomes NEUTRAL, so an elevated rate deflates the trade count and imitates selectivity.
+    """
+    cur.execute("""SELECT signal FROM backtest_runs
+                   WHERE backtest_id=%s AND horizon_days=%s""", [backtest_id, horizon])
+    sigs = [r[0] for r in cur.fetchall()]
+    return M.failure_rate(sigs), len(sigs)
+
+
 def _arm_book(rows, arm, threshold, metric="excess_beta", net_days=None):
     """[(as_of, value)] selected by `arm` scored on `metric`, plus rows selected.
 
@@ -98,6 +108,7 @@ def evaluate(cfg, backtest_id, horizon=28):
     conn = psycopg2.connect(**cfg.get_db_config())
     cur = conn.cursor()
     rows = _fetch(cur, backtest_id, horizon)
+    fail_rate, n_rows = _health(cur, backtest_id, horizon)
     conn.close()
     if not rows:
         print(f"\n=== {backtest_id} ({horizon}d): no directional rows ===")
@@ -123,6 +134,12 @@ def evaluate(cfg, backtest_id, horizon=28):
     print(f"  primary metric: {primary}  (secondary shown for contrast: {secondary})")
 
     print(f"  {costs.describe()}")
+    flag = "  ⚠ HIGH" if fail_rate > 0.05 else ""
+    print(f"  failed synthesis: {fail_rate:.1%} of {n_rows} rows{flag}")
+    if fail_rate > 0.05:
+        print("    Those rows fell back to NEUTRAL and were counted as abstentions, so the\n"
+              "    trade counts below are deflated. Do not read this book against another\n"
+              "    with a different failure rate.")
 
     out = {}
     for arm in ARMS:
