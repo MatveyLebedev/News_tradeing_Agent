@@ -72,16 +72,31 @@ def provider_routing(s=None, model=None):
     return {"only": only, "allow_fallbacks": bool(s.llm_provider_allow_fallbacks)}
 
 
-def invoke_structured(llm, schema, prompt, retries: int = 2):
-    """Structured-output call with retry. Reasoning models intermittently truncate the
-    structured output (reasoning tokens eat the budget) → transient parse errors; a
-    retry usually succeeds. Re-raises the last error so callers keep their fallback."""
+def invoke_structured(llm, schema, prompt, retries: int = 4):
+    """Structured-output call with retry. Re-raises the last error so callers keep
+    their fallback.
+
+    Two failure modes drove the current shape, both measured 2026-07-21/22 under a
+    pinned provider (which surfaces flakiness as errors instead of silently rerouting —
+    by design):
+      * transient provider errors / truncated reasoning output. Two retries with 1-2s
+        pauses were not enough: 26/180 synthesis calls (14%) and then 7/30 (23%) still
+        failed through the retry budget, and every failure silently became a NEUTRAL
+        row until the synthesis_failed flag made them visible. Four retries with
+        exponential backoff (1→8s) spans ~15s of provider hiccup instead of ~3s.
+      * a None RESULT: the provider returns 200 with an empty/refused completion,
+        `with_structured_output` yields None without raising, and the caller crashes on
+        `.model_dump()` — 3 of the 26 failures above. None is a failure and retries here.
+    """
     last = None
     for attempt in range(retries + 1):
         try:
-            return llm.with_structured_output(schema).invoke(prompt)
+            out = llm.with_structured_output(schema).invoke(prompt)
+            if out is None:
+                raise ValueError("structured output returned None (empty or refused completion)")
+            return out
         except Exception as e:
             last = e
             if attempt < retries:
-                time.sleep(1.0 * (attempt + 1))
+                time.sleep(2.0 ** attempt)
     raise last

@@ -300,7 +300,42 @@ thesis; `ab_selection` prints the rate and refuses to let a >5% book be read aga
 1.1%/1.7% — all low and, for the deep pair, symmetric (2 vs 3 rows), so **Q1 and Q2 stand**.
 Re-run needed before `rich_synth` has any reading at all.
 
-### D2 — transaction costs and borrow (implemented 2026-07-20, frozen before the holdout)
+### `gap_guard` — skip entries the market already made (pre-registered 2026-07-22, BEFORE
+any measurement)
+
+Motivation (mechanism, not mining): the agent never sees a post-Friday price — no futures,
+no premarket — so at entry it cannot know whether the open already absorbed the news it is
+trading. `priced_in_check` measures through the prior close and is structurally blind to
+the entry gap. The user's original concern from day one ("цена открытия может частично
+отыграть прогнозируемый тренд"), now as a deterministic rule.
+**Formulation, ONE, frozen before looking:** at entry, compute
+`gap = entry_open / prior_trading_close − 1`, signed into the signal's direction
+(gap for LONG, −gap for SHORT). **Block the entry if signed gap > +2%.** The 2% is a
+prior (≈ one daily sigma of a mega-cap), chosen before any measurement; no other
+threshold will be read, reported, or "sensitivity-checked" — a threshold sweep on stored
+books is mining with extra steps.
+Deterministic and post-decision ⇒ both arms replay offline from stored rows (entry_px is
+stamped; prior close is in daily bars) — same construction as `sel_null`.
+**Evidence rules:** stored books are burned ⇒ diagnostic / reject-only. Acceptance only on
+forward cohorts (`monday_t1_fwd` and successors), criteria as elsewhere: >+1pp net on the
+kept book vs unguarded, cohort-block CI excluding zero. Rejected if blocked trades turn
+out BETTER than kept by >1pp (the guard would be throwing away the edge).
+**VERDICT (same day, minutes later): REJECTED by its own criterion — and inverted.**
+Across the five PIT-clean books, deduped to unique (ticker, direction, entry_date):
+154 trades, the guard blocks **7**, and the blocked are the BEST trades in the set —
+mean **+24.4%** / median **+7.98%**, 5/7 winners, vs **+1.69% / +0.77%** kept. Without
+both INTC entries (+84.3%, +56.7%) the blocked still run +6.0% / +2.8%. The block list is
+the AI-capex rally roll: INTC ×2, ORCL ×2, AVGO, LLY, NVDA. An opening gap INTO the
+signal read as continuation, not exhaustion — on this tape, "the move already happened"
+was where the move was still happening.
+Caveats that cap the claim: n=7 blocked; every one is a LONG in a single rising-tape
+regime (Mar–Jun 2026); a down-tape could invert it back. So this REJECTS the guard as
+formulated (it would have cut the edge, decisively) but does NOT establish the opposite.
+The inverse hypothesis — gap-with-signal as a positive selection feature — is noted here
+as data-born and is NOT registered; if ever pursued, forward cohorts only.
+Consequence upstream: the midday-run proposal's premise ("the open eats the move") is
+empirically backwards on our books, which also retroactively rationalises why the
+Monday-06:30 regime showed no edge over Sunday.
 
 `longterm_agent/costs.py`, per the audit's spec: flat spread per side + borrow on SHORTs,
 printed as a third book. Frozen defaults: 5bp/side stock, 1bp/side hedge, 50bp/yr borrow
@@ -351,7 +386,74 @@ measured replay drift (10 cache misses, conviction 0.82 → 0.78 on an identical
 displacing graph maintenance — a preview→GA rollover would produce exactly that. **Pin the
 model** before any further A/B, or every future comparison inherits this confound.
 
-### Pre-registered, awaiting their window (formulations frozen — see linked sections)
+### `monday_t1_fwd` — forward continuation of the Monday-morning regime (registered 2026-07-22)
+
+Operator judgment call, stated as such: the Monday question (freshest news, smallest
+decision→entry gap — a median 52 articles land in it vs 205 for the live Sunday schedule
+and 514 for the Friday backtest grid) is worth an answer, `monday_t1_pit` is inconclusive
+on 3 matured cohorts, and **forward cohorts are the only unburned data that will ever
+exist again**. One cohort per week: the SAME 30 tickers, Mondays `--at 06:30 --fill d0`,
+horizons 14/28/84, deep on, `LT_METRICS_VERSION=2 LT_LLM_CACHE=true LT_MAX_REFLECTION=0`,
+provider pinned `novita` (failure rate is now measured per-row; a >5% cohort gets re-run,
+not silently kept). Each cohort is run BEFORE any of its outcomes exist — 07-20's 2w
+matures 08-03 — so this is pre-registered forward testing, not backtesting.
+**Criteria: none of their own.** Cohorts accumulate into the SAME frozen monday_t1 read
+(±1pp band, cohort-block CI, day-1 paired value) at the ~2026-08-10 re-read and after;
+no new formulation, no variant iteration. The book is separate from `monday_t1_pit` so
+the registered historical grid stays exactly as registered.
+Live stays on Sunday until the Monday read clears its frozen bar — the schedule follows
+the evidence, not the other way around.
+**Cohort 2026-07-20 (run 2026-07-22) — accepted at 3.3% failures, after a lesson.**
+Run 1: 23% synthesis failures → voided per the rule above. The retry budget was then
+widened (2×~3s → 4×~15s exponential, and a None result now counts as a failure —
+`core/llm.py`), and the cohort re-run. **The re-run REPLACED the decisions**: identical
+corpus (same 140 articles, same buckets, provider pinned both times, 1.5h apart), yet one
+map bucket that had failed uncached in run 1 came back fresh in run 2 → a slightly
+different bucket sentiment → a different profile text → a synthesis cache MISS → PEP
+flipped SHORT 0.55/traded → NEUTRAL. **This is the replay-drift mechanism, finally
+measured end-to-end: transient call failures leave cache-coverage holes, and any upstream
+text difference cascades into downstream cache misses.** Not graph maintenance (corpus
+identical), not a checkpoint change (one build), not quantisation (pinned).
+**Protocol amendment, effective immediately: a cohort is NEVER re-rolled.** A re-run is a
+different experiment wearing the same date. The first run that clears the failure
+threshold stands; rows that failed are patched INDIVIDUALLY (`--tickers <failed>` only),
+which preserves every healthy decision and its cache. Applied here: INTC patched clean;
+WMT returns an empty/refused completion deterministically (2 runs × 5 attempts) — a
+persistent per-prompt provider refusal, not a transient; it stays as a marked
+`synthesis_failed` row. Final book: 30 rows, 1 failure (3.3%), 0 directional, 0 traded.
+Also the strongest argument yet for running forward cohorts ON their Monday by schedule:
+every day between as_of and the run adds drift surface.
+
+### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
+NOT scheduled, prerequisites below)
+
+**Origin and honest status of its premise.** Proposed by the operator to close the
+reaction blind spot: the agent sees no post-Friday price (no futures, no premarket), so it
+enters Monday's open without knowing how much of its news the open already absorbed. The
+protective half of that premise — "skip what the open already ate" — was tested the same
+day as `gap_guard` and REJECTED WITH INVERSION: the entries a 2% gap filter would have
+blocked were the best trades in every book. What survives is the *observability* half:
+deciding at midday, the agent can SEE the morning reaction and condition on it (in either
+direction — the burned books hint continuation, not exhaustion, but that hint is
+data-born and unregistered). Later entry never gets a better price; it buys an informed
+decision about the price.
+**Frozen design (one formulation):** decision Monday 12:00 ET; visible: weekend+morning
+news, Friday dailies, and intraday bars 09:30→12:00 (data exists: `historical_data_*`,
+1-min, RTH-only, since 2026-02-23); entry = open of the 12:01 bar (`fill=intraday`,
+horizons anchored there); same 30 tickers, deep on, provider pinned, cohorts run ON their
+Monday (drift lesson, 2026-07-22). Compared against the concurrent standard book on the
+same weeks, paired by week — the pairing methodology proven on monday-vs-friday.
+**Prerequisites, in order — it does NOT launch until all three hold:**
+1. **The 2026-08-10 Monday read shows the day-time family is worth pursuing at all.** If
+   Monday-06:30 is flat-or-worse at 12 cohorts, a third family member inherits the debt,
+   not the budget.
+2. **Engineering:** a minute-granularity PIT cutoff in `tools/pit.py` and an `intraday`
+   fill mode in `exit_rules.py` — both tested to the standard the daily cutoffs got.
+3. **Multiplicity acknowledged at launch:** this is regime variant #3 (Sunday, Mon 06:30,
+   Mon midday). Whatever wins the family must clear its bar with that count on the table.
+**Evidence:** forward cohorts only. Burned windows may reject, never accept — and the one
+midday-relevant diagnostic they already gave (gap continuation) cuts AGAINST the
+protective story this experiment was first imagined for.
 
 - **`wf_30x_deep_pit_on` / `_off` — does deep analysis earn its keep? (pre-registered
   2026-07-20, launched same day).** Deep v1 is ON in production, costs a large share of
