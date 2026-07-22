@@ -424,6 +424,39 @@ persistent per-prompt provider refusal, not a transient; it stays as a marked
 Also the strongest argument yet for running forward cohorts ON their Monday by schedule:
 every day between as_of and the run adds drift surface.
 
+### Aux horizons 6w/8w — measured 2026-07-22, DIAGNOSTIC ONLY (declared before looking)
+
+Motivation is mechanical, not mined: the agent's own theses state horizons of "6-12
+weeks" / "8-16 weeks", while every verdict in this ledger reads the 4w book — we grade
+shorter than the agent claims to think. Measuring 42d/56d on stored decisions costs $0
+(pure price lookups; decisions untouched).
+**Status frozen in advance: these numbers can never be a verdict.** Reading five horizons
+and citing the best is horizon-shopping; the ONLY registered reading is the monotonicity
+question — does the edge grow from 2w→4w→6w→8w toward the agent's stated horizon, or
+decay? No threshold, no acceptance, no "6w works better" conclusion from burned books. If
+a longer horizon is ever to become primary, that is a pre-registered change ahead of
+forward cohorts, with D2 borrow costs rescaled.
+**Measured (2026-07-22), net excess_beta.** The only composition-clean read is the holdout
+pair — 100% of trades matured at every horizon:
+| | 2w | 4w | 6w | 8w | 12w |
+|---|---|---|---|---|---|
+| `holdout_on` (79/79) | +1.54% | +4.95% | +5.57% | **+6.18%** | +5.36% |
+| `holdout_off` (76/76) | +1.23% | +2.34% | +2.61% | **+4.12%** | +1.75% |
+A hump peaking at ~8w in BOTH legs, rolling off by 12w — consistent with the agent's own
+stated "6-12 weeks" thesis horizon, front-half weighted. Medians strengthen with horizon
+too (`_off` flips −0.90% → +2.86% at 8w; winners 46% → 59%), so the longer read is not
+just fatter tails. The registered monotonicity answer: **the edge does not decay past 4w;
+4w grading likely cuts the signal mid-growth.**
+*The survivor trap, documented because the numbers look better than the clean ones:*
+`pit_on` 12w reads +5.00% at 36% matured and `monday_t1_pit` 12w reads +5.84% at 50%
+matured — those subsets are exactly the early cohorts (04-24, 05-01, 04-27), the best
+weeks of the whole period. On full books 12w is WORSE than 8w. The earlier warning on
+monday-12w ("n=15 in ONE cohort — an ESTIMATE, not evidence") measured out correct.
+*Forward action (no registration needed — measurement only):* add `42 56` to the graded
+horizons of `monday_t1_fwd` and subsequent books so the 2w→12w curve accumulates natively
+on unburned cohorts; any primary-horizon change remains a pre-registered decision on that
+forward data.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
