@@ -195,9 +195,40 @@ def ticker_status(ticker: str) -> Dict[str, Any]:
     if not r:
         return {}
     as_of, verdict, traded, conv, f4, b4, signal = r
+    sig = signal if isinstance(signal, dict) else {}
     return {"ticker": ticker.upper(), "as_of": as_of, "verdict": verdict, "traded": traded,
             "conviction": conv, "fwd_return_4w": f4, "benchmark_return_4w": b4,
-            "thesis": (signal or {}).get("thesis") if isinstance(signal, dict) else None}
+            "thesis": sig.get("thesis"), "horizon": sig.get("horizon"),
+            "supporting_factors": sig.get("supporting_factors") or [],
+            "key_risks": sig.get("key_risks") or [],
+            "invalidation_conditions": sig.get("invalidation_conditions") or []}
+
+
+def format_ticker_status_html(st: Dict[str, Any]) -> str:
+    """Telegram-HTML /ticker: the agent's full reasoning for its latest call.
+
+    thesis / factors / risks / invalidation come straight from the synthesis output —
+    the same JSON the decision was made on, not a retelling.
+    """
+    esc = lambda s: (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    conv = f"{st['conviction']:.0%}" if isinstance(st["conviction"], (int, float)) else "—"
+    out = [f"<b>{esc(st['ticker'])}</b> — {esc(st['verdict'] or '?')} "
+           f"{'💼 traded' if st['traded'] else ''}",
+           f"as_of {esc(st['as_of'])} · conviction {conv}"
+           + (f" · {esc(st['horizon'])}" if st.get("horizon") else "")]
+    if st["fwd_return_4w"] is not None and st["benchmark_return_4w"] is not None:
+        ex = trade_excess(st["verdict"], st["fwd_return_4w"], st["benchmark_return_4w"])
+        out.append(f"realized 4w: {_fmt_pct(st['fwd_return_4w'])} (excess {_fmt_pct(ex)})")
+    if st.get("thesis"):
+        out.append(f"\n{esc(st['thesis'][:700])}")
+    for title, key, cap in (("Why", "supporting_factors", 4),
+                            ("Risks", "key_risks", 4),
+                            ("Invalidated if", "invalidation_conditions", 3)):
+        items = st.get(key) or []
+        if items:
+            out.append(f"\n<b>{title}</b>")
+            out += [f"  • {esc(str(i)[:200])}" for i in items[:cap]]
+    return "\n".join(out)
 
 
 def weekly_report(days: int = 7) -> Dict[str, Any]:
@@ -560,14 +591,16 @@ def open_positions() -> List[Dict[str, Any]]:
     conn = _conn()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT ticker, as_of, verdict, conviction, entry_date, entry_px, fill_convention
+            SELECT ticker, as_of, verdict, conviction, entry_date, entry_px, fill_convention,
+                   signal->>'thesis'
             FROM longterm_agent_results
             WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
             ORDER BY as_of, ticker
         """, [_version()])
         rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c, "entry_date": ed,
-                 "entry_px": float(px) if px is not None else None, "fill_convention": fc}
-                for t, a, v, c, ed, px, fc in cur.fetchall()]
+                 "entry_px": float(px) if px is not None else None, "fill_convention": fc,
+                 "thesis": th}
+                for t, a, v, c, ed, px, fc, th in cur.fetchall()]
 
         cur.execute("""SELECT close FROM stock_prices_daily
                        WHERE ticker='SPY' ORDER BY date DESC LIMIT 1""")
@@ -613,6 +646,9 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
         if r.get("entry_px_used") and r.get("last_px"):
             px = f" · <code>{r['entry_px_used']:.2f}</code> → <code>{r['last_px']:.2f}</code>"
         out.append(f"  opened {esc(r['as_of'])}{px} · matures {esc(r['matures'] or '—')}")
+        # The agent's own words, not a paraphrase — /ticker SYM has the full version.
+        if r.get("thesis"):
+            out.append(f"  <i>{esc(r['thesis'][:180])}</i>")
     poss = [r["position_return"] for r in rows if r.get("position_return") is not None]
     exs = [r["excess_now"] for r in rows if r.get("excess_now") is not None]
     if poss:

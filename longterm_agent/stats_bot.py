@@ -241,16 +241,7 @@ async def cmd_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not st:
         await update.message.reply_text(f"No runs for {escape(context.args[0].upper())}.")
         return
-    conv = f"{st['conviction']:.0%}" if isinstance(st["conviction"], (int, float)) else "—"
-    text = (f"<b>{escape(st['ticker'])}</b> — {escape(st['verdict'] or '?')} "
-            f"{'💼 traded' if st['traded'] else ''}\n"
-            f"as_of {st['as_of']} · conviction {conv}\n")
-    if st["fwd_return_4w"] is not None and st["benchmark_return_4w"] is not None:
-        ex = stats.trade_excess(st["verdict"], st["fwd_return_4w"], st["benchmark_return_4w"])
-        text += f"realized 4w: {_pct(st['fwd_return_4w'])} (excess {_pct(ex)})\n"
-    if st.get("thesis"):
-        text += f"\n{escape(st['thesis'][:700])}"
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(stats.format_ticker_status_html(st), parse_mode="HTML")
 
 
 async def _post_init(app: Application):

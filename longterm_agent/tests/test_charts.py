@@ -174,6 +174,41 @@ def test_open_positions_empty_book_says_flat():
     assert "(0)" in out and "flat" in out
 
 
+def test_open_positions_show_the_agents_thesis_verbatim():
+    from longterm_agent.stats import format_open_positions_html
+    rows = [{"ticker": "NKE", "verdict": "SHORT", "as_of": "2026-07-19", "days_open": 3,
+             "position_return": 0.015, "excess_now": 0.017, "entry_px_used": 43.76,
+             "last_px": 43.09, "matures": "2026-08-16",
+             "thesis": "Inventory glut & <weak> China demand"}]
+    out = format_open_positions_html(rows)
+    assert "Inventory glut" in out and "&lt;weak&gt;" in out  # present, and escaped
+
+
+def test_ticker_status_renders_full_reasoning_sections():
+    from longterm_agent.stats import format_ticker_status_html
+    st = {"ticker": "MRK", "verdict": "SHORT", "traded": True, "as_of": "2026-07-19",
+          "conviction": 0.8, "fwd_return_4w": None, "benchmark_return_4w": None,
+          "horizon": "4-12 weeks", "thesis": "Patent cliff pressure",
+          "supporting_factors": ["Keytruda LOE 2028", "pipeline gaps"],
+          "key_risks": ["M&A surprise"],
+          "invalidation_conditions": ["successful subcutaneous launch"]}
+    out = format_ticker_status_html(st)
+    assert "Patent cliff pressure" in out
+    assert "Why" in out and "Keytruda LOE 2028" in out
+    assert "Risks" in out and "M&amp;A surprise" in out  # escaped
+    assert "Invalidated if" in out and "subcutaneous" in out
+
+
+def test_ticker_status_without_reasoning_lists_stays_compact():
+    from longterm_agent.stats import format_ticker_status_html
+    st = {"ticker": "AMD", "verdict": "NEUTRAL", "traded": False, "as_of": "2026-07-19",
+          "conviction": 0.2, "fwd_return_4w": None, "benchmark_return_4w": None,
+          "thesis": None, "horizon": None, "supporting_factors": [],
+          "key_risks": [], "invalidation_conditions": []}
+    out = format_ticker_status_html(st)
+    assert "Why" not in out and "Risks" not in out and "Invalidated" not in out
+
+
 # --- the Monday forward cohort job ------------------------------------------------------
 def test_monday_fwd_command_matches_the_registration():
     """The argv IS the experiment: a wrong flag silently produces a book under a
