@@ -142,6 +142,38 @@ def test_health_flags_each_condition_that_has_bitten_before():
     assert "⚠️" not in good and "deflated" not in good
 
 
+# --- /open formatting -------------------------------------------------------------------
+def test_unrealized_excess_applies_the_short_sign_exactly_once():
+    """position_return arrives direction-signed; flipping it twice is how a profitable
+    SHORT quietly reports a negative excess."""
+    from longterm_agent.stats import unrealized_excess
+    # stock -5% (so the SHORT's position_return is +5%), SPY +1% → excess = +6%
+    assert abs(unrealized_excess("SHORT", 0.05, 0.01) - 0.06) < 1e-12
+    assert abs(unrealized_excess("LONG", 0.05, 0.01) - 0.04) < 1e-12
+    assert unrealized_excess("SHORT", None, 0.01) is None
+    assert unrealized_excess("SHORT", 0.05, None) is None
+
+
+def test_open_positions_render_book_mean_and_warning():
+    from longterm_agent.stats import format_open_positions_html
+    rows = [{"ticker": "AMD", "verdict": "LONG", "as_of": "2026-07-19", "days_open": 2,
+             "position_return": 0.012, "excess_now": 0.008, "entry_px_used": 155.2,
+             "last_px": 157.1, "matures": "2026-08-17"},
+            {"ticker": "MRK", "verdict": "SHORT", "as_of": "2026-07-19", "days_open": 2,
+             "position_return": -0.004, "excess_now": None, "entry_px_used": None,
+             "last_px": None, "matures": "2026-08-17"}]
+    out = format_open_positions_html(rows)
+    assert "AMD" in out and "155.20" in out and "157.10" in out
+    assert "book mean" in out and "unrealized" in out
+    assert "vs SPY <code>—</code>" in out  # missing excess is a dash, not a crash
+
+
+def test_open_positions_empty_book_says_flat():
+    from longterm_agent.stats import format_open_positions_html
+    out = format_open_positions_html([])
+    assert "(0)" in out and "flat" in out
+
+
 # --- the Monday forward cohort job ------------------------------------------------------
 def test_monday_fwd_command_matches_the_registration():
     """The argv IS the experiment: a wrong flag silently produces a book under a

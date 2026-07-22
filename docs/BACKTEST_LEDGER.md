@@ -486,6 +486,24 @@ horizons of `monday_t1_fwd` and subsequent books so the 2w→12w curve accumulat
 on unburned cohorts; any primary-horizon change remains a pre-registered decision on that
 forward data.
 
+### `sunday_sim` — the last two Sundays under the CURRENT code (registered 2026-07-22,
+BEFORE launch; outcomes do not exist yet for either cohort)
+
+Two cohorts at the live regime's own stamp (Sunday 06:00 ET, fill `open_t1` → Monday
+open), the live 64-ticker universe (taken from the 2026-07-19 live rows), horizons
+14/28/42/56/84, deep on, provider pinned, cache on.
+- **2026-07-12** — the Sunday nothing ran (first live batch was a week later). A clean
+  pre-outcome cohort (2w matures 07-27) that also fills the gap in the Sunday series.
+- **2026-07-19** — live DID run, on pipeline 0.8.0, i.e. BEFORE the PIT fixes. The
+  simulation is the current 0.9.x code on the same as_of: the question is **does today's
+  code stand behind the six open positions** (they mature 08-16), not attribution — the
+  delta vs the live rows mixes code fixes with drift, and is read only as
+  agree/disagree per position.
+**Honest limit, stated up front:** a run 3–10 days after its as_of does not reconstruct
+what a live run would have decided (drift is measured); these are PIT-clean cohorts of
+TODAY'S code. Failure protocol as everywhere: >5% synthesis failures ⇒ patch tickers
+individually, never re-roll.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 

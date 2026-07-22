@@ -13,7 +13,7 @@ Vocabulary:
   * win    = strategy *excess* return vs SPY > 0 (LONG: stock−SPY; SHORT: SPY−stock).
 """
 import statistics
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Dict, Any
 
 import psycopg2
@@ -43,6 +43,19 @@ def trade_excess(direction: str, fwd_4w, bench_4w):
     if direction == "SHORT":
         return -raw
     return None
+
+
+def unrealized_excess(verdict: str, position_return, spy_return):
+    """Excess-so-far of an OPEN position vs SPY, same convention the grader will use.
+
+    `position_return` arrives direction-signed (a profitable SHORT is positive), so the
+    sign is undone here and trade_excess applies it exactly once — flipping twice is how
+    a SHORT's excess quietly goes wrong.
+    """
+    if position_return is None or spy_return is None:
+        return None
+    raw = -position_return if verdict == "SHORT" else position_return
+    return trade_excess(verdict, raw, spy_return)
 
 
 def compute_trade_stats(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -277,6 +290,8 @@ def _stamp_position(cur, r) -> None:
         if r["verdict"] == "SHORT":
             pos = -pos
     r["position_return"] = pos
+    r["entry_px_used"] = entry   # for /open's "entry → last" line
+    r["last_px"] = last
     ref = entry_date or r["as_of"]
     r["days_open"] = None if ref is None else (date.today() - ref).days
 
@@ -528,4 +543,81 @@ def format_health(h: Dict[str, Any]) -> str:
                f"but ungraded")
     out.append(f"⏳ open: <code>{h['pending']}</code>"
                + (f" · next matures <code>{h['next_mature']}</code>" if h["next_mature"] else ""))
+    return "\n".join(out)
+
+
+# --- /open: the live book right now ------------------------------------------------------
+def open_positions() -> List[Dict[str, Any]]:
+    """Every ungraded trade of the current version, stamped with unrealized P&L.
+
+    Unlike /week this has no window — a position is live until it grades, however long
+    ago it opened. `excess_now` uses the grader's own legs (stock entry-bar open and the
+    SPY entry-bar open under the row's fill convention, both to the latest close), so
+    the number a position shows while open is directly comparable to the one it will
+    close with.
+    """
+    from longterm_agent import exit_rules
+    conn = _conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT ticker, as_of, verdict, conviction, entry_date, entry_px, fill_convention
+            FROM longterm_agent_results
+            WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+            ORDER BY as_of, ticker
+        """, [_version()])
+        rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c, "entry_date": ed,
+                 "entry_px": float(px) if px is not None else None, "fill_convention": fc}
+                for t, a, v, c, ed, px, fc in cur.fetchall()]
+
+        cur.execute("""SELECT close FROM stock_prices_daily
+                       WHERE ticker='SPY' ORDER BY date DESC LIMIT 1""")
+        got = cur.fetchone()
+        spy_last = float(got[0]) if got and got[0] else None
+        spy_entries: Dict[Any, Any] = {}  # one SPY lookup per cohort, not per row
+
+        for r in rows:
+            _stamp_position(cur, r)
+            ref = r["entry_date"] or r["as_of"]
+            r["matures"] = ref + timedelta(days=28) if ref else None
+            key = (r["as_of"], r["fill_convention"])
+            if key not in spy_entries:
+                eb = exit_rules.entry_bar(cur, "SPY", r["as_of"],
+                                          include_asof_day=(r["fill_convention"] == "open_d0"))
+                spy_entries[key] = eb[1] if eb else None
+            spy_entry = spy_entries[key]
+            spy_ret = (spy_last / spy_entry - 1) if spy_entry and spy_last else None
+            r["excess_now"] = unrealized_excess(r["verdict"], r["position_return"], spy_ret)
+    conn.close()
+    return rows
+
+
+def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
+    """Telegram-HTML /open: the whole live book with unrealized P&L.
+
+    Every number here is provisional and the footer says so explicitly — an unrealized
+    mean over a handful of open positions has already been misread as a result once in
+    this project.
+    """
+    p = _fmt_pct
+    esc = lambda s: (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    head = f"💼 <b>Open positions</b> ({len(rows)}) · <code>v{esc(_version())}</code>"
+    if not rows:
+        return head + "\n<i>none — the book is flat.</i>"
+    out = [head]
+    for r in rows:
+        day = r["days_open"] if r.get("days_open") is not None else "—"
+        out.append(f"\n<b>{esc(r['ticker'])}</b> {esc(r['verdict'])} · day <code>{day}</code>"
+                   f" · pos <code>{p(r['position_return'])}</code>"
+                   f" · vs SPY <code>{p(r['excess_now'])}</code>")
+        px = ""
+        if r.get("entry_px_used") and r.get("last_px"):
+            px = f" · <code>{r['entry_px_used']:.2f}</code> → <code>{r['last_px']:.2f}</code>"
+        out.append(f"  opened {esc(r['as_of'])}{px} · matures {esc(r['matures'] or '—')}")
+    poss = [r["position_return"] for r in rows if r.get("position_return") is not None]
+    exs = [r["excess_now"] for r in rows if r.get("excess_now") is not None]
+    if poss:
+        out.append(f"\n→ book mean: pos <code>{p(statistics.fmean(poss))}</code>"
+                   + (f" · vs SPY <code>{p(statistics.fmean(exs))}</code>" if exs else ""))
+    out.append("<i>⚠ unrealized, gross of costs; a position grades at its 4-week horizon "
+               "and only that number counts.</i>")
     return "\n".join(out)

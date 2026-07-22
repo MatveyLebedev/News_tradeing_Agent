@@ -45,7 +45,12 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 # maturity-masked intraday moves. Detection labels are untouched (DETECTION_VERSION stands),
 # but tool outputs and the fundamentals/characterization prompts change — so runs before and
 # after this bump are NOT like-for-like and need a fresh backtest_id.
-PIPELINE_VERSION = "0.9.0"
+# 0.9.3 (2026-07-22): advisory-only since 0.9.0 — synthesis retry budget 4× exponential
+# (fewer failed→NEUTRAL rows, decision logic untouched), /open /gate /health bot commands,
+# HTML digest + charts, Monday job default OFF. Bumped so the version stamped on rows
+# matches the shipped image tag (0.9.1/0.9.2 images still stamped 0.9.0 — a provenance
+# gap, not a code difference).
+PIPELINE_VERSION = "0.9.3"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.

@@ -10,6 +10,7 @@ Commands:
   /stats               — overview (signals + trades win-rate + error health)
   /signals [N]         — latest N directional signals (default 10)
   /trades              — actionable-trade outcomes (win rate vs SPY, mean/median excess)
+  /open                — live book: every open position with unrealized P&L
   /errors [N]          — recent errors from the operational log
   /ticker SYM          — latest verdict + thesis for one ticker
 
@@ -60,6 +61,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — overview\n"
         "/signals [N] — latest directional signals\n"
         "/trades — trade outcomes &amp; win rate\n"
+        "/open — live book: open positions &amp; unrealized P&amp;L\n"
         "/week — all trades this week: new, open, closed\n"
         "/gate — what the risk gate filtered, and whether it paid\n"
         "/health — failure rate, price freshness, grader backlog\n"
@@ -155,6 +157,20 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @authorized
+async def cmd_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await asyncio.to_thread(stats.open_positions)
+    await update.message.reply_text(stats.format_open_positions_html(rows), parse_mode="HTML")
+    # Same chart the weekly digest uses — the live book is the live book.
+    try:
+        from longterm_agent import charts
+        png = await asyncio.to_thread(charts.open_positions_chart, rows)
+        if png:
+            await update.message.reply_photo(png)
+    except Exception:
+        log.exception("open-positions chart failed")
+
+
+@authorized
 async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rep = await asyncio.to_thread(stats.weekly_report)
     # HTML, not <pre>: a code block renders as Telegram's monospace "copy" card, which
@@ -241,6 +257,7 @@ async def _post_init(app: Application):
         BotCommand("stats", "Overview: signals, trades, errors"),
         BotCommand("signals", "Latest directional signals"),
         BotCommand("trades", "Trade outcomes & win rate"),
+        BotCommand("open", "Live book: open positions & unrealized P&L"),
         BotCommand("week", "All trades this week: new, open, closed"),
         BotCommand("gate", "What the risk gate filtered, and whether it paid"),
         BotCommand("health", "Failure rate, price freshness, grader backlog"),
@@ -259,6 +276,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("signals", cmd_signals))
     app.add_handler(CommandHandler("trades", cmd_trades))
+    app.add_handler(CommandHandler("open", cmd_open))
     app.add_handler(CommandHandler("week", cmd_week))
     app.add_handler(CommandHandler("gate", cmd_gate))
     app.add_handler(CommandHandler("health", cmd_health))
