@@ -18,35 +18,47 @@ _DIR_EMOJI = {"LONG": "🟢", "SHORT": "🔴", "NEUTRAL": "⚪", "NO_DATA": "⚫
 
 
 class TelegramNotifier:
+    """`chat_id` may be a comma-separated list ("111,222") — every id gets every alert.
+
+    The Telegram API itself takes exactly one chat per sendMessage call, so a combined
+    value passed through verbatim is a nonexistent chat and alerts die silently — which
+    is how this feature request arrived.
+    """
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None, timeout: int = 15):
         default_token, default_chat = get_settings().telegram_creds()
         self.token = token or default_token
-        self.chat_id = chat_id or default_chat
+        self.chat_ids = [c.strip() for c in str(chat_id or default_chat or "").split(",")
+                         if c.strip()]
         self.timeout = timeout
 
     @property
     def enabled(self) -> bool:
-        return bool(self.token and self.chat_id)
+        return bool(self.token and self.chat_ids)
 
     def send(self, text: str) -> bool:
-        """Send an HTML message. Returns True on success; never raises."""
+        """Send an HTML message to every configured chat. True if at least one delivery
+        succeeded — alerting "worked" as long as somebody got the alert; each failed
+        chat still prints its own warning. Never raises."""
         if not self.enabled:
             print(f"[telegram disabled] {text}")
             return False
-        try:
-            r = requests.post(
-                _API.format(token=self.token),
-                json={"chat_id": self.chat_id, "text": text,
-                      "parse_mode": "HTML", "disable_web_page_preview": True},
-                timeout=self.timeout,
-            )
-            if r.status_code != 200:
-                print(f"  ⚠ telegram send failed: {r.status_code} {r.text[:200]}")
-                return False
-            return True
-        except Exception as e:
-            print(f"  ⚠ telegram send error: {e}")
-            return False
+        delivered = False
+        for chat in self.chat_ids:
+            try:
+                r = requests.post(
+                    _API.format(token=self.token),
+                    json={"chat_id": chat, "text": text,
+                          "parse_mode": "HTML", "disable_web_page_preview": True},
+                    timeout=self.timeout,
+                )
+                if r.status_code != 200:
+                    print(f"  ⚠ telegram send failed (chat …{chat[-3:]}): "
+                          f"{r.status_code} {r.text[:200]}")
+                else:
+                    delivered = True
+            except Exception as e:
+                print(f"  ⚠ telegram send error (chat …{chat[-3:]}): {e}")
+        return delivered
 
     # --- formatted helpers -------------------------------------------------
     def notify_signal(self, ticker, as_of, direction, conviction, horizon, thesis,
