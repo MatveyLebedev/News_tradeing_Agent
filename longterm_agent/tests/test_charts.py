@@ -156,6 +156,10 @@ def test_monday_fwd_command_matches_the_registration():
     i = cmd.index("--horizons")
     assert cmd[i + 1:i + 6] == ["14", "28", "42", "56", "84"]  # the full curve
     assert len(MONDAY_FWD_TICKERS) == 30 and "SQ" not in MONDAY_FWD_TICKERS
+    # The Monday line was closed by the operator before this ever ran on a schedule;
+    # the default must stay OFF so a later deploy cannot silently re-open it.
+    from longterm_agent.config import LongTermAgentConfig
+    assert LongTermAgentConfig.MONDAY_FWD is False
 
 
 def test_monday_fwd_env_pins_the_provider_without_touching_the_parent():

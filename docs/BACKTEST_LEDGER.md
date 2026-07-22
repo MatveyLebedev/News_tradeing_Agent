@@ -423,6 +423,15 @@ persistent per-prompt provider refusal, not a transient; it stays as a marked
 `synthesis_failed` row. Final book: 30 rows, 1 failure (3.3%), 0 directional, 0 traded.
 Also the strongest argument yet for running forward cohorts ON their Monday by schedule:
 every day between as_of and the run adds drift surface.
+**CLOSED 2026-07-22 — operator decision, recorded as such.** Same day the scheduler job
+was built (and before it ever fired), the operator closed the Monday-morning line:
+"monday is the wrong way, we test intraday later instead." This is judgment, not data —
+the Monday hypothesis dies UNPROVEN, not disproven, and that distinction is preserved
+here on purpose. What remains: the one forward cohort (07-20) stays in the book; the 12
+`monday_t1_pit` cohorts mature regardless, so the free ~2026-08-10 read still happens and
+will be reported — as the closing entry for this line, not as grounds to reopen it
+(reopening is a registered decision; `LT_MONDAY_FWD` defaults off and is pinned off by
+test). The successor direction is `midday_mon` below.
 
 ### Aux horizons 6w/8w — measured 2026-07-22, DIAGNOSTIC ONLY (declared before looking)
 
@@ -477,9 +486,11 @@ horizons anchored there); same 30 tickers, deep on, provider pinned, cohorts run
 Monday (drift lesson, 2026-07-22). Compared against the concurrent standard book on the
 same weeks, paired by week — the pairing methodology proven on monday-vs-friday.
 **Prerequisites, in order — it does NOT launch until all three hold:**
-1. **The 2026-08-10 Monday read shows the day-time family is worth pursuing at all.** If
-   Monday-06:30 is flat-or-worse at 12 cohorts, a third family member inherits the debt,
-   not the budget.
+1. **The free ~2026-08-10 maturation read is taken first** (amended 2026-07-22: the
+   operator closed the Monday line and chose midday as the successor, so this read no
+   longer GATES the launch — but it costs $0, arrives anyway, and is the only
+   day-time-family evidence there will ever be; designing midday without reading it
+   would be discarding paid-for information).
 2. **Engineering:** a minute-granularity PIT cutoff in `tools/pit.py` and an `intraday`
    fill mode in `exit_rules.py` — both tested to the standard the daily cutoffs got.
 3. **Multiplicity acknowledged at launch:** this is regime variant #3 (Sunday, Mon 06:30,

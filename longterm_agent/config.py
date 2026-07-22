@@ -148,10 +148,14 @@ class LongTermAgentConfig:
     SYNTH_FUNDAMENTALS = os.getenv("LT_SYNTH_FUNDAMENTALS", "thin").lower()
     # --- Forward Monday cohort (`monday_t1_fwd`, docs/BACKTEST_LEDGER.md) ---
     # Runs one pre-registered forward cohort every Monday 06:35 ET from the scheduler.
-    # Default ON by operator decision 2026-07-22: after the measured replay-drift
-    # mechanism, running the cohort ON its Monday is a data-quality requirement, not a
-    # convenience — a late run is a different experiment. Kill switch, not a knob.
-    MONDAY_FWD = os.getenv("LT_MONDAY_FWD", "true").lower() == "true"
+    # Default OFF by operator decision 2026-07-22 (same day it was written): the operator
+    # closed the Monday-morning line — "monday is the wrong way, we test intraday later
+    # instead" — before this ever shipped. The job stays for the record and for the
+    # measured lesson it encodes (a cohort must run ON its as_of day, in a pinned
+    # subprocess); flipping this on is re-opening the Monday line, a registered decision,
+    # not a config tweak. The existing monday_t1_pit cohorts mature regardless — the free
+    # ~2026-08-10 read happens with or without new cohorts.
+    MONDAY_FWD = os.getenv("LT_MONDAY_FWD", "false").lower() == "true"
     # Rows: fundamentals-trend verdict; columns: shift_score buckets
     # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
     # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype
