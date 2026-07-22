@@ -299,6 +299,26 @@ thesis; `ab_selection` prints the rate and refuses to let a >5% book be read aga
 **Audit of every stored book:** `wf_30x_f12_v3` 0.7%, `wf_2026q2_v0.1` 1.4%, holdout legs
 1.1%/1.7% — all low and, for the deep pair, symmetric (2 vs 3 rows), so **Q1 and Q2 stand**.
 Re-run needed before `rich_synth` has any reading at all.
+**RUN 2 (2026-07-22) — healthy (1.7% failures) and the frozen reading resolves:**
+4w net excess_beta `rich_off` **+2.01%** (n=69) — within 0.33pp of `deep_off` (+2.34%) and
+2.94pp under `deep_on` (+4.95%). Frozen branch: **deep does something beyond surfacing
+data; the prompt fix is not a substitute.** (Burned window ⇒ this REJECTS "deep is just
+data plumbing" here; it does not settle what deep's something is.)
+- *The decisive detail — INTC 2026-04-06:* the rich prompt contained the exact margin
+  numbers deep had cited (15% → 38.2%, first positive operating margin), and the model
+  still said NEUTRAL. The data alone did not move it; deep's narrative block did. Whatever
+  deep buys, it is not (only) field access.
+- *The rich prompt itself is value-neutral:* vs the thin book on the same window
+  (both deep-off), −0.33pp — noise. But it is NOT behaviour-neutral: 26 of 180 directions
+  changed, 9 trades in (+4.91%), 16 out (+4.61%) — a large, value-neutral reshuffle.
+- *Meta-finding, third confirmation:* any input-text perturbation (deep block: 29 flips;
+  rich fields: 26 flips; one uncached map bucket: PEP flip) reshuffles decisions at the
+  same scale as the effects being measured. Book-level differences of ~1pp between
+  variants are mostly reshuffle noise, which is why cohort-block CIs on 6 cohorts keep
+  covering zero and why acceptance bars here stay conservative.
+**Action: `LT_SYNTH_FUNDAMENTALS` stays `thin` (default unchanged); `rich` is not pursued.
+Deep stays ON (status quo); its window-dependent value remains the open question, next
+informed by the free ~2026-08-10 maturation.**
 
 ### `gap_guard` — skip entries the market already made (pre-registered 2026-07-22, BEFORE
 any measurement)
