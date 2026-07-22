@@ -91,7 +91,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wr = tr["win_rate"]
     verdicts = " · ".join(f"{v} {d['count']}" for v, d in sorted(sig["by_verdict"].items())) or "none"
     text = (
-        f"📈 <b>Long-term agent</b>  <code>v{escape(_cfg.AGENT_VERSION)}</code>\n\n"
+        f"📈 <b>Long-term agent</b>  <code>v{escape(_cfg.AGENT_VERSION)}</code>"
+        f" · build <code>{escape(_cfg.PIPELINE_VERSION)}</code>\n\n"
         f"<b>Signals</b> (last {sig['days']}d): {sig['total_runs']} runs · "
         f"{sig['directional_signals']} directional · {sig['trades']} trades\n"
         f"  {escape(verdicts)}\n"
