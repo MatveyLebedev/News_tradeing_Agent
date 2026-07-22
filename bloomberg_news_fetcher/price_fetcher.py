@@ -46,7 +46,10 @@ TOP_50_TICKERS = [
     'DIS', 'NFLX', 'CMCSA', 'T', 'VZ', 'CHTR', 'TMUS',
     
     # Consumer Services & E-commerce
-    'PYPL', 'ADP', 'UBER', 'SQ', 'ABNB',
+    # SQ renamed to XYZ (Block Inc.) — the old symbol stopped resolving; the daily price
+    # fetcher errored on it every run ("possibly delisted"). historical_data_sq keeps the
+    # pre-rename bars; XYZ accumulates from its own backfill onward.
+    'PYPL', 'ADP', 'UBER', 'XYZ', 'ABNB',
     
     # Utilities & Energy
     'NEE', 'DUK', 'SO', 'AEP',

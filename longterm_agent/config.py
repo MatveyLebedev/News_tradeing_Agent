@@ -146,6 +146,12 @@ class LongTermAgentConfig:
     # synthesis on 0%, and deep analysis re-reads margin_series directly — so deep may be
     # buying back what this compression discards. Changing this INVALIDATES the LLM cache.
     SYNTH_FUNDAMENTALS = os.getenv("LT_SYNTH_FUNDAMENTALS", "thin").lower()
+    # --- Forward Monday cohort (`monday_t1_fwd`, docs/BACKTEST_LEDGER.md) ---
+    # Runs one pre-registered forward cohort every Monday 06:35 ET from the scheduler.
+    # Default ON by operator decision 2026-07-22: after the measured replay-drift
+    # mechanism, running the cohort ON its Monday is a data-quality requirement, not a
+    # convenience — a late run is a different experiment. Kill switch, not a knob.
+    MONDAY_FWD = os.getenv("LT_MONDAY_FWD", "true").lower() == "true"
     # Rows: fundamentals-trend verdict; columns: shift_score buckets
     # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
     # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype

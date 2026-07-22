@@ -140,3 +140,30 @@ def test_health_flags_each_condition_that_has_bitten_before():
                           "price_max": "2026-07-21", "price_lag_days": 0,
                           "overdue": 0, "pending": 6, "next_mature": "2026-08-16"})
     assert "⚠️" not in good and "deflated" not in good
+
+
+# --- the Monday forward cohort job ------------------------------------------------------
+def test_monday_fwd_command_matches_the_registration():
+    """The argv IS the experiment: a wrong flag silently produces a book under a
+    different convention. Pinned to the monday_t1_fwd registration in the ledger."""
+    from datetime import date
+    from longterm_agent.auto_longterm_agent import monday_fwd_command, MONDAY_FWD_TICKERS
+    cmd = monday_fwd_command(date(2026, 7, 27))
+    assert "--backtest-id" in cmd and "monday_t1_fwd" in cmd
+    assert cmd[cmd.index("--fill") + 1] == "d0"          # same-Monday entry
+    assert cmd[cmd.index("--at") + 1] == "06:30"
+    assert cmd[cmd.index("--start") + 1] == "2026-07-27"
+    i = cmd.index("--horizons")
+    assert cmd[i + 1:i + 6] == ["14", "28", "42", "56", "84"]  # the full curve
+    assert len(MONDAY_FWD_TICKERS) == 30 and "SQ" not in MONDAY_FWD_TICKERS
+
+
+def test_monday_fwd_env_pins_the_provider_without_touching_the_parent():
+    """A subprocess on purpose: pinning novita in-process would 404 every gemini map
+    call of the live batch (measured 2026-07-20, aborted a run)."""
+    from longterm_agent.auto_longterm_agent import monday_fwd_env
+    base = {"PATH": "/usr/bin", "LT_METRICS_VERSION": "2"}
+    env = monday_fwd_env(base)
+    assert env["LLM_PROVIDER"] == "novita" and env["LT_LLM_CACHE"] == "true"
+    assert env["LT_METRICS_VERSION"] == "2"      # inherits the container's detection pick
+    assert "LLM_PROVIDER" not in base            # parent env untouched

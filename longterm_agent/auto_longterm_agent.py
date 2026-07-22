@@ -12,6 +12,9 @@ Run the weekly batch *after* the news/fundamentals fetchers have updated the DB 
     python -m longterm_agent.auto_longterm_agent --now     # run one batch immediately, then schedule
     python -m longterm_agent.auto_longterm_agent --grade-now
 """
+import os
+import subprocess
+import sys
 import time
 import argparse
 import traceback
@@ -28,6 +31,35 @@ from longterm_agent.batch_run_longterm import run_batch
 from news_agent.database.db_manager import DBManager
 
 ET = pytz.timezone("America/New_York")
+
+# The 30 tickers frozen with the `monday_t1_fwd` registration (docs/BACKTEST_LEDGER.md).
+# Deliberately NOT cfg.get_universe(): the forward book must stay comparable to
+# monday_t1_pit cohort over cohort, so its universe is pinned even as the live one grows.
+MONDAY_FWD_TICKERS = [
+    "AAPL", "ADBE", "AMD", "AMZN", "AVGO", "BAC", "C", "CRM", "DIS", "GOOGL",
+    "GS", "INTC", "JPM", "KO", "LLY", "MA", "META", "MS", "MSFT", "NFLX",
+    "NVDA", "ORCL", "PEP", "PFE", "QCOM", "TSLA", "UBER", "V", "WMT", "XOM",
+]
+
+
+def monday_fwd_command(run_date, tickers=MONDAY_FWD_TICKERS):
+    """argv for one forward Monday cohort. Pure so the invocation is unit-tested —
+    a wrong flag here would silently produce a book under a different convention."""
+    return [sys.executable, "-m", "longterm_agent.backtest",
+            "--backtest-id", "monday_t1_fwd",
+            "--tickers", *tickers,
+            "--start", str(run_date), "--end", str(run_date), "--step", "7",
+            "--horizons", "14", "28", "42", "56", "84",
+            "--workers", "4", "--benchmark", "SPY", "--fill", "d0", "--at", "06:30"]
+
+
+def monday_fwd_env(base=None):
+    """Env for the cohort subprocess. A SUBPROCESS on purpose: the provider pin must not
+    leak into the live batch process — pinning novita globally 404s every gemini map call
+    (measured 2026-07-20, aborted a run)."""
+    env = dict(base if base is not None else os.environ)
+    env.update({"LLM_PROVIDER": "novita", "LT_LLM_CACHE": "true", "LT_MAX_REFLECTION": "0"})
+    return env
 
 
 class Ops:
@@ -72,6 +104,42 @@ class Ops:
         except Exception as e:
             print(f"  ⚠ weekly digest failed: {e}")
 
+    def monday_forward_cohort(self):
+        """One `monday_t1_fwd` cohort, run ON its Monday (docs/BACKTEST_LEDGER.md).
+
+        Scheduled at 06:35 ET so the as_of stamp (06:30) is minutes old: the measured
+        replay-drift mechanism (2026-07-22) means every day between as_of and the run
+        adds drift surface, and the no-re-roll protocol makes this first run the cohort.
+        """
+        today = datetime.now(ET).date()
+        print(f"\n--- MONDAY FORWARD COHORT @ {today} ---")
+        try:
+            r = subprocess.run(monday_fwd_command(today), env=monday_fwd_env(),
+                               timeout=3 * 3600)
+            ok = r.returncode == 0
+        except Exception as e:
+            ok = False
+            self.notifier.notify_error("monday_fwd", f"{type(e).__name__}: {e}")
+        # Health check, not silence: a failed synthesis falls back to NEUTRAL, so an
+        # elevated rate deflates the cohort invisibly. >5% ⇒ patch the failed tickers
+        # by hand (never re-roll) — the alert is what makes that happen.
+        try:
+            from longterm_agent import backtest_metrics as M
+            with self.db.get_cursor() as cur:
+                cur.execute("""SELECT signal FROM backtest_runs
+                               WHERE backtest_id='monday_t1_fwd' AND horizon_days=28
+                                 AND as_of::date=%s""", [today])
+                sigs = [row[0] for row in cur.fetchall()]
+            rate = M.failure_rate(sigs)
+            flag = "⚠️ ABOVE 5% — patch failed tickers individually" if rate > 0.05 else "ok"
+            self.notifier.send(
+                f"📅 monday_t1_fwd cohort {today}: rows {len(sigs)}, "
+                f"failed synth {rate:.1%} ({flag}); runner "
+                f"{'exit 0' if ok else 'FAILED'}")
+            oplog.info("MONDAY_FWD", f"cohort {today}: n={len(sigs)} fail={rate:.1%} ok={ok}")
+        except Exception as e:
+            print(f"  ⚠ monday_fwd health check failed: {e}")
+
     def daily_grade(self):
         print(f"\n--- GRADING @ {datetime.now(ET):%Y-%m-%d %H:%M} ET ---")
         try:
@@ -101,9 +169,13 @@ def run_scheduler(run_on_start=False):
         print(f"⚠ could not schedule weekly batch: {e}")
     # Daily grading of matured cohorts
     schedule.every().day.at(cfg.GRADE_TIME).do(ops.daily_grade)
+    # Forward Monday cohort (LT_MONDAY_FWD=false to disable)
+    if cfg.MONDAY_FWD:
+        schedule.every().monday.at("06:35").do(ops.monday_forward_cohort)
 
     msg = (f"long-term agent scheduler up · batch {cfg.BATCH_WEEKDAY} {cfg.BATCH_TIME} ET, "
-           f"grade daily {cfg.GRADE_TIME} ET · universe {len(cfg.get_universe())}")
+           f"grade daily {cfg.GRADE_TIME} ET · universe {len(cfg.get_universe())}"
+           + (" · monday_fwd 06:35" if cfg.MONDAY_FWD else ""))
     print("=" * 80)
     print(f"LONG-TERM AGENT SCHEDULER — STARTED ({datetime.now(ET):%Y-%m-%d %H:%M %Z})")
     print(msg)
