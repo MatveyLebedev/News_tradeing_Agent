@@ -504,6 +504,38 @@ what a live run would have decided (drift is measured); these are PIT-clean coho
 TODAY'S code. Failure protocol as everywhere: >5% synthesis failures ⇒ patch tickers
 individually, never re-roll.
 
+**Run result (2026-07-22, git 2147271, provider pinned novita, single provenance stamp).**
+Health: 07-12 → 2/64 synthesis failures (3.1%), 07-19 → 3/64 (4.7%); both under the 5%
+bar, the run stands. NO_DATA (thin news coverage, a different category from failure):
+6 and 5 tickers respectively — INTU/PG/TMUS/TXN in both weeks, i.e. persistent coverage
+holes in the 64-universe, not transient. None of the failures touched the six live
+positions — the comparison below is fully covered.
+
+**07-19: does today's code stand behind the live book?** Per position (live 0.8.0 →
+sim 0.9.x):
+
+| live position | sim decision | read |
+|---|---|---|
+| JNJ LONG | LONG 0.80, traded | **agree** |
+| MRK SHORT | SHORT 0.80, traded | **agree** |
+| NKE SHORT | SHORT 0.80, traded | **agree** |
+| NFLX SHORT | SHORT 0.50, NOT traded | direction agrees, gate does not |
+| AMD LONG | SHORT 0.25, not traded | **direction flipped** (weak) |
+| BRK-B LONG | SHORT 0.65, traded | **direction flipped, traded opposite** |
+
+3 of 6 fully confirmed, NFLX confirmed in direction only. The two flips are both
+live-LONGs turning sim-SHORT; BRK-B is the substantive one (0.65, would trade the other
+way), AMD's is weak (0.25, untraded) — and AMD is currently the live book's best
+position (+9% in 3 days), a reminder that agree/disagree is not a quality score.
+The sim would also open AVGO LONG 0.55, BA LONG 0.70, ORCL LONG 0.62 — trades the live
+0.8.0 code did not take. Read per the registration: watch BRK-B (and NFLX's gate) until
+08-16 maturation; no action on open positions from a simulation.
+
+**07-12 (the gap-filling Sunday cohort):** traded GOOG LONG 0.65, MRK SHORT 0.80;
+directional-untraded AMD SHORT 0.35, AVGO LONG 0.50, INTC LONG 0.50. Entry Monday
+07-13 open; 2w matures 07-27, 4w 08-10, 12w 10-05. Note MRK SHORT 0.80 fires on BOTH
+Sundays — the one signal in this exercise with any persistence claim.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
