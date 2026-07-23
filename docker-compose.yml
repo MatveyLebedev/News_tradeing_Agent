@@ -91,6 +91,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Read-only HTTP API over the raw `news` table for the external filtering
+  # pipeline (news_api/README.md). Requires NEWS_API_KEY in .env.
+  news-api:
+    build:
+      context: .
+      dockerfile: news_api/Dockerfile
+    container_name: news_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=America/New_York
+    ports:
+      # Host port kept non-standard: default DB-style ports are ISP-blocked.
+      - "${NEWS_API_PORT:-8710}:8000"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Read-only Telegram stats bot: /stats /signals /trades /errors /ticker
   longterm-stats-bot:
     image: longterm-agent          # reuse the image built by longterm-agent

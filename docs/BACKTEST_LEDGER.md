@@ -186,6 +186,34 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   them automatically — the same frozen criteria then run on ~3× the cohorts. Note the grid
   is now burned for variant iteration (rule 1); only maturation, not new formulations.
 
+- **`wf_30x_nonoise` — corpus opinion-filter A/B (pre-registered 2026-07-22, NOT yet run).**
+  Hypotheses and full design: `CORPUS_NOISE_EXPERIMENT.md` (H-A). Mechanism: an editorial
+  filter over the company corpus — a one-off Stage-2-style classification pass (cheap
+  model, batches of 25, headline + first 300 chars, publication-time fields ONLY — PIT-safe
+  by construction) into a side table `news_flags (news_id, is_opinion, relevance, tags)`;
+  the corpus query in `news_corpus_tool.py` drops `is_opinion = true` rows behind a flag
+  (default OFF; prompts stay byte-identical; one classification pass reused across arms,
+  never re-run after outcomes are known). Motivation is structural, not window-fitted: an
+  external analyst-emulation spec's no-noise rule ("events and official actions, never
+  third-party opinions") applied to background profiling. Registered contra-hypothesis
+  (genuinely two-sided): narrative shifts surface in commentary BEFORE official events —
+  the filter may delay or lose early detections; if filtered-arm-lost detections graded
+  well, the filter is rejected. ONE formulation: drop `is_opinion=true` only — no
+  relevance-threshold variants, no reclassification, no prompt iteration on the classifier.
+  Protocol: the standard grid is burned (rule 1) → it can only REJECT (do-no-harm);
+  acceptance needs forward cohorts that postdate this registration. Per #13's noise floor,
+  headline deltas within ±1pp are inadmissible; pre-registered mechanism-level predictions:
+  (a) map-reduce token cost drops ≈ proportionally to the share of articles removed;
+  (b) guardrail — NO_DATA rate does not rise (the <8-article exit must not swallow tickers);
+  (c) decision deltas concentrate in tickers whose corpus had high opinion-share (top
+      tercile), not uniformly (uniform reshuffle = the #13 noise mode, not a mechanism);
+  (d) evals (bucket_map / synthesis_matrix / thesis_quality) not degraded vs `evals/BASELINE.md`.
+  Companion hypothesis H-B (event-level dedup + `dup_count`) is registered in
+  `CORPUS_NOISE_EXPERIMENT.md` but deliberately NOT queued as a run: per the 2026-07-22
+  discussion it is a graph-integration task (Event `SOURCED_FROM` fan-in already dedups;
+  the ILIKE/embed recall paths bypass the graph and reintroduce duplicates) — it gets its
+  own id, formulation, and frozen criteria if/when picked up.
+
 ### HOLDOUT RUN — pre-registered 2026-07-20, BEFORE launch (`holdout_mar_deep_on` / `_off`)
 
 **The last untouched historical data.** Every one of the 21 as_of dates used by the 17

@@ -1,0 +1,5 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+psycopg2-binary==2.9.11
+python-dotenv==1.0.1
+tzdata==2025.2  # python:*-slim has no system tz database; ZoneInfo needs this
