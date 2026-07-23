@@ -578,7 +578,7 @@ def format_health(h: Dict[str, Any]) -> str:
 
 
 # --- /open: the live book right now ------------------------------------------------------
-def open_positions() -> List[Dict[str, Any]]:
+def open_positions(live: bool = True) -> List[Dict[str, Any]]:
     """Every ungraded trade of the current version, stamped with unrealized P&L.
 
     Unlike /week this has no window — a position is live until it grades, however long
@@ -618,10 +618,59 @@ def open_positions() -> List[Dict[str, Any]]:
                                           include_asof_day=(r["fill_convention"] == "open_d0"))
                 spy_entries[key] = eb[1] if eb else None
             spy_entry = spy_entries[key]
+            r["_spy_entry"] = spy_entry
             spy_ret = (spy_last / spy_entry - 1) if spy_entry and spy_last else None
             r["excess_now"] = unrealized_excess(r["verdict"], r["position_return"], spy_ret)
+        cur.execute("SELECT max(date) FROM stock_prices_daily")
+        prices_through = cur.fetchone()[0]
     conn.close()
+
+    if live and rows:
+        # Display-only overlay: a delayed intraday quote for the human reading the book.
+        # Grading never sees these — closes in stock_prices_daily remain the record.
+        try:
+            quotes, spy_q = _fetch_quotes([r["ticker"] for r in rows])
+            _apply_live_quotes(rows, quotes, spy_q)
+        except Exception as e:
+            print(f"  live quotes unavailable, showing daily closes: {e}")
+    for r in rows:
+        r["prices_through"] = prices_through
     return rows
+
+
+def _fetch_quotes(tickers):
+    """({ticker: last_price}, spy_price) from Yahoo (delayed ~15min). Missing → None."""
+    import yfinance as yf
+    syms = sorted(set(tickers)) + ["SPY"]
+    out = {}
+    for s in syms:
+        try:
+            p = yf.Ticker(s).fast_info.last_price
+            out[s] = float(p) if p else None
+        except Exception:
+            out[s] = None
+    return {k: v for k, v in out.items() if k != "SPY"}, out.get("SPY")
+
+
+def _apply_live_quotes(rows, quotes, spy_last) -> None:
+    """Recompute position_return / excess_now from live quotes where available.
+
+    A row missing its quote keeps the daily-close numbers and no `live` flag — mixing
+    sources silently would be worse than showing a day-old close labeled as such.
+    """
+    for r in rows:
+        q = quotes.get(r["ticker"])
+        entry = r.get("entry_px_used")
+        if not q or not entry:
+            continue
+        pos = q / entry - 1
+        if r["verdict"] == "SHORT":
+            pos = -pos
+        spy_ret = (spy_last / r["_spy_entry"] - 1) if r.get("_spy_entry") and spy_last else None
+        r["position_return"] = pos
+        r["last_px"] = q
+        r["excess_now"] = unrealized_excess(r["verdict"], pos, spy_ret)
+        r["live"] = True
 
 
 def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
@@ -654,6 +703,15 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
     if poss:
         out.append(f"\n→ book mean: pos <code>{p(statistics.fmean(poss))}</code>"
                    + (f" · vs SPY <code>{p(statistics.fmean(exs))}</code>" if exs else ""))
-    out.append("<i>⚠ unrealized, gross of costs; a position grades at its 4-week horizon "
-               "and only that number counts.</i>")
+    n_live = sum(1 for r in rows if r.get("live"))
+    if n_live:
+        src = f"prices: live quotes (~15 min delay)"
+        if n_live < len(rows):
+            src += f", {len(rows) - n_live} on daily closes"
+    else:
+        through = next((r.get("prices_through") for r in rows if r.get("prices_through")), None)
+        src = "prices: daily closes" + (f" through {esc(through)}" if through else "")
+    out.append(f"<i>⚠ unrealized, gross of costs · {src} — display only; a position "
+               "grades on official closes at its 4-week horizon, and only that number "
+               "counts.</i>")
     return "\n".join(out)

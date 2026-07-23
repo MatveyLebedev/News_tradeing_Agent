@@ -184,6 +184,32 @@ def test_open_positions_show_the_agents_thesis_verbatim():
     assert "Inventory glut" in out and "&lt;weak&gt;" in out  # present, and escaped
 
 
+def test_live_quote_overlay_recomputes_and_flips_shorts_once():
+    from longterm_agent.stats import _apply_live_quotes
+    rows = [{"ticker": "NKE", "verdict": "SHORT", "entry_px_used": 100.0, "last_px": 99.0,
+             "position_return": 0.01, "excess_now": None, "_spy_entry": 200.0},
+            {"ticker": "JNJ", "verdict": "LONG", "entry_px_used": 100.0, "last_px": 101.0,
+             "position_return": 0.01, "excess_now": 0.005, "_spy_entry": 200.0}]
+    _apply_live_quotes(rows, {"NKE": 95.0, "JNJ": None}, spy_last=202.0)
+    nke, jnj = rows
+    # SHORT: stock -5% → position +5%; SPY +1% → excess +6% (signed exactly once)
+    assert abs(nke["position_return"] - 0.05) < 1e-12 and nke["live"] is True
+    assert abs(nke["excess_now"] - 0.06) < 1e-12 and nke["last_px"] == 95.0
+    # missing quote: row keeps its daily-close numbers and carries no live flag
+    assert jnj["position_return"] == 0.01 and "live" not in jnj
+
+
+def test_open_positions_footer_names_the_price_source():
+    from longterm_agent.stats import format_open_positions_html
+    base = {"verdict": "LONG", "as_of": "2026-07-19", "days_open": 4,
+            "position_return": 0.01, "excess_now": 0.01, "entry_px_used": 100.0,
+            "last_px": 101.0, "matures": "2026-08-16", "prices_through": "2026-07-21"}
+    live = format_open_positions_html([{**base, "ticker": "AMD", "live": True}])
+    assert "live quotes" in live and "unrealized" in live
+    stale = format_open_positions_html([{**base, "ticker": "AMD"}])
+    assert "daily closes through 2026-07-21" in stale
+
+
 def test_ticker_status_renders_full_reasoning_sections():
     from longterm_agent.stats import format_ticker_status_html
     st = {"ticker": "MRK", "verdict": "SHORT", "traded": True, "as_of": "2026-07-19",
