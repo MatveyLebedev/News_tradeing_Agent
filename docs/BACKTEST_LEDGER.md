@@ -620,6 +620,21 @@ not change any knob; it recalibrates what the live book should be expected to ea
 zero at matured horizons on names outside the tuned set), and raises universe breadth
 (C1) from "nice to have" to "the honest test of whether anything here generalizes".
 
+**Sub-analysis (2026-07-23, disentangling the two confounds named above; 4w, n=40):**
+- **Coverage hypothesis REJECTED.** Split at the median corpus size (34 articles): high-
+  coverage trades med **−2.65%** (n=18, win 39%) vs low-coverage med **+0.42%** (n=17,
+  win 53%). More news did NOT recover the edge — it did slightly worse. The "works only on
+  high-coverage mega-caps" reading is off the table; the fresh failure is not a data-volume
+  artifact.
+- **Sector concentration (hint, NOT a verdict — n per sector is 2–15).** Positive buckets:
+  Tech +2.94% (n5, mean skewed +9.1% by one outlier), Health +1.77% (n6), Energy +4.43%
+  (n3) — the sectors that most resemble the in-sample mega-cap tech/pharma. The drag sits
+  in Industrials −4.17% (n15, the largest bucket), Comm −5.12% (n4), Staples −3.09% (n3).
+  Consistent with the edge being tied to the KIND of name the config was iterated on rather
+  than to coverage — but per-sector samples are too thin to assert it. What survives
+  cleanly: coverage does not explain the collapse; the edge is name/sector-specific, and
+  the broad live universe spans exactly the sectors where it failed here.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
