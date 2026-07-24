@@ -746,6 +746,29 @@ point is the split is unstable, not that its opposite is true. Live-book expecta
 at ≈ zero; the only thing that will move this is real forward out-of-sample (sunday_sim +
 the live positions), not more historical mining.
 
+### `wf_extra13` — the live-universe names never yet backtested (pre-registered
+2026-07-23, BEFORE launch)
+
+The live 64-ticker universe = the 30 tuned + 21 of the fresh-29 + **13 that no backtest
+has ever touched**: ABNB AMAT BRK-B CMCSA COP GOOG INTU LMT MU PANW PYPL SBUX TXN. This
+runs the current config on those 13 so no live name is completely unmeasured. All verified
+for price + fundamentals before launch. (Caveat: GOOG is Alphabet class C — economically
+the same issuer as the in-sample GOOGL, so it is not a truly independent name; flagged, not
+dropped.)
+
+**Design learns from wf_fresh30_holdout:** a single-period read is period-specific and
+misleads (that run falsified its own prediction). So this runs BOTH OOS windows at once —
+14 weekly cohorts 2026-03-16 … 2026-06-19 (spanning the March holdout window and the
+Apr–Jun window continuously), same config (deep on, PIT, metrics v2, novita, horizons
+14/28/42/56/84, fill t1). The reading is the POOLED result, never a single cohort.
+
+**Registered reading (frozen):** pooled across all 14 cohorts, 4w by direction — does
+either LONG or SHORT show a non-zero edge on these 13 previously-unmeasured live names?
+Prediction, consistent with the pooled fresh result (both directions ≈ 0): ≈ 0 both ways.
+This run mainly ADDS OOS names to the pool; the question is whether "no demonstrated OOS
+edge" survives more names. Burned-grid rule: corroborate or reject, never tune. NO_DATA
+expected; >5% synthesis failures ⇒ patch individually.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
