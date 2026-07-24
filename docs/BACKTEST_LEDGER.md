@@ -769,6 +769,29 @@ This run mainly ADDS OOS names to the pool; the question is whether "no demonstr
 edge" survives more names. Burned-grid rule: corroborate or reject, never tune. NO_DATA
 expected; >5% synthesis failures ⇒ patch individually.
 
+**RESULT (2026-07-23).** Health: 4/182 synth failures (2.2%), 52 NO_DATA (29% overall;
+65% in the March cohorts, ~15% in Apr–Jun — coverage is thin going back in time). 26
+traded. wf_extra13 alone (4w): LONG +7.94% (n17, win 65%), SHORT +10.11% (n9, win 78%) —
+came in strongly positive BOTH ways, the opposite of the ≈0 prediction.
+
+**This forces an honest re-read of the whole OOS pool — and the answer is "underpowered,
+cannot tell."** Three OOS runs, pooled trade mean 4w: wf_fresh30_pit +0.40%,
+wf_fresh30_holdout −0.60%, wf_extra13 +11.81% — the run-to-run spread is enormous and the
+entire positive tilt rests on one hot run (drop extra13 → +0.16%). Pooling all 79 OOS
+trades: mean +3.99%, median +1.75%, win 56%. The naive trade-level 95% CI [+0.68, +7.31]
+"excludes 0" — but that is FALSELY narrow (trades within a cohort are correlated). The
+honest cohort-block CI (23 cohorts): mean +3.88%, **95% CI [−0.13, +7.89] — INCLUDES 0.**
+
+**Verdict: no OOS edge is established, and none is ruled out.** The point estimate is
+positive (~+4% cohort-mean) but not distinguishable from zero once correlation is handled,
+and it swings from ~0 to +12% depending on which run you weight. This supersedes the
+earlier "pooled ≈ 0" (that was 2 runs) AND the "clear edge" the naive CI suggested — both
+were sampling noise. Note extra13's names (ABNB, AMAT, MU, PANW, PYPL, TXN, INTU, BRK-B,
+GOOG…) are mega-cap tech/growth, closer to the in-sample style than the old-economy
+fresh-30 — consistent with "growth/tech transfers" but far too thin to assert. **The
+ceiling of historical mining is reached: only forward data (sunday_sim + the live book,
+maturing from 2026-08-10) can move this.** No knob changes on any of it.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
