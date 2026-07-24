@@ -690,6 +690,15 @@ to the short gate), (b) require shorts to carry negative price momentum, not jus
 deteriorating margins, or (c) LONG-only. Each needs its own frozen registration on forward
 cohorts before any knob moves.
 
+**Stop-loss check (all numbers above are the HOLD book, no stop).** Re-running fresh with
+the 10% stop (stopped book): SHORT −6.36% → −6.12% (5/15 hit stop) — the stop does NOT
+rescue the short book, the root-cause holds. And it HURTS fresh LONGs: +1.60% → −1.82%
+(whipsaw — the overreaction-dip longs need room to recover and the stop cuts them on the
+temporary drawdown). In-sample longs never breached (0 stops), so the 10% level was itself
+tuned where it was harmless; on out-of-sample names it is a drag, not a guard. Net: the
+stop is not the short-book fix, and it is a second knob (like the short gate) that needs
+re-calibration on forward data.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
