@@ -564,6 +564,32 @@ directional-untraded AMD SHORT 0.35, AVGO LONG 0.50, INTC LONG 0.50. Entry Monda
 07-13 open; 2w matures 07-27, 4w 08-10, 12w 10-05. Note MRK SHORT 0.80 fires on BOTH
 Sundays — the one signal in this exercise with any persistence claim.
 
+### `wf_fresh30_pit` — current config on tickers it was NOT tuned on (pre-registered
+2026-07-23, BEFORE launch)
+
+**The question, frozen before looking:** the +result on `wf_30x_deep_pit_on` is in-sample
+by ticker — those 30 names are the set every variant was iterated on. Does the current
+config's daily excess-beta curve REPLICATE on 29 liquid large-caps outside that set, on
+the SAME 9 cohort dates (2026-04-24 … 2026-06-19, weekly), same config (deep on, PIT,
+metrics v2, provider pinned novita, horizons 14/28/42/56/84, fill t1)? A paired-by-date,
+different-universe read isolates ticker-set generalization from everything else.
+
+**Universe (29, none in the wf_30x 30; PM dropped — zero price/fundamentals in DB):**
+JNJ UNH MRK ABBV TMO · GE BA CAT HON UPS RTX · COST PG MCD · HD LOW NKE BKNG · T TMUS VZ ·
+CSCO IBM NOW ACN · CVX NEE · WFC AXP. All verified before launch: full daily bars since
+2024-06 (beta estimable) through 2026-07-21, 89–111 fundamentals filings each.
+
+**Gradability at launch (prices through 2026-07-21):** 2w and 4w fully matured (9/9
+cohorts) — that is the registered primary comparison, paired against wf_30x_deep_pit_on
+at the same horizons. 6w 7/9, 8w 5/9, 12w 1/9 — the long end accrues into Sept and is
+read later, never re-run. NO_DATA is expected (thin-coverage names) and is data, not
+failure; >5% synthesis failures ⇒ patch tickers individually, never re-roll.
+
+**The ONLY registered reading:** does the 2w→4w edge hold on the fresh set (sign and
+rough magnitude), or collapse? A collapse says the in-sample books were ticker-overfit;
+replication says the config generalizes. No horizon-shopping, no "fresh set did better"
+conclusion — the burned-grid rule applies (this can corroborate or reject, not tune).
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
