@@ -792,6 +792,45 @@ fresh-30 — consistent with "growth/tech transfers" but far too thin to assert.
 ceiling of historical mining is reached: only forward data (sunday_sim + the live book,
 maturing from 2026-08-10) can move this.** No knob changes on any of it.
 
+### `wf_30x_strong_sonnet` — does a stronger JUDGMENT model help? (pre-registered
+2026-07-23, BEFORE launch)
+
+**Frozen question:** upgrading ONLY the three judgment-heavy call sites (synthesis
+LongTermSignal, fundamentals verdict FundamentalsTrend, deep-analysis reduce
+DeepAnalysisOutput) from deepseek-v4-pro to `anthropic/claude-sonnet-5`, holding
+EVERYTHING upstream identical — does trade excess-beta improve? Detection labels are
+untouched (they come from MAP_MODEL sentiments + deterministic metrics), so this isolates
+"better reasoning on the same signals," not a different signal.
+
+**Design — cache ON, single treatment arm, paired to the existing baseline.** Frame =
+`wf_30x_deep_pit_on` (30 tickers × 9 weekly cohorts 2026-04-24…2026-06-19, horizons
+14/28/42/56/84, fill t1). With the LLM cache ON, only the Sonnet strong calls miss (new
+model → new cache key) and run fresh; the corpus, map/detection, deep-analysis map threads,
+reflection all HIT the baseline cache and are reused byte-for-byte. So the upstream is
+identical to `wf_30x_deep_pit_on` and any outcome difference is purely the strong model —
+no map-drift confound. STRONG_LLM_MODEL only; llm_model=deepseek-v4-pro,
+MAP_MODEL=gemini-3.1-flash-lite, detection 0.2.0, prompts, gate=llm, deep on, costs all
+frozen.
+
+**Noise floor:** NOT a fresh replica arm — with cache ON a deepseek replica would hit the
+cache and read a false-zero floor; with cache OFF it would re-run the whole pipeline
+(map-drift confound + cost). Instead use the already-measured reshuffle floor: ~1pp per book
+(rich_synth re-roll 26 flips, deep-block 29 flips, both documented above). This bounds what
+"re-drawing without a real change" moves.
+
+**Registered reading (frozen):** paired ΔExcess-beta (Sonnet − baseline) at 4w over trades
+BOTH books take, cohort-block CI. Counts as a real improvement ONLY if the shift exceeds
+the ~1pp reshuffle floor AND the cohort-block CI on the paired delta clears it. Decision-flip
+COUNT is not the metric (reshuffle moves ~1pp of decisions regardless). Secondary:
+marginal trades Sonnet opens that deepseek did not, and how they grade. Burned-grid rule:
+this can corroborate or reject a model upgrade, it does not tune any other knob.
+
+**Honest prior:** the fresh/OOS work above suggests the bottleneck is signal/coverage (news
+volume uncorrelated with profit, edge not robust), not reasoning — so the likely outcome is
+"stronger judgment does not move outcomes beyond reshuffle," which is itself a clean, useful
+result (it says: spend effort on signal, not on a bigger model). Cost ~$17 (Sonnet strong
+calls only, ~270 decisions × 3 calls).
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
