@@ -723,6 +723,29 @@ isolates ticker effect on held-out dates) and vs wf_fresh30_pit (same tickers, o
 → isolates date effect). Burned-grid rule: corroborate or reject, never tune. NO_DATA
 expected; >5% synthesis failures ⇒ patch individually.
 
+**RESULT (2026-07-23) — PREDICTION FALSIFIED. The direction split is period-specific.**
+Health: 1/174 synth failure (0.6%), but **112/174 NO_DATA (65%)** — the fresh (old-economy)
+names have very thin March news coverage, so only 13 traded. At 4w:
+- LONG: n=9, win 22%, median **−8.78%** (RTX −18%, IBM −17%, WFC −12%, MCD ×2 crushed)
+- SHORT: n=4, win 100%, median **+12.45%** (NKE/LOW/HD/IBM — retail/discretionary fell)
+
+Both falsifier conditions met (LONG ≤ 0 AND SHORT ≥ 0). Per pre-registration I do NOT
+explain this away with the small n — the "LONG works / SHORT broken" split from
+wf_fresh30_pit did NOT survive to a held-out period; it flipped. **Pooling both OOS periods
+(the honest aggregate), 4w by direction: LONG n=34 median −0.04% (win 50%), SHORT n=19
+median −2.21% (win 47%) — both ≈ zero.** The Apr–Jun direction split washed out.
+
+**What this corrects:** the earlier `wf_fresh30_pit` "ROOT CAUSE — the SHORT book" entry
+was itself overfit to one period. The double-OOS test caught it. The actionable candidates
+that hung off it (momentum-guard-on-shorts, LONG-only) are therefore NOT supported — they
+were built on a period-specific artifact. **The single robust conclusion across every OOS
+cut: on names and dates outside the tuned set, no edge is demonstrated in either direction
+(pooled ≈ 0).** The in-sample and single-period edges are period/ticker-specific. Caveat
+both ways: holdout n=13 (65% NO_DATA) is too thin to assert shorts "work" either — the
+point is the split is unstable, not that its opposite is true. Live-book expectation stays
+at ≈ zero; the only thing that will move this is real forward out-of-sample (sunday_sim +
+the live positions), not more historical mining.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
