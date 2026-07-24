@@ -661,6 +661,35 @@ transfer to industrials/telecom/utilities. Caveat stands — per-sector n is 1�
 and it reframes C1 as "expand WITHIN the sectors that transfer, and measure per-sector,"
 not "add breadth blindly."
 
+**ROOT CAUSE (2026-07-23) — it is the SHORT book, not the sectors.** Splitting 4w by
+direction cuts cleaner than any sector split:
+
+| | FRESH | in-sample |
+|---|---|---|
+| LONG | +1.60% med, win 60% (n25) | +2.93% med, win 62% (n29) |
+| SHORT | **−6.36% med, win 33% (n15)** | +3.13% med, win 73% (n15) |
+
+The LONG side GENERALIZES (fresh +1.6% vs in-sample +2.9%, both positive, same order). The
+collapse is entirely the SHORT side: in-sample shorts won 73% (+3.13%), fresh shorts won
+33% (−6.36%). The sector story was a projection of this — the losing shorts happened to
+cluster in industrials/telecom.
+
+**Mechanism (from the losing theses):** the worst trades are all shorts from the
+"confirmation quadrant" — *negative news shift + YoY margin compression → high-conviction
+SHORT* (GE −19.8%, NOW −11.9%, HON −9.9% @conv 0.85, UPS −10.8%). The agent shorted quality
+names in uptrends (GE Aerospace on a rally, NOW at +22% revenue); margin compression is a
+slow, well-known signal and price momentum ran the shorts over — several theses literally
+say "the stock rallied". The LONG winners are the mirror: buy the macro-overreaction dip on
+improving fundamentals (CSCO +27%/+28%, ABBV +14%, RTX +11%). This is the SAME error
+`gap_guard` already proved (momentum is continuation, not exhaustion): the short logic
+fires against momentum. In-sample shorts' 73% win rate now looks like the overfit — a
+fragile short edge that held only on the tuned names. **Actionable, but a pre-registered
+change, not a live edit:** candidate hypotheses to test next are (a) a momentum guard on
+shorts (no short into a positive trailing-return / uptrend — the gap_guard inversion applied
+to the short gate), (b) require shorts to carry negative price momentum, not just
+deteriorating margins, or (c) LONG-only. Each needs its own frozen registration on forward
+cohorts before any knob moves.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
