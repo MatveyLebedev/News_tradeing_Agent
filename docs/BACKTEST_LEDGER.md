@@ -590,6 +590,36 @@ rough magnitude), or collapse? A collapse says the in-sample books were ticker-o
 replication says the config generalizes. No horizon-shopping, no "fresh set did better"
 conclusion — the burned-grid rule applies (this can corroborate or reject, not tune).
 
+**RESULT (2026-07-23, run complete; health OK: 3.6% synthesis failures < 5%, 23 NO_DATA,
+40 traded of 247). The edge does NOT replicate — it collapses.** Registered horizons, FRESH
+vs in-sample (wf_30x_deep_pit_on), median / mean excess-beta:
+
+| horizon | FRESH (29 untuned) | in-sample (30 tuned) |
+|---|---|---|
+| 2w (n=40) | **−0.57% / +0.92%** | +0.92% / +2.18% |
+| 4w (n=40) | **−0.04% / +0.40%** | +2.97% / +2.31% |
+| 6w (n=33, 7/9 matured) | **−2.61% / −1.04%** | — |
+| 8w (n=28, 5/9 matured) | **−3.64% / −1.32%** | — |
+
+The daily curve (from price paths) drifts from ~0 to −4…−6% by day 56–72 — a mirror of
+the in-sample/holdout climb to +2…+7%. The run's own report: "0 survive BH FDR 5% — no
+per-ticker edge survives correction". Reading the ticker dimension against the date
+dimension already on file: in-sample tuned tickers +2.97% (4w) → holdout SAME tickers,
+held-out DATES +1.80% → FRESH untuned tickers −0.04%. The **ticker** axis moves the result
+far more than the **date** axis: the measured edge is concentrated in the specific names
+the config was iterated on.
+
+**Honest confounds (do not let them explain the result away, but state them):** the fresh
+set skews old-economy (healthcare/industrials/staples) vs the in-sample mega-cap
+tech/financials, and carries thinner news (23 NO_DATA). So "ticker-overfit" and "works only
+on high-coverage mega-caps" are both live readings — and BOTH lower the expectation for the
+broad live universe (64 names, closer to FRESH than to the tuned 30). n is small (40) and
+6w/8w are partially matured; but the sign is negative and consistent across every horizon,
+so the small-n caveat does not rescue the edge. **This is a reject, not a tune:** it does
+not change any knob; it recalibrates what the live book should be expected to earn (near
+zero at matured horizons on names outside the tuned set), and raises universe breadth
+(C1) from "nice to have" to "the honest test of whether anything here generalizes".
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
