@@ -635,6 +635,32 @@ zero at matured horizons on names outside the tuned set), and raises universe br
   cleanly: coverage does not explain the collapse; the edge is name/sector-specific, and
   the broad live universe spans exactly the sectors where it failed here.
 
+**Sector-matched comparison (2026-07-23) — REFINES "ticker-overfit" to "sector/style
+generalization".** Same 4w median, in-sample vs fresh, per sector present in both:
+
+| sector | in-sample | fresh | read |
+|---|---|---|---|
+| Tech | +2.98% (n16) | +2.94% (n5) | **replicates cleanly** — new tech names (CSCO/IBM/NOW/ACN) behave like tuned tech |
+| Health | +8.97% (n5) | +1.77% (n6) | same sign, weaker |
+| Fin | +2.07% (n8) | +0.63% (n2) | same sign, weaker |
+| Staples | −2.96% (n5) | −3.09% (n3) | negative in BOTH (consistently no edge) |
+| Comm | +4.67% (n5) | −5.12% (n4) | flips — but "Comm" = internet/media in-sample (GOOGL/META/NFLX) vs telecom fresh (T/TMUS/VZ); different sub-industry, not a clean match |
+| Discr | +4.75% (n4) | −1.55% (n2) | flips — AMZN/TSLA/UBER growth vs HD/LOW/NKE retail; also different style |
+| Industrials | — (never trained) | −4.17% (n15) | the largest fresh bucket and biggest drag; no in-sample counterpart |
+| Energy | −5.80% (n1) | +4.43% (n3) | in-sample n=1 is noise |
+
+**Revised verdict:** it is NOT pure ticker memorization — where the sector genuinely
+matches (Tech, cleanly; Health/Fin in sign), the edge REPLICATES on names never seen. The
+overall fresh collapse is driven by (a) Industrials (n15, a style the config was never
+tuned on — the single biggest drag) and (b) "sector" labels hiding different sub-industries
+(telecom ≠ internet). So the honest statement is a **style/sector generalization limit**:
+the method carries within the growth/tech/pharma names it was built around and does not
+transfer to industrials/telecom/utilities. Caveat stands — per-sector n is 1–16, Tech
+(n5 vs n16) is the only solid cell. Implication is unchanged for the broad live universe
+(it spans the non-transferring sectors) but more hopeful for a tech/pharma-weighted book,
+and it reframes C1 as "expand WITHIN the sectors that transfer, and measure per-sector,"
+not "add breadth blindly."
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
