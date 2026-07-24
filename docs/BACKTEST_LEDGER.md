@@ -699,6 +699,30 @@ tuned where it was harmless; on out-of-sample names it is a drag, not a guard. N
 stop is not the short-book fix, and it is a second knob (like the short gate) that needs
 re-calibration on forward data.
 
+### `wf_fresh30_holdout` — the double-out-of-sample cell (pre-registered 2026-07-23,
+BEFORE launch)
+
+Completes the 2×2: fresh tickers had only been run on the tuned Apr–Jun dates
+(`wf_fresh30_pit`); this runs the SAME 29 fresh tickers on the held-out MARCH dates
+(6 weekly cohorts 2026-03-16 … 2026-04-20, the `holdout_mar_deep_on` window) — names the
+method never saw, on dates it never saw. Same config (deep on, PIT, metrics v2, novita,
+horizons 14/28/42/56/84, fill t1). All horizons already matured (6/6, prices through
+2026-07-21) — the full curve grades immediately, unlike wf_fresh30_pit.
+
+|  | tuned dates (Apr–Jun) | held-out dates (Mar) |
+|---|---|---|
+| tuned tickers | wf_30x_deep_pit_on | holdout_mar_deep_on |
+| fresh tickers | wf_fresh30_pit | **wf_fresh30_holdout (this)** |
+
+**Registered prediction (falsifiable, frozen before looking):** if the wf_fresh30_pit
+finding is robust to period, this run shows LONG median > 0 and SHORT median < 0 at 4w —
+the LONG book generalizes across both ticker AND date, the SHORT book stays broken. The
+falsifier: if SHORT ≥ 0 or LONG ≤ 0 here, the Apr–Jun direction split was period-specific,
+not a property of the method. Reads: vs holdout_mar_deep_on (tuned tickers, same dates →
+isolates ticker effect on held-out dates) and vs wf_fresh30_pit (same tickers, other dates
+→ isolates date effect). Burned-grid rule: corroborate or reject, never tune. NO_DATA
+expected; >5% synthesis failures ⇒ patch individually.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
