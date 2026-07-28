@@ -1234,3 +1234,130 @@ protective story this experiment was first imagined for.
   and re-run as `monday_t1_pit` under the same frozen criteria (harness-integrity re-run,
   like the `open_t1` regrade — not a variant iteration). Open follow-up: the novelty
   saturation constant is mis-scaled by the article-count unit change (see audit doc).
+
+
+- **Daily bars moved to a DAILY job — 2026-07-28** (`bloomberg_news_fetcher/config.py`:
+  `DAILY_BARS_FETCH_*`, default 20:30 ET, `period=1mo`). They used to ride along with the
+  weekly Saturday fundamentals fetch, which put prices on a filing calendar instead of a
+  market one. Two measured costs, both surfaced while repairing the 2026-07-24 incident:
+  a cohort opened on Sunday had **no SPY entry bar until the following Saturday**, so
+  `/open` computed vs-SPY for only part of the book (6 of 12 positions), and the book read
+  **−0.9% on that subset vs +0.7% over all twelve** — the aggregate was not wrong so much
+  as quietly describing a different set; and a bad fetch sat uncorrected for days because
+  nothing re-read the window. The refetch window is deliberately wider than the cadence:
+  that overlap is what heals a bar the writer drops as non-finite, with no manual repair.
+  Prices, grading inputs and the freshness preflight are no longer gated behind
+  `FETCH_FUNDAMENTALS`. First run: 2719 rows, 0 failed, **2 bars dropped as non-finite** —
+  Yahoo still serves them, and they are now refused instead of stored.
+- **`/open` reports the book aggregate — 2026-07-28** (`stats.book_totals`): equal-weight
+  return, vs-SPY, up/down count and a long/short split, on the `/open` text and the chart
+  subtitle. Equal-weight because there is no position sizing in this system, which also
+  means the figure cannot be turned into a currency amount without inventing capital. When
+  the vs-SPY leg covers fewer positions than the book leg, the coverage is stated inline —
+  the two numbers sit side by side and otherwise read as one sample.
+
+### `live_0726` — NaN price poisoning cost a whole live cohort (incident 2026-07-24/26, fixed 2026-07-28)
+
+**Symptom, as the operator saw it:** the bot showed no new open positions for a week.
+`/open` kept serving the six 2026-07-19 positions. Nothing in the book had changed.
+
+**What actually happened, in three steps.**
+
+1. **Sat 2026-07-25 03:00 ET** — the weekly `fetch_all_daily(period="1mo")` top-up wrote the
+   2026-07-24 bar for **all 131 tickers with `close = NaN`** (`adj_close` too; OHLV were
+   valid). yfinance returns exactly this shape when a session has not finalised on Yahoo's
+   side. `save_daily` did `float(row["Close"])` — which does not raise — and Postgres
+   `numeric` stores NaN happily. No error anywhere.
+2. **Sun 2026-07-26 06:00 ET** — the weekly batch ran on that data.
+   `{'runs': 64, 'signals': 1, 'trades': 1, 'no_data': 5, 'errors': 49}`.
+   The 49 died at `valuation_pit`: `round(mktcap)` → `ValueError: cannot convert float NaN
+   to integer`. The guard above it tests `price is None`, and **NaN is not None**.
+3. **The survivors were lost too, silently.** For them `valuation_pit` returned early with
+   `price: NaN` still in its dict; that NaN reached the JSONB payloads and Postgres refused
+   every insert (`invalid input syntax for type json`). `persist_run` caught it and
+   *printed* — so the batch reported `trades: 1` while `longterm_agent_results` received
+   only the 5 NO_DATA rows. **The one trade of that week, WMT LONG conv 0.55, exists in the
+   op log and nowhere else.**
+
+**The instructive part is step 3, not step 1.** A bad upstream feed is ordinary; what turned
+it into a lost week is that the failure was *reported as success*. Downstream — `/open`,
+`/week`, grading — an unpersisted trade is indistinguishable from "the agent had no
+opinion". 49 crash alerts did fire (`LT_ALERT_ON_ERROR` defaults on); the missing book did
+not.
+
+**Fixes applied 2026-07-28 — four layers, any one sufficient:**
+- `save_daily` drops a bar whose OHLC is non-finite, and says so. A missing date is loud
+  (the freshness preflight sees the gap); a NaN close is not.
+- `CHECK (… <> 'NaN'::numeric)` on `stock_prices_daily` — the guarantee that does not
+  depend on remembering, for any writer ever. NULL still passes; NaN cannot be stored.
+- `_close_on_or_before` excludes NaN **in SQL**, so the lookup falls THROUGH a poisoned bar
+  to the last good close rather than returning nothing; `valuation_pit` sanitises `price`
+  at its boundary so no NaN can reach a JSONB write.
+- `persist_run` failure → `oplog.error("PERSIST_FAILED")`, counted as `not_persisted` in the
+  batch stats, and the Telegram summary contradicts its own headline when it is non-zero.
+- Regression tests: `longterm_agent/tests/test_nan_price_guard.py` (the DB constraint is
+  what makes the end-to-end repro impossible — the row can no longer be inserted).
+
+**Data repair (2026-07-28):** 132 poisoned rows. 79 refilled with real bars now available;
+**53 set to NULL close** — Yahoo *still* has no usable 2026-07-24 bar for those names four
+days later (absent, or padded all-NaN with volume 0), so the honest state is "no bar", which
+is what the fixed writer would have produced. SPY and all six open positions repriced clean.
+
+**Backfill — registered BEFORE the run, per the no-re-roll protocol.** The 5 persisted
+NO_DATA rows stand untouched; the 59 that never landed are patched by the batch's own
+resume-skip (`_already_done`), which is exactly the "patch rows INDIVIDUALLY, never
+re-roll" remedy. Run 2026-07-28 at `as_of=2026-07-26`, `--no-alert`, live regime
+(`LT_METRICS_VERSION=2`, no provider pin, cache off — matching the original).
+
+**Honest limit, stated up front and BEFORE seeing the output.** The decision inputs are
+PIT-clean (every reader is cutoff-gated at `as_of`, so no post-07-26 news, filing or bar is
+visible), but the run happens two days late and the fill convention enters at the
+**2026-07-27 open, which had already printed when the run started**. These rows are
+therefore *not* what a live Sunday run would have produced — the measured replay-drift
+mechanism applies (transient call failures leave cache holes that cascade), and the entry is
+retro-known even though the decision is not. Read `live_0726` as a recovered detection
+record, **not** as clean forward P&L evidence; the six 2026-07-19 positions remain the
+uncontaminated live book.
+
+**RESULT (2026-07-28) — cohort recovered, and the caveat above turned out to be the finding.**
+Pass 1: `{'runs': 59, 'signals': 7, 'trades': 6, 'no_data': 0, 'errors': 0, 'skipped': 5,
+'not_persisted': 1}` — **0 errors against 49 in the live run**, which is the fix confirmed on
+the full universe rather than on a smoke test. Pass 2 patched the one straggler
+(`--tickers` equivalent via resume-skip). Final cohort: **64 rows, 6 trades** — AVGO, JNJ,
+NOW, TMUS, WFC LONG; WMT SHORT.
+
+**Replay drift, measured against the live run's own op log.** Ten tickers survived
+2026-07-26 and were re-decided here on identical PIT inputs:
+
+| live 2026-07-26 | backfill 2026-07-28 |
+|---|---|
+| BRK-B, CAT, KO, MA, SBUX, V — NEUTRAL 0.05 | identical, to 2dp |
+| COST, CRM, PEP — NEUTRAL 0.15 | identical, to 2dp |
+| **WMT — LONG 0.55 (traded)** | **SHORT 0.78 (traded)** |
+
+**9 of 10 reproduce exactly; the only ticker carrying a directional call flipped sign.**
+A second instance fell out of the incident itself: NOW came back SHORT in pass 1 (visible
+only in the `PERSIST_FAILED` payload, since the write failed) and **LONG 0.58 in pass 2**.
+Two directional calls re-run, two flips, while every low-conviction NEUTRAL is bit-stable.
+Consistent with the PEP case that produced the no-re-roll rule, and it sharpens it: the
+drift is not diffuse, it concentrates exactly where synthesis makes a contentful call.
+
+**Consequence — the lost decision is NOT recoverable.** The live book said WMT LONG; the
+reconstruction says WMT SHORT. Nothing determines which one "the agent would have traded",
+so `live_0726` stands as a recovered DETECTION record and must not be read as forward P&L.
+The six 2026-07-19 positions remain the only uncontaminated live book. Note also that JNJ
+is now open in both cohorts (0.65 @ 07-19, 0.72 @ 07-26) — weekly cohorts are independent
+by design, but the book carries double weight on that name.
+
+**Second-order damage found and repaired.** The poisoned prices had already been graded:
+**21 `shift_library` rows were filled on 2026-07-25 against NaN closes**, because
+`round(nan, 4)` returns nan without raising. Those NaN outcomes passed `IS NOT NULL` in the
+analog query and reached `median()` — which is what destroyed the NOW write, three days
+after the prices themselves were fixed. This is the incident's most useful lesson: a data
+defect does not stay in the table it landed in. Cleared and re-graded against the repaired
+series (21 rows, range −17.3%…+15.3%); `longterm_agent_results` and `backtest_runs` were
+verified clean. Guards added at every layer that touched it: the grader now leaves a row
+UNGRADED rather than writing a non-finite outcome, the analog pool drops non-finite rows,
+`persist_run`/`write_snapshot` scrub non-finite floats to NULL and log the field paths, and
+CHECK constraints (`x > '-Infinity' AND x < 'Infinity'`) cover 6 columns on `shift_library`
+and 14 on `longterm_agent_results`.

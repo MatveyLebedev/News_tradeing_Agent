@@ -23,7 +23,22 @@ SEC_EDGAR_USER_AGENT="YourName you@email.com" python fundamentals_fetcher.py   #
 python daily_price_fetcher.py --period 2y                                       # daily bars + SPY
 ```
 
-Make sure `FETCH_FUNDAMENTALS=true` in `.env` so the `news-fetcher` keeps fundamentals/daily bars current weekly.
+Make sure `FETCH_FUNDAMENTALS=true` in `.env` so the `news-fetcher` keeps fundamentals current
+weekly (Saturday 03:00 ET).
+
+**Daily price bars are a separate job and are NOT gated by that flag** — grading, `/open`'s
+vs-SPY leg and the batch freshness preflight all read `stock_prices_daily` on a market clock:
+
+```ini
+DAILY_BARS_FETCH_ENABLED=true    # default
+DAILY_BARS_FETCH_TIME=20:30      # ET, post-close; clear of options 17:30 / macro 18:30 / filings 19:30
+DAILY_BARS_PERIOD=1mo            # window > cadence, so a dropped or missed bar heals itself
+```
+
+They rode along with the weekly fundamentals job until 2026-07-28. That cost two things
+worth knowing about: a cohort opened on Sunday had no benchmark entry bar until the
+*following* Saturday (so half the open book showed no vs-SPY), and a bad fetch sat
+uncorrected for days because nothing re-read it.
 
 ---
 

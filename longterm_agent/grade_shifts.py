@@ -12,6 +12,7 @@ measure the same tradable quantity.
 """
 import argparse
 from datetime import datetime, timedelta, date
+from math import isfinite
 
 import psycopg2
 
@@ -87,16 +88,32 @@ def main():
             pending += 1
             continue
         updates, vals = [], []
+        nonfinite = False
         for col, days in HORIZONS.items():
             target = e_date + timedelta(days=days)
             if target <= today and _has_data_through(cur, ticker, target, max_dates):
                 r = t1_return(cur, ticker, as_of, days)
                 if r is not None:
+                    # `round(nan, 4)` is nan — it does NOT raise. A defective bar therefore
+                    # grades to a NaN outcome that passes every `IS NOT NULL` filter
+                    # downstream and poisons the analog medians (2026-07-25: 21 rows graded
+                    # against NaN closes). A grade that isn't a number is not a grade.
+                    if not isfinite(r["ret"]):
+                        nonfinite = True
+                        continue
                     updates.append(f"{col}=%s"); vals.append(round(r["ret"], 4))
         # benchmark for the 4w window (the primary checkpoint)
         b = t1_return(cur, BENCHMARK, as_of, 28)
-        if b is not None:
+        if b is not None and isfinite(b["ret"]):
             updates.append("benchmark_return_4w=%s"); vals.append(round(b["ret"], 4))
+        elif b is not None:
+            nonfinite = True
+        if nonfinite:
+            # Leave the row UNGRADED so a later run retries it once the series is repaired —
+            # the same "retry later" contract `_has_data_through` already provides.
+            pending += 1
+            print(f"  ⚠ {ticker} @ {as_of}: non-finite return from the price series — left ungraded")
+            continue
         if updates:
             updates += ["entry_date=%s", "entry_px=%s", "fill_convention=%s",
                         "outcome_filled_at=%s"]

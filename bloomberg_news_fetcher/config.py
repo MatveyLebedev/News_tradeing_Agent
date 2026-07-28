@@ -76,6 +76,20 @@ FETCH_FUNDAMENTALS = os.getenv("FETCH_FUNDAMENTALS", "false").lower() == "true"
 FUNDAMENTALS_FETCH_WEEKDAY = os.getenv("FUNDAMENTALS_FETCH_WEEKDAY", "saturday").lower()
 FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, off-market
 
+# Daily OHLCV bars — split OFF the weekly fundamentals job on 2026-07-28. Statements change
+# quarterly and belong on a weekly cadence; PRICES do not. Two measured costs of the weekly
+# cadence:
+#   * a cohort opened Sunday had no SPY entry bar until the NEXT Saturday, so /open showed
+#     no vs-SPY for half the book for up to a week (seen 2026-07-28: 6 of 12 positions);
+#   * the 2026-07-24 NaN incident sat in the table for days because nothing re-read it.
+# Daily + a 1-month window makes both self-healing: a bar the writer drops as non-finite
+# (daily_price_fetcher.save_daily) is simply refetched the next evening, and any gap inside
+# the window closes without a manual repair. 20:30 ET is well clear of the 16:00 close and
+# of the other daily jobs (17:30 options, 18:30 macro, 19:30 filings).
+DAILY_BARS_FETCH_ENABLED = os.getenv("DAILY_BARS_FETCH_ENABLED", "true").lower() == "true"
+DAILY_BARS_FETCH_TIME = os.getenv("DAILY_BARS_FETCH_TIME", "20:30")   # ET, post-close
+DAILY_BARS_PERIOD = os.getenv("DAILY_BARS_PERIOD", "1mo")             # heal window
+
 # Macro/regime series (Modification Plan Phase 14) — free PIT series (VIX, HY OAS, 10Y,
 # oil, Fed liquidity) into `macro_series`, daily off-market. Values are collected and
 # stamped onto signals as regime context; NOTHING gates on them yet (single-regime data).

@@ -53,7 +53,16 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 # 0.9.4 (2026-07-22): notifier fans out to comma-separated LT_TELEGRAM_CHAT_ID list.
 # 0.9.5 (2026-07-23): /open overlays delayed live quotes — display only, grading
 #   still reads official closes from stock_prices_daily.
-PIPELINE_VERSION = "0.9.5"
+# 0.9.6 (2026-07-28): NaN-price hardening after the 2026-07-24 incident (BACKTEST_LEDGER
+#   `live_0726`). Decision logic untouched and a NO-OP on finite data — the reader-side
+#   guards only change behaviour on a bar that can no longer exist (CHECK constraint on
+#   stock_prices_daily). What DOES change operationally: a failed persist is now an
+#   oplog.error + `not_persisted` in the batch stats instead of a bare print, so a batch
+#   can no longer report trades it did not write. Bumped per the 0.9.3 rule — the stamp
+#   must match the shipped image.
+#   Provenance note: the `live_0726` backfill ran on this code but started before the
+#   bump, so its snapshots carry 0.9.5. Same class of gap 0.9.3 recorded, stated here.
+PIPELINE_VERSION = "0.9.6"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.

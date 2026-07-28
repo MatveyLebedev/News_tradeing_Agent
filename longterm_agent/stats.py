@@ -673,6 +673,60 @@ def _apply_live_quotes(rows, quotes, spy_last) -> None:
         r["live"] = True
 
 
+def book_totals(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Equal-weight aggregate over the open book (pure — unit-tested without a DB).
+
+    There is no position sizing anywhere in this system: a trade is one directional call,
+    so the book's return IS the equal-weight mean of its positions. That also means the
+    word "total" cannot be made into a currency amount here — there is no declared capital
+    to multiply by, and inventing one would be inventing a P&L.
+
+    Both legs are reported because they answer different questions and have been confused
+    before: `pos` is what the positions did, `excess` is whether the agent was RIGHT —
+    the grading convention is win = beat SPY, so a +2% book in a +5% tape is a losing one.
+    The long/short split is here because the SHORT book has been the measured drag in this
+    project's own walk-forwards, and an aggregate that hides it is the less useful number.
+    """
+    priced = [r for r in rows if r.get("position_return") is not None]
+    exs = [r["excess_now"] for r in rows if r.get("excess_now") is not None]
+
+    def _leg(side):
+        v = [r["position_return"] for r in priced if r.get("verdict") == side]
+        return {"n": len(v), "pos": statistics.fmean(v) if v else None}
+
+    return {
+        "n": len(rows),
+        "n_priced": len(priced),
+        "pos": statistics.fmean([r["position_return"] for r in priced]) if priced else None,
+        "excess": statistics.fmean(exs) if exs else None,
+        "n_excess": len(exs),
+        "up": sum(1 for r in priced if r["position_return"] > 0),
+        "down": sum(1 for r in priced if r["position_return"] < 0),
+        "long": _leg("LONG"),
+        "short": _leg("SHORT"),
+    }
+
+
+def format_book_totals(tot: Dict[str, Any]) -> str:
+    """One-line caption for the aggregate — shared by /open and the chart subtitle.
+
+    When the vs-SPY leg covers fewer positions than the book leg, the coverage is spelled
+    out. The two sit side by side and would otherwise read as one sample: a fresh cohort
+    has no SPY entry bar until the weekly price fetch lands, so `excess` can silently be
+    computed over half the book while `pos` covers all of it.
+    """
+    if not tot["n_priced"]:
+        return ""
+    parts = [f"book {_fmt_pct(tot['pos'])}"]
+    if tot["excess"] is not None:
+        leg = f"vs SPY {_fmt_pct(tot['excess'])}"
+        if tot["n_excess"] < tot["n_priced"]:
+            leg += f" ({tot['n_excess']} of {tot['n_priced']})"
+        parts.append(leg)
+    parts.append(f"{tot['up']} of {tot['n_priced']} up")
+    return " · ".join(parts)
+
+
 def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
     """Telegram-HTML /open: the whole live book with unrealized P&L.
 
@@ -698,11 +752,22 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
         # The agent's own words, not a paraphrase — /ticker SYM has the full version.
         if r.get("thesis"):
             out.append(f"  <i>{esc(r['thesis'][:180])}</i>")
-    poss = [r["position_return"] for r in rows if r.get("position_return") is not None]
-    exs = [r["excess_now"] for r in rows if r.get("excess_now") is not None]
-    if poss:
-        out.append(f"\n→ book mean: pos <code>{p(statistics.fmean(poss))}</code>"
-                   + (f" · vs SPY <code>{p(statistics.fmean(exs))}</code>" if exs else ""))
+    tot = book_totals(rows)
+    if tot["n_priced"]:
+        # Equal-weight, so this IS the book's return and not merely an average of rows.
+        line = (f"\n→ <b>book</b> ({tot['n_priced']} open, equal-weight): "
+                f"pos <code>{p(tot['pos'])}</code>")
+        if tot["excess"] is not None:
+            line += f" · vs SPY <code>{p(tot['excess'])}</code>"
+            if tot["n_excess"] < tot["n_priced"]:
+                line += f" <i>({tot['n_excess']} of {tot['n_priced']} — the rest have no SPY entry bar yet)</i>"
+        out.append(line)
+        split = [f"{tot['up']} up / {tot['down']} down"]
+        for side in ("long", "short"):
+            leg = tot[side]
+            if leg["n"]:
+                split.append(f"{side}s <code>{p(leg['pos'])}</code> ({leg['n']})")
+        out.append("  " + " · ".join(split))
     n_live = sum(1 for r in rows if r.get("live"))
     if n_live:
         src = f"prices: live quotes (~15 min delay)"

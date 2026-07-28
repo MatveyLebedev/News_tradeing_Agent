@@ -8,7 +8,8 @@ from news_fetcher import fetch_and_save_news, embedding_generator, logger
 from config import BLOOMBERG_CATEGORIES, ENABLE_EXTERNAL_RSS
 from price_fetcher import fetch_all_tickers, TOP_50_TICKERS
 from config import FETCH_PRICES, PRICE_FETCH_PERIOD, VERBOSE, FETCH_FULL_TEXT
-from config import FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME
+from config import (FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME,
+                    DAILY_BARS_FETCH_ENABLED, DAILY_BARS_FETCH_TIME, DAILY_BARS_PERIOD)
 from config import (
     GRAPH_MAINTENANCE_ENABLED, GRAPH_CLEANUP_TIME,
     GRAPH_MERGE_WEEKDAY, GRAPH_MERGE_TIME, EVENT_EMBEDDING_RETENTION_DAYS,
@@ -84,23 +85,42 @@ FETCH_FULL_TEXT_ENABLED = os.getenv("FETCH_FULL_TEXT", str(FETCH_FULL_TEXT)).low
 VERBOSE_ENABLED = os.getenv("VERBOSE", str(VERBOSE)).lower() == 'true'
 
 
-def scheduled_fundamentals_fetch(verbose=True):
-    """Weekly heavy-data fetch: daily price bars + fundamentals (EDGAR PIT + yfinance)."""
+def scheduled_daily_bars_fetch(verbose=True):
+    """Daily OHLCV top-up (see config: DAILY_BARS_FETCH_TIME).
+
+    Split off the weekly fundamentals job so prices track the market rather than the
+    filing calendar — grading, /open's vs-SPY leg and the freshness preflight all read
+    this table daily.
+    """
     if verbose:
         print("\n" + "=" * 80)
-        print(f"WEEKLY FUNDAMENTALS + DAILY PRICE FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print(f"DAILY PRICE BAR FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
         print("=" * 80)
     # Imported lazily so a missing dep here never blocks the news/price loop.
     try:
         from daily_price_fetcher import fetch_all_daily
         # No explicit tickers: the fetcher's default is TOP_50 + BENCHMARK (SPY). Passing
-        # bare TOP_50_TICKERS here silently excluded the grading benchmark. period=1mo
-        # (not 5d): with a weekly cadence, one missed run left a gap 5d could never heal.
-        dr = fetch_all_daily(period="1mo", verbose=verbose)
+        # bare TOP_50_TICKERS here silently excluded the grading benchmark. The window is
+        # deliberately wider than the cadence — that overlap is what heals a dropped or
+        # missed bar without anyone noticing it was missing.
+        dr = fetch_all_daily(period=DAILY_BARS_PERIOD, verbose=verbose)
         if verbose:
             print(f"✓ Daily prices: {dr['rows']} rows")
     except Exception as e:
         print(f"❌ Daily price fetch failed: {e}")
+
+
+def scheduled_fundamentals_fetch(verbose=True):
+    """Weekly heavy-data fetch: fundamentals (EDGAR PIT + yfinance snapshots).
+
+    Daily price bars used to ride along here; they now have their own daily job
+    (`scheduled_daily_bars_fetch`) because prices go stale on a market clock, not a
+    filing one.
+    """
+    if verbose:
+        print("\n" + "=" * 80)
+        print(f"WEEKLY FUNDAMENTALS FETCH - {datetime.now(ET_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 80)
     try:
         from fundamentals_fetcher import fetch_fundamentals
         result = fetch_fundamentals(tickers=TOP_50_TICKERS, verbose=verbose)
@@ -242,6 +262,18 @@ def run_scheduler(verbose=True):
     """
     # Schedule the job
     schedule.every(FETCH_INTERVAL_MIN).minutes.do(lambda: scheduled_fetch(verbose=verbose))
+
+    # Daily OHLCV top-up — scheduled BEFORE the weekly fundamentals job on purpose: prices
+    # are what grading, /open and the batch freshness preflight all depend on, and they
+    # must not be gated behind FETCH_FUNDAMENTALS.
+    if DAILY_BARS_FETCH_ENABLED:
+        try:
+            schedule.every().day.at(DAILY_BARS_FETCH_TIME).do(
+                lambda: scheduled_daily_bars_fetch(verbose=verbose))
+            print(f"✓ Daily price bars scheduled: daily at {DAILY_BARS_FETCH_TIME} ET "
+                  f"(period={DAILY_BARS_PERIOD})")
+        except Exception as e:
+            print(f"⚠️  Could not schedule daily price bars: {e}")
 
     # Weekly fundamentals fetch (off-market), if enabled
     if FETCH_FUNDAMENTALS:

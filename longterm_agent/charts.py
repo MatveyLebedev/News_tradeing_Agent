@@ -106,14 +106,19 @@ def open_positions_chart(rows: List[Dict[str, Any]], horizon_days: int = 28) -> 
         return None
     rows = sorted(rows, key=lambda r: r["position_return"], reverse=True)
     values = [float(r["position_return"]) for r in rows]
-    notes, subtitle = _per_row_note(
+    notes, shared = _per_row_note(
         [f"day {r.get('days_open', '?')} / {horizon_days}" for r in rows])
     labels = [f"{r['ticker']}  {r['verdict']}" + (f"   {n}" if n else "")
               for r, n in zip(rows, notes)]
+    # The bars answer "which position", the subtitle answers "and how is the book doing" —
+    # without it the reader has to eyeball-average seven diverging bars, which is exactly
+    # how an unrealized figure gets misread.
+    from .stats import book_totals, format_book_totals
+    subtitle = " · ".join(x for x in (shared, format_book_totals(book_totals(rows))) if x)
 
     fig, ax = _canvas(len(rows))
     _bars(ax, labels, values)
-    _title(ax, "Open positions — return since entry", subtitle)
+    _title(ax, "Open positions — return since entry", subtitle or None)
     return _render(fig)
 
 

@@ -164,8 +164,52 @@ def test_open_positions_render_book_mean_and_warning():
              "last_px": None, "matures": "2026-08-17"}]
     out = format_open_positions_html(rows)
     assert "AMD" in out and "155.20" in out and "157.10" in out
-    assert "book mean" in out and "unrealized" in out
+    assert "book" in out and "unrealized" in out
     assert "vs SPY <code>—</code>" in out  # missing excess is a dash, not a crash
+
+
+def test_book_totals_are_equal_weight_and_split_by_direction():
+    from longterm_agent.stats import book_totals
+    rows = [{"ticker": "A", "verdict": "LONG", "position_return": 0.10, "excess_now": 0.08},
+            {"ticker": "B", "verdict": "LONG", "position_return": 0.00, "excess_now": -0.02},
+            {"ticker": "C", "verdict": "SHORT", "position_return": -0.04, "excess_now": -0.06}]
+    tot = book_totals(rows)
+
+    assert tot["n_priced"] == 3
+    assert abs(tot["pos"] - 0.02) < 1e-12          # (0.10 + 0.00 - 0.04) / 3
+    assert abs(tot["excess"] - 0.0) < 1e-12        # (0.08 - 0.02 - 0.06) / 3
+    assert (tot["up"], tot["down"]) == (1, 1)      # a flat position is neither
+    assert tot["long"] == {"n": 2, "pos": 0.05}
+    assert tot["short"] == {"n": 1, "pos": -0.04}
+
+
+def test_book_totals_flags_partial_vs_spy_coverage():
+    """The two legs can cover different sets, and side by side they read as one.
+
+    A cohort opened after the last daily bar has no SPY entry bar yet, so `excess` is
+    computed over a subset while `pos` covers everything — measured live on 2026-07-28,
+    where vs-SPY covered 6 of 12 open positions.
+    """
+    from longterm_agent.stats import book_totals, format_book_totals
+    rows = [{"ticker": "A", "verdict": "LONG", "position_return": 0.10, "excess_now": 0.08},
+            {"ticker": "B", "verdict": "LONG", "position_return": 0.02, "excess_now": None}]
+    tot = book_totals(rows)
+
+    assert tot["n_priced"] == 2 and tot["n_excess"] == 1
+    caption = format_book_totals(tot)
+    assert "1 of 2" in caption, f"partial coverage must be stated: {caption}"
+
+    full = format_book_totals(book_totals(
+        [{**rows[0]}, {**rows[1], "excess_now": 0.01}]))
+    assert "of 2)" not in full, "no coverage note when both legs cover the book"
+
+
+def test_book_totals_on_an_unpriced_book_say_nothing():
+    from longterm_agent.stats import book_totals, format_book_totals
+    tot = book_totals([{"ticker": "A", "verdict": "LONG", "position_return": None,
+                        "excess_now": None}])
+    assert tot["n_priced"] == 0 and tot["pos"] is None
+    assert format_book_totals(tot) == ""
 
 
 def test_open_positions_empty_book_says_flat():

@@ -10,6 +10,7 @@ CLI:
     python daily_price_fetcher.py --period 5d     # incremental top-up
     python daily_price_fetcher.py --tickers AAPL NVDA --stats
 """
+import math
 import os
 import time
 
@@ -78,19 +79,46 @@ def fetch_daily(ticker, period="2y"):
         return None
 
 
+def _finite(x):
+    """The value as a float, or None if it is missing / NaN / inf.
+
+    yfinance hands back a bar whose OHLC are present but Close is NaN when the session
+    has not finalised on Yahoo's side yet. `float(nan)` raises nothing and Postgres
+    `numeric` stores NaN happily, so an unguarded write puts a poison value in the price
+    table — see the 2026-07-24 incident: 131 tickers written with close=NaN on the
+    Saturday top-up, which then crashed 49 of 64 tickers in the Sunday batch.
+    """
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def save_daily(ticker, df):
     if df is None or df.empty:
         return 0
-    rows = []
+    rows, dropped = [], 0
     for ts, row in df.iterrows():
         try:
-            rows.append((
-                ticker.upper(), ts.date(),
-                float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"]),
-                float(row.get("Adj Close", row["Close"])), int(row["Volume"]),
-            ))
+            o, h, lo, c = (_finite(row.get(k)) for k in ("Open", "High", "Low", "Close"))
+            adj = _finite(row.get("Adj Close"))
+            volume = int(row["Volume"])
         except Exception:
+            dropped += 1
             continue
+        # A bar is written whole or not at all: a partial row would silently pass the
+        # `close IS NOT NULL` checks every reader makes. A missing date is loud (the
+        # freshness preflight sees the gap); a NaN close is not.
+        if None in (o, h, lo, c):
+            dropped += 1
+            continue
+        rows.append((ticker.upper(), ts.date(), o, h, lo, c,
+                     adj if adj is not None else c, volume))
+    if dropped:
+        print(f"  ⚠ {ticker}: dropped {dropped} bar(s) with non-finite OHLC")
+        logger.warning("DAILY_BAR_DROPPED", f"{ticker}: {dropped} non-finite bar(s) skipped",
+                       details={"ticker": ticker, "dropped": dropped})
     if not rows:
         return 0
     conn = get_db_connection()

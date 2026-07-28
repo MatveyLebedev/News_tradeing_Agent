@@ -1,7 +1,49 @@
 """Shared fixtures: a DB manager that skips integration tests when the DB is unreachable."""
+import pathlib
+import sys
+
 import pytest
 
 from longterm_agent.config import LongTermAgentConfig
+
+# The fetcher package uses FLAT imports (`from config import ...`) and ships in its own
+# container, so its `config` module collides with the repo-root `config.py` shim. Whichever
+# is imported first wins for the whole session: run alone the fetcher's wins, run with the
+# full suite the root shim does — and the root shim happens to export DB_CONFIG, so the
+# import half-succeeds instead of failing loudly. Tests that guard fetcher behaviour were
+# silently skipping in CI because of it. This fixture makes the resolution explicit.
+_FETCHER_MODULES = ("config", "auto_news_fetcher", "daily_price_fetcher",
+                    "logger", "price_fetcher", "fundamentals_fetcher")
+
+
+@pytest.fixture
+def fetcher_pkg():
+    """Import `bloomberg_news_fetcher` with ITS `config` winning, and restore afterwards.
+
+    Yields (auto_news_fetcher, config). Skips only when yfinance is absent (the agent venv
+    does not carry it); an import failure of the package itself is a real failure and is
+    left to raise.
+    """
+    pytest.importorskip("yfinance")
+    root = str(pathlib.Path(__file__).resolve().parents[2] / "bloomberg_news_fetcher")
+    saved_path, saved_mods = list(sys.path), {}
+    for name in _FETCHER_MODULES:
+        if name in sys.modules:
+            saved_mods[name] = sys.modules.pop(name)
+    sys.path.insert(0, root)
+    try:
+        import config as fetcher_config
+        import auto_news_fetcher
+        # Proves the swap took: without it every assertion below would be testing the
+        # root shim and passing/skipping for the wrong reason.
+        assert root in str(pathlib.Path(fetcher_config.__file__).parent), \
+            f"wrong `config` module resolved: {fetcher_config.__file__}"
+        yield auto_news_fetcher, fetcher_config
+    finally:
+        sys.path[:] = saved_path
+        for name in _FETCHER_MODULES:
+            sys.modules.pop(name, None)
+        sys.modules.update(saved_mods)
 
 
 @pytest.fixture(scope="session")

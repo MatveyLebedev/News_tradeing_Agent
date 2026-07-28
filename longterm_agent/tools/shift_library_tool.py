@@ -17,7 +17,7 @@ Similarity (v1, no embeddings yet): same direction, ranked by |Δ magnitude_z| +
     overlap. The pgvector embedding column is reserved for a later upgrade.
 """
 import os
-from math import sqrt
+from math import isfinite, sqrt
 from statistics import median
 from typing import Any, Dict
 from datetime import datetime, timedelta
@@ -174,8 +174,14 @@ def find_similar_shifts(db_manager, ticker, as_of, agent_version, direction,
         return dz - overlap  # smaller is closer
 
     nearest = sorted(rows, key=dist)[:k]
-    rets = [r[5] for r in nearest if r[5] is not None]
-    excess = [(r[5] - (r[6] or 0.0)) for r in nearest if r[5] is not None]
+    # `IS NOT NULL` in SQL and `is not None` here both PASS a Postgres numeric NaN, and one
+    # NaN in the list makes median() return NaN — which then kills the JSONB write of the
+    # whole decision (measured: NOW @ 2026-07-26, a traded SHORT lost this way). A graded
+    # outcome that isn't a real number is not an analog; drop it from the pool.
+    _ok = lambda x: x is not None and isfinite(float(x))
+    nearest = [r for r in nearest if _ok(r[5])]
+    rets = [float(r[5]) for r in nearest]
+    excess = [float(r[5]) - (float(r[6]) if _ok(r[6]) else 0.0) for r in nearest]
     n = len(rets)
     pos = sum(1 for x in rets if x > 0)
     insufficient = n < min_analogs

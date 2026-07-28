@@ -72,7 +72,8 @@ def pending_tickers(tickers, done: set, force: bool = False):
 def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert=True,
               freshness=None, force=False):
     graph = create_longterm_graph(llm_map, llm_reduce, cfg, db, neo)
-    stats = {"runs": 0, "signals": 0, "trades": 0, "no_data": 0, "errors": 0, "skipped": 0}
+    stats = {"runs": 0, "signals": 0, "trades": 0, "no_data": 0, "errors": 0, "skipped": 0,
+             "not_persisted": 0}
     done = _already_done(cfg, as_of)
     todo = pending_tickers(tickers, done, force=force)
     stats["skipped"] = len(tickers) - len(todo)
@@ -96,7 +97,16 @@ def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert
             t0 = time.time()
             final = graph.invoke(init)
             elapsed = time.time() - t0
-            persist_run(db, final, cfg, execution_time=elapsed)
+            # A decision the book never records is invisible everywhere downstream — /open,
+            # /week and grading all read the results table, so an unpersisted trade looks
+            # exactly like "the agent had no opinion" (2026-07-26 lost a full cohort that
+            # way). Surface it with the same weight as a run failure.
+            if not persist_run(db, final, cfg, execution_time=elapsed):
+                stats["not_persisted"] += 1
+                if alert and cfg.ALERT_ON_ERROR:
+                    notifier.notify_error(
+                        f"{ticker} @ {as_of.date()}",
+                        "decision NOT persisted — see PERSIST_FAILED in the op log")
 
             if final.get("no_data"):
                 stats["no_data"] += 1

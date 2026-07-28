@@ -14,6 +14,7 @@ Phase 5.5 additions, run on the same daily cadence:
 """
 import argparse
 from datetime import datetime, timedelta, date
+from math import isfinite
 from types import SimpleNamespace
 
 import psycopg2
@@ -60,6 +61,21 @@ def _ensure_exit_columns(cur):
                    ADD COLUMN IF NOT EXISTS aux_targets JSONB""")
 
 
+def _finite_ret(x):
+    """The return as a plain float, or None if it is missing or not a real number.
+
+    `round(nan, 4)` returns nan and raises nothing, so an unguarded grade turns a defective
+    price bar into a NaN "outcome" that then passes every `IS NOT NULL` filter downstream —
+    which is how 21 shift_library rows were graded against the poisoned 2026-07-24 closes
+    and went on to poison the analog medians. An outcome that is not a number is not an
+    outcome: leave the row ungraded and let a later run retry it.
+    """
+    if x is None:
+        return None
+    v = x["ret"] if isinstance(x, dict) else x
+    return v if v is not None and isfinite(v) else None
+
+
 def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, missing):
     """Fill 2w/12w return pairs that are matured, data-complete, and still NULL."""
     filled = 0
@@ -72,13 +88,13 @@ def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, 
         if not (_has_data_through(cur, ticker, target, max_dates)
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             continue
-        r = t1_return(cur, ticker, as_of, days)
-        b = t1_return(cur, BENCHMARK, as_of, days)
+        r = _finite_ret(t1_return(cur, ticker, as_of, days))
+        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, days))
         if r is None or b is None:
             continue
         cur.execute(f"""UPDATE longterm_agent_results
                         SET fwd_return_{tag}=%s, benchmark_return_{tag}=%s WHERE id=%s""",
-                    [round(r["ret"], 4), round(b["ret"], 4), rid])
+                    [round(r, 4), round(b, 4), rid])
         filled += 1
     return filled
 
@@ -217,27 +233,28 @@ def main():
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             pending += 1
             continue
-        tr = t1_return(cur, ticker, as_of, HORIZON_DAYS)
-        br = t1_return(cur, BENCHMARK, as_of, HORIZON_DAYS)
-        if tr is None or br is None:
+        r = _finite_ret(t1_return(cur, ticker, as_of, HORIZON_DAYS))
+        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, HORIZON_DAYS))
+        if r is None or b is None:
             pending += 1
             continue
-        r, b = tr["ret"], br["ret"]
         # stopped book (Phase 5.5) — same trade under the structural exit rule
         stopped = stopped_returns(cur, ticker, as_of, verdict, HORIZON_DAYS,
                                   benchmark=BENCHMARK, stop_loss=cfg.STOP_LOSS_PCT,
                                   take_profit=cfg.TAKE_PROFIT_PCT)
-        if stopped:
+        s_fwd = _finite_ret(stopped["fwd"]) if stopped else None
+        s_bench = _finite_ret(stopped["bench"]) if stopped else None
+        if stopped and s_fwd is not None and s_bench is not None:
             cur.execute("""UPDATE longterm_agent_results
                            SET fwd_return_stopped=%s, benchmark_return_stopped=%s,
                                exit_reason=%s, exit_days=%s WHERE id=%s""",
-                        [round(stopped["fwd"], 4), round(stopped["bench"], 4),
+                        [round(s_fwd, 4), round(s_bench, 4),
                          stopped["reason"], stopped["days"], rid])
         # P3 — beta-adjusted book: the same trade against a beta-matched benchmark, so
         # "picked the stock" is separable from "picked the factor". Reporting only.
-        bta = estimate_beta(cur, ticker, e_date, BENCHMARK)
+        bta = _finite_ret(estimate_beta(cur, ticker, e_date, BENCHMARK))
         if bta is not None:
-            ex_b = beta_adjusted_excess(verdict, r, b, bta)
+            ex_b = _finite_ret(beta_adjusted_excess(verdict, r, b, bta))
             cur.execute("""UPDATE longterm_agent_results SET beta=%s, excess_beta=%s
                            WHERE id=%s""",
                         [bta, round(ex_b, 4) if ex_b is not None else None, rid])
@@ -258,11 +275,11 @@ def main():
             cur.execute("UPDATE longterm_agent_results SET sector_benchmark=%s WHERE id=%s",
                         [sector_bm, rid])
         if no_sec_ret and sector_bm and sector_bm != "NONE":
-            sbr = t1_return(cur, sector_bm, as_of, HORIZON_DAYS)
+            sbr = _finite_ret(t1_return(cur, sector_bm, as_of, HORIZON_DAYS))
             if sbr is not None:
                 cur.execute("""UPDATE longterm_agent_results
                                SET sector_benchmark_return_4w=%s WHERE id=%s""",
-                            [round(sbr["ret"], 4), rid])
+                            [round(sbr, 4), rid])
                 extras += 1
         # max adverse excursion over the horizon (exit-discipline / sizing target)
         if no_worst:

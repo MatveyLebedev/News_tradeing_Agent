@@ -17,12 +17,30 @@ The fetcher stores normalized values only; all derived metrics (growth, margins,
 debt, expectation gap) are computed HERE at read time, so definitions can change without
 re-backfilling.
 """
+import math
 from typing import Any, Dict, Optional
 from datetime import datetime, date, timedelta
 
 import psycopg2
 
 from .pit import daily_bar_cutoff, document_cutoff, ingest_cutoff
+
+
+def _finite(x):
+    """The value as a float, or None if it is missing / NaN / inf.
+
+    Postgres `numeric` stores NaN, so "the column is not null" does not mean "the number
+    is usable". Readers that only check `is None` let NaN through and it propagates
+    silently until something calls int()/round() on it — or until it reaches a JSONB
+    write, which Postgres rejects outright. Funnel every raw numeric through here.
+    """
+    if x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
 
 
 def _rows(db_manager, sql, params):
@@ -134,10 +152,16 @@ def _close_on_or_before(db_manager, ticker, target: date, tolerance_days: int = 
     Returns (close, price_date) or (None, None)."""
     rows = _rows(db_manager, """
         SELECT date, close FROM stock_prices_daily
-        WHERE ticker=%s AND date <= %s AND date >= %s AND close IS NOT NULL
+        WHERE ticker=%s AND date <= %s AND date >= %s
+          AND close IS NOT NULL AND close::text <> 'NaN'
         ORDER BY date DESC LIMIT 1
     """, [ticker.upper(), target, target - timedelta(days=tolerance_days)])
-    return (float(rows[0][1]), rows[0][0]) if rows else (None, None)
+    # The NaN filter is in SQL, not Python: skipping the poisoned bar has to fall THROUGH
+    # to the previous good one, and a post-hoc check on a LIMIT 1 result can only discard.
+    if not rows:
+        return (None, None)
+    close = _finite(rows[0][1])
+    return (close, rows[0][0]) if close is not None else (None, None)
 
 
 def _edgar_income_all(db_manager, ticker, as_of, limit=12):
@@ -168,7 +192,7 @@ def _implied_shares(income):
     across a split are not). None if unavailable."""
     for q in income:
         d = q["data"]
-        eps, ni = d.get("eps_diluted"), d.get("net_income")
+        eps, ni = _finite(d.get("eps_diluted")), _finite(d.get("net_income"))
         if eps is not None and ni is not None and abs(eps) >= 0.01:
             shares = ni / eps
             if shares > 0:
@@ -222,12 +246,16 @@ def valuation_pit(db_manager, ticker: str, as_of: datetime) -> Dict[str, Any]:
     they are immune to share splits. Returns {} of metrics it can't form (missing EDGAR/price)."""
     income = _edgar_income_all(db_manager, ticker, as_of)
     price, price_date = _close_on_or_before(db_manager, ticker, daily_bar_cutoff(as_of))
+    # Belt and braces: the reader already refuses non-finite closes, but `price` is copied
+    # straight into the returned dict, which is persisted as JSONB — and Postgres rejects a
+    # NaN there, taking the whole run's row with it. Sanitise at the boundary too.
+    price = _finite(price)
     out: Dict[str, Any] = {"source": "edgar+price", "price": price,
                            "price_date": price_date.isoformat() if price_date else None}
     shares = _implied_shares(income)
-    if not income or price is None or not shares:
+    mktcap = _finite(price * shares) if (price is not None and shares) else None
+    if not income or mktcap is None:
         return out
-    mktcap = price * shares
     out["marketCap"] = round(mktcap)
 
     ttm_ni = _ttm_sum(income, lambda d: d.get("net_income"))

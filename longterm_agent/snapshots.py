@@ -73,7 +73,10 @@ def write_snapshot(db_manager, state: Dict[str, Any], config,
                    result_id: Optional[int] = None) -> bool:
     """Upsert the run snapshot. Never raises (best-effort, like persist_run)."""
     try:
-        doc = build_snapshot_doc(state, config)
+        # Same JSONB hazard as persist_run: one non-finite float anywhere in the doc and
+        # Postgres refuses the whole snapshot, silently costing a training-set row.
+        from .persistence import json_safe
+        doc, _ = json_safe(build_snapshot_doc(state, config))
         conn = psycopg2.connect(**db_manager.db_config)
         try:
             with conn.cursor() as cur:

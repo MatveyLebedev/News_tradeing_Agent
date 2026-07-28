@@ -78,6 +78,14 @@ class TelegramNotifier:
                f"runs {stats.get('runs', 0)} · trades {stats.get('trades', 0)} · "
                f"signals {stats.get('signals', 0)} · no_data {stats.get('no_data', 0)} · "
                f"errors {stats.get('errors', 0)}")
+        # Only shown when it happens, and phrased as a contradiction of the line above:
+        # the counts above describe what the agent DECIDED, and these rows are the ones
+        # the book never received. Reading the summary alone must not imply the book is
+        # complete (2026-07-26: "trades 1" while the results table got nothing).
+        lost = stats.get("not_persisted", 0)
+        if lost:
+            msg += (f"\n🛑 <b>{lost} decision(s) NOT persisted</b> — the counts above are "
+                    f"NOT in the book. See PERSIST_FAILED in the op log.")
         return self.send(msg)
 
     def notify_error(self, where: str, detail: str) -> bool:
