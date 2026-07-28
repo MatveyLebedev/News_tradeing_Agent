@@ -831,6 +831,142 @@ volume uncorrelated with profit, edge not robust), not reasoning — so the like
 result (it says: spend effort on signal, not on a bigger model). Cost ~$17 (Sonnet strong
 calls only, ~270 decisions × 3 calls).
 
+**RESULT (2026-07-25) — arm COMPROMISED at cohort 6; salvaged on cohorts 1–5.**
+The OpenRouter key hit its **weekly limit** mid-run: 107 of 111 `synthesis_failed` rows are
+`403 Key limit exceeded`, first firing at synthesis block #155 = the 2026-05-29 cohort. Every
+strong call from that point failed, so cohorts 6–9 (05-29…06-19) contain **zero real Sonnet
+decisions** — proof: `traded=37` is identical whether the window is the full 9 cohorts or
+just cohorts 1–5. Only 4 failures (1.5%) were genuine Sonnet `LongTermSignal` validation
+errors, so Sonnet's structured-output reliability is fine; the 42.4% headline is
+infrastructure, not model quality.
+
+Salvage over the clean cohorts 1–5 (2026-04-24…05-22), paired vs `wf_30x_deep_pit_on`,
+n=35 both-traded-and-graded:
+
+| | Sonnet | baseline |
+|---|---|---|
+| mean excess-beta @4w | +0.10% | +1.82% |
+| win rate | 54% | 66% |
+
+- paired Δ(Sonnet − baseline) = **−1.72%**, cohort-block 95% CI **[−2.65, +0.97]** → includes 0.
+- **Registered reading → stronger judgment does NOT beat baseline.** Δ is nominally negative
+  and the ~1pp floor is not cleared. Consistent with the standing conclusion: the bottleneck
+  is signal, not reasoning.
+
+**Mechanism (decomposition, not speculation).** `excess_beta` depends only on direction and
+prices, so same-direction pairs are arithmetically identical — measured max|Δ| = 0.0000% over
+30 of the 35 pairs. **100% of the −1.72% comes from 5 direction flips, all baseline SHORT →
+Sonnet LONG** (META 04-24 −34.18pp, UBER 04-24 −16.42, UBER 05-01 −13.26, JPM 04-24 −9.14,
+KO 04-24 +12.66). META alone is ~57% of the delta; drop it and Δ ≈ −0.74%, inside the floor.
+Broader: Sonnet ran **9 SHORTs vs baseline's 14**, and SHORT→LONG is the dominant disagreement
+(6 of 11 total). Mean conviction is near-identical (0.311 vs 0.321) — the reluctance is
+**directional, not global**. This window happened to reward shorts (baseline SHORT n=14,
+win 71%, median +3.05%), so Sonnet was punished for declining a book that was working *here*.
+
+**Correction to an earlier in-flight reading.** A mid-run status note called Sonnet
+"systematically more conservative, ~15% traded." That was **wrong** — it was the dead key
+producing NEUTRAL rows, not selectivity. The real, defensible finding is short-reluctance
+measured on 5 flips, which is not significant on its own.
+
+**Two operational traps found (worth more than the result).**
+1. A `synthesis_failed` row still writes a **non-null `signal`** (the NEUTRAL fallback), and
+   resume skips on `signal IS NOT NULL` (`backtest.py:155`). So quota-killed rows
+   **permanently block their own retry** — any resume MUST first delete rows where
+   `(signal->>'synthesis_failed')::bool`.
+2. Never launch a Sonnet arm without checking `GET /v1/key` `limit_remaining` first.
+
+### `wf_fresh30_sonnet_c15` — is Sonnet's short-reluctance protective OUT of sample?
+(pre-registered 2026-07-25, BEFORE launch)
+
+**Frozen question.** In-sample, Sonnet lost purely by declining SHORTs in a window where the
+short book won. But `wf_fresh30_pit` established that on FRESH tickers the SHORT book is the
+root cause of the edge collapse, and `wf_fresh30_holdout` FALSIFIED the direction split as
+period-specific. So: on fresh tickers, does the same short-reluctance **help** — does the
+paired delta flip sign?
+
+**Design.** Identical treatment to `wf_30x_strong_sonnet` (STRONG_LLM_MODEL=
+`anthropic/claude-sonnet-5`, LLM_PROVIDER=novita, cache ON, LT_METRICS_VERSION=2,
+LT_MAX_REFLECTION=0, fill t1, horizons 14/28/42/56/84), applied to the **fresh30 universe**
+(29 tickers, ABBV…WFC) over **cohorts 1–5 only** (2026-04-24…2026-05-22). Baseline frame =
+`wf_fresh30_pit`, same tickers, same dates, deepseek synthesis — a clean paired comparison.
+
+**Why cohorts 1–5, stated before looking:** this is a **budget** constraint, not a result-
+dependent one. Weekly key quota at launch = $9.92; at the ledger's own ~$0.063/decision that
+buys ~155 decisions, and 29 × 5 = 145 fits with margin. It also matches the exact cohort
+range salvaged in-sample, so the two Sonnet arms are directly comparable. Cohorts 6–9 are
+deliberately out of scope and are NOT to be back-filled into this entry later.
+
+**Quota discipline (fixes the trap above).** The runner checks `limit_remaining` before each
+cohort and stops cleanly if it is below a 1.4× cohort-cost margin, so no cohort is ever
+half-written with `403` rows. If a cohort does get poisoned, its `synthesis_failed` rows must
+be deleted before any resume.
+
+**Registered reading (frozen).** Paired ΔExcess-beta (Sonnet − `wf_fresh30_pit`) at 4w over
+trades both books take, cohort-block CI, judged against the same ~1pp reshuffle floor.
+- **Confirms "short-reluctance is protective"** only if Δ is **positive** AND clears the ~1pp
+  floor with a cohort-block CI excluding 0.
+- Δ ≈ 0 or negative → the reluctance is not a virtue either; Sonnet is simply a different
+  draw, and the model-upgrade lever is dead in both directions.
+- Mandatory sanity gate, declared now: report `synthesis_failed` rate FIRST and exclude those
+  rows. A rate >5% invalidates the arm — do not read returns off a quota-degraded book again.
+- Secondary (diagnostic, NOT the verdict): SHORT count Sonnet vs baseline, and the
+  direction-flip decomposition, to confirm the mechanism is the same one measured in-sample.
+
+**Honest prior.** Genuinely uncertain, which is why it is worth running — but the base rate
+in this ledger is unkind: n≈145 decisions yields maybe ~30 paired trades, the flip count will
+again be single-digit, and every OOS cell so far has come back underpowered. Most likely
+outcome is a wide CI containing zero. A sign flip would be interesting but must clear the
+floor to count.
+
+**RESULT (2026-07-25) — hypothesis NOT confirmed; and the MECHANISM ITSELF FAILED TO
+REPLICATE, which is the bigger finding.**
+
+Run was clean, unlike the in-sample arm: 145/145 decisions, **4 `synthesis_failed` (2.8%)**,
+**zero 403s**, all 5 cohort transitions `rc=0`, cost $5.70. Health gate **PASS** (<5%).
+The per-cohort quota gate never had to fire; measured cost was $0.040/decision, not the
+$0.063 assumed at registration.
+
+| | Sonnet | baseline (`wf_fresh30_pit`) |
+|---|---|---|
+| traded | 21 (LONG 12 / SHORT 9) | 28 (LONG 18 / SHORT 10) |
+| mean excess-beta @4w (paired) | +1.06% | +1.50% |
+
+- paired Δ = **−0.44%**, cohort-block 95% CI **[−1.11, +0.62]** → includes 0, does not clear
+  the ~1pp floor.
+- **Registered reading → NOT confirmed.** Short-reluctance is not demonstrably protective
+  out of sample. Per the frozen alternative branch: the model-upgrade lever is now dead in
+  **both** directions — Sonnet neither beats nor is beaten by baseline once you leave the
+  one window where its flips happened to matter.
+
+**The mechanism did not replicate — this falsifies "short-reluctance" as a model property.**
+The in-sample story was: Sonnet systematically declines SHORTs (9 vs 14, and 5 of 5 flips
+were SHORT→LONG). Out of sample that pattern is simply absent:
+
+| | Sonnet SHORT | baseline SHORT | ratio | flips SHORT→LONG |
+|---|---|---|---|---|
+| in-sample (`wf_30x`) | 7 | 14 | 0.50 | 5 of 5 |
+| OOS (`fresh30`) | 9 | 10 | **0.90** | **0 of 2** — both flips ran LONG→SHORT, the opposite way |
+
+So the in-sample −1.72% was **not** a behavioral trait that generalizes; it was 5 idiosyncratic
+flips in one window. An earlier in-flight hypothesis in this ledger — that the reluctance might
+be a *virtue* on fresh tickers where the SHORT book collapsed — is **rejected**: there is no
+reluctance to be virtuous.
+
+**Same fragility as in-sample, one notch worse.** 16 of 18 paired trades are same-direction
+and therefore arithmetically identical (measured max|Δ| = 0.0000%). All of the −0.44% comes
+from 2 CVX flips, and effectively from **one**: CVX 2026-04-24 contributes −0.49pp; drop that
+single trade and Δ = **+0.06%**. A result that inverts on one trade is not a result.
+
+**Power, stated honestly.** The registration guessed ~30 paired trades; actual was **18**,
+because fresh tickers produce heavy `NO_DATA` (<8 articles/60d) and Sonnet traded only 21 of
+145 decisions. Flip count was 2. This cell could not have detected a 1pp effect even if one
+existed — treat "CI includes 0" here as *uninformative about small effects*, not as evidence
+of no effect.
+
+**Standing conclusion, now supported from two independent cells:** the strong-judgment lever
+does not move outcomes. Both Sonnet arms reduce to a handful of direction flips whose sign is
+window-specific. Spend effort on signal/coverage, not on a bigger judgment model.
+
 ### `midday_mon` — in-session Monday run (registered 2026-07-22 as a FUTURE experiment;
 NOT scheduled, prerequisites below)
 
