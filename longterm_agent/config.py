@@ -72,7 +72,13 @@ AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` colum
 # across versions (a) saves ~1k map calls per backfill and (b) makes the v1-vs-v2 label
 # comparison isolate the estimator change — identical summaries feed both. Bump this
 # whenever the corpus definition, map prompt, or map model changes.
-BUCKET_CACHE_VERSION = "0.1.0"
+#
+# Env-overridable because the key is (ticker, week_start, version) and week_start is a
+# DATE: two sweeps of the same Mondays at DIFFERENT times of day (06:30 vs 12:00) produce
+# buckets whose boundaries differ by hours, so their article membership differs — but they
+# collide on the key and would silently read each other's summaries. A sweep on a new
+# decision clock must namespace its cache (e.g. LT_BUCKET_CACHE_VERSION=0.1.0-mid1200).
+BUCKET_CACHE_VERSION = os.getenv("LT_BUCKET_CACHE_VERSION", "0.1.0")
 
 
 class LongTermAgentConfig:

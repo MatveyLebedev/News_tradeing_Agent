@@ -78,6 +78,35 @@ def _weekly(start, end, step):
     return out
 
 
+def _roll_cohorts(cfg, cohorts):
+    """Move every cohort that lands on a closed market to the next session, same time of day.
+
+    Rolling beats skipping on an in-session grid: a skipped Memorial Day is a lost block on
+    a book that is already block-starved, while a rolled one is a real, tradable decision
+    that simply happens on Tuesday. The cohort keeps the news week it belonged to.
+    """
+    from longterm_agent.intraday_entry import load_session_dates, next_session
+
+    lo = min(c.date() for c in cohorts)
+    hi = max(c.date() for c in cohorts) + timedelta(days=7)
+    conn = _conn(cfg)
+    try:
+        sessions = load_session_dates(conn, lo, hi)
+    finally:
+        conn.close()
+
+    out = []
+    for c in cohorts:
+        target = next_session(c.date(), sessions)
+        if target is None:
+            print(f"  ⚠ {c.date()}: no session within 5 days — cohort dropped")
+            continue
+        if target != c.date():
+            print(f"  rolled {c.date()} → {target} (market closed)")
+        out.append(datetime.combine(target, c.time()))
+    return out
+
+
 def _regime(cur, as_of: date, lookback=60, band=0.03):
     """Market regime at as_of from SPY's trailing return: bull / bear / flat.
 
@@ -139,13 +168,19 @@ def _run_one(cfg, backtest_id, prov, horizons, tk, as_of):
         return False
 
 
-def run_cohorts(cfg, tickers, cohorts, horizons, backtest_id, force=False, workers=1):
+def run_cohorts(cfg, tickers, cohorts, horizons, backtest_id, force=False, workers=1,
+                prov_extra=None):
     from longterm_agent.llm_cache import maybe_enable_llm_cache
 
     _ensure_table(cfg)
     maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible + cheap re-runs (B0). Global
     # cache, set once here in the main thread; all workers share it (Postgres-backed, safe).
     prov = cfg.provenance()
+    # `as_of` is a DATE column, so a cohort's TIME OF DAY survives only here. Without it a
+    # pre-open (06:30) and a midday (12:00) sweep are indistinguishable after the fact, and
+    # any harness that fills intraday has to guess the decision clock.
+    if prov_extra:
+        prov = {**prov, **prov_extra}
     print(f"backtest_id={backtest_id}  workers={workers}  provenance={prov}")
 
     done = set()
@@ -555,7 +590,17 @@ def main():
     ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
     ap.add_argument("--at", default=None, metavar="HH:MM",
                     help="time-of-day for every cohort as_of (e.g. 06:30 for pre-open "
-                         "Monday cohorts; default midnight)")
+                         "Monday cohorts, 12:00 for midday in-session; default midnight). "
+                         "Recorded in provenance as `cohort_time_et`.")
+    ap.add_argument("--skip-dates", default="", metavar="YYYY-MM-DD,…",
+                    help="cohort dates to skip — market holidays that land on the grid "
+                         "(e.g. 2026-05-25). A holiday cohort costs a full ticker sweep of "
+                         "LLM calls and can never produce an in-session fill.")
+    ap.add_argument("--roll-holidays", action="store_true",
+                    help="a cohort landing on a closed market ROLLS FORWARD to the next "
+                         "session, keeping its time of day (Memorial Day Monday → Tuesday). "
+                         "Preferred over --skip-dates for an in-session grid: it keeps the "
+                         "cohort instead of losing a block. Recorded in provenance.")
     ap.add_argument("--fill", choices=["t1", "d0"], default="t1",
                     help="fill convention for grading: t1 = open of the bar AFTER the "
                          "as_of day (legacy grids); d0 = the as_of day's own open "
@@ -575,8 +620,21 @@ def main():
             if args.at:
                 hh, mm = map(int, args.at.split(":"))
                 cohorts = [c + timedelta(hours=hh, minutes=mm) for c in cohorts]
+            if args.skip_dates:
+                skip = {datetime.strptime(d.strip(), "%Y-%m-%d").date()
+                        for d in args.skip_dates.split(",") if d.strip()}
+                kept = [c for c in cohorts if c.date() not in skip]
+                print(f"skipping {len(cohorts) - len(kept)} cohort(s): {sorted(skip)}")
+                cohorts = kept
+            if args.roll_holidays:
+                cohorts = _roll_cohorts(cfg, cohorts)
+            prov_extra = {}
+            if args.at:
+                prov_extra["cohort_time_et"] = args.at
+            if args.roll_holidays:
+                prov_extra["cohort_roll"] = "next_session"
             run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id,
-                        args.force, args.workers)
+                        args.force, args.workers, prov_extra=prov_extra or None)
         if not args.no_grade:
             grade(cfg, args.backtest_id, args.asof_today, args.benchmark,
                   fill=args.fill, dual_book=args.dual_book)
