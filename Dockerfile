@@ -19,8 +19,13 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY price_parser.py .
+# Copy application files.
+# price_fetcher/config/logger come from bloomberg_news_fetcher: the nightly sweep and the
+# news container's 5-minute top-up now share ONE minute-bar writer (they used to run two
+# separate implementations, and this container's copy silently wrote nothing).
+COPY bloomberg_news_fetcher/config.py .
+COPY bloomberg_news_fetcher/logger.py .
+COPY bloomberg_news_fetcher/price_fetcher.py .
 COPY auto_price_fetcher.py .
 COPY graph_db/ graph_db/
 

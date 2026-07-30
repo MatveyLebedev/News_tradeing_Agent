@@ -6,7 +6,7 @@ import os
 import psycopg2
 from news_fetcher import fetch_and_save_news, embedding_generator, logger
 from config import BLOOMBERG_CATEGORIES, ENABLE_EXTERNAL_RSS
-from price_fetcher import fetch_all_tickers, TOP_50_TICKERS
+from price_fetcher import fetch_all_tickers, DEFAULT_TICKERS, TOP_50_TICKERS
 from config import FETCH_PRICES, PRICE_FETCH_PERIOD, VERBOSE, FETCH_FULL_TEXT
 from config import (FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME,
                     DAILY_BARS_FETCH_ENABLED, DAILY_BARS_FETCH_TIME, DAILY_BARS_PERIOD)
@@ -230,8 +230,14 @@ def scheduled_fetch(verbose=True):
         # Fetch prices if enabled
         price_result = None
         if FETCH_PRICES_ENABLED:
-            # Price fetching logs are suppressed (verbose=False) to reduce noise
-            price_result = fetch_all_tickers(tickers=TOP_50_TICKERS, period=PRICE_FETCH_PERIOD, verbose=False)
+            # Price fetching logs are suppressed (verbose=False) to reduce noise.
+            # DEFAULT_TICKERS, not TOP_50_TICKERS: the company list carries no benchmark,
+            # and passing it here is exactly the bug daily_price_fetcher already documents
+            # ("passing bare TOP_50_TICKERS froze SPY and blocked all outcome grading").
+            # On the intraday side it was never noticed because no ETF minute table had
+            # ever been created — so the whole benchmark leg of every intraday experiment
+            # had to be synthesised from an equal-weight basket instead.
+            price_result = fetch_all_tickers(tickers=DEFAULT_TICKERS, period=PRICE_FETCH_PERIOD, verbose=False)
             try:
                 update_price_movements()
             except Exception as e:
@@ -243,7 +249,7 @@ def scheduled_fetch(verbose=True):
             print("=" * 80)
             print(f"✓ News articles saved: {news_result}")
             if price_result:
-                print(f"✓ Price data rows inserted: {price_result['total_rows']} ({price_result['success']}/{len(TOP_50_TICKERS)} tickers)")
+                print(f"✓ Price data rows inserted: {price_result['total_rows']} ({price_result['success']}/{len(DEFAULT_TICKERS)} tickers)")
             print(f"Next fetch in: {FETCH_INTERVAL_MIN} minutes")
             print("=" * 80)
         

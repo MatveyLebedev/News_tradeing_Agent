@@ -1,9 +1,24 @@
-import schedule
-import time
-from datetime import datetime, timedelta
-import pytz
+"""Nightly minute-bar sweep (the `price-fetcher` container).
+
+Runs after the close, re-requests the last few sessions, and lets the writer's
+ON CONFLICT DO NOTHING fill anything the 5-minute intraday fetch in the news container
+missed. That repair role is the reason this job exists alongside the other one.
+
+History (2026-07-29): this module used to import `price_parser.py`, a second, unmaintained
+minute writer whose INSERT targeted a column named `date` — the tables have `timestamp`.
+Every row therefore raised, the first failure aborted the transaction, and the job printed
+"✓ Inserted 0 records" on its way to writing nothing, every night. It now uses the same
+`price_fetcher` module the news container writes with, so there is ONE writer to keep
+correct instead of two that can disagree.
+"""
 import os
-from price_parser import parse_all_tickers, save_to_database, POPULAR_TICKERS
+import time
+from datetime import datetime
+
+import pytz
+import schedule
+
+from price_fetcher import DEFAULT_TICKERS, fetch_all_tickers, report_gaps
 from graph_db import update_price_movements
 
 # US Eastern Time zone
@@ -11,9 +26,11 @@ ET_TIMEZONE = pytz.timezone('America/New_York')
 
 # Configuration - read from environment variables or use defaults
 FETCH_TIME = os.getenv("FETCH_TIME", "22:00")  # 10:00 PM ET (6 hours after market close at 4:00 PM)
-TICKERS = os.getenv("TICKERS", ",".join(POPULAR_TICKERS)).split(",") if os.getenv("TICKERS") else POPULAR_TICKERS
+TICKERS = os.getenv("TICKERS").split(",") if os.getenv("TICKERS") else DEFAULT_TICKERS
 INTERVAL = os.getenv("FETCH_INTERVAL", "1m")
-PERIOD = os.getenv("FETCH_PERIOD", "1d")
+# 5d, not 1d: this is the repair sweep, and a week-wide re-request is still ONE call per
+# ticker (yfinance serves '5d' directly) while covering a hole opened earlier in the week.
+PERIOD = os.getenv("FETCH_PERIOD", "5d")
 
 
 def fetch_and_save_daily_data():
@@ -31,39 +48,28 @@ def fetch_and_save_daily_data():
     print()
     
     try:
-        # Fetch data for all tickers
-        results = parse_all_tickers(TICKERS, period=PERIOD, interval=INTERVAL)
-         
-        if not results:
-            print("❌ No data fetched. Skipping database save.")
-            return
-        
-        # Save to database
-        print("\n" + "=" * 80)
-        print("SAVING TO DATABASE")
-        print("=" * 80)
-        
-        success_count = 0
-        fail_count = 0
-        
-        for ticker, df in results.items():
-            try:
-                if save_to_database(ticker, df):
-                    success_count += 1
-                else:
-                    fail_count += 1
-            except Exception as e:
-                print(f"❌ Error saving {ticker}: {e}")
-                fail_count += 1
-        
+        # fetch_all_tickers fetches AND writes; the writer creates any missing table and
+        # skips bars already stored, so re-running is idempotent by design.
+        results = fetch_all_tickers(tickers=TICKERS, period=PERIOD, verbose=True)
+
         print("\n" + "=" * 80)
         print("DAILY FETCH COMPLETE")
         print("=" * 80)
-        print(f"✓ Successfully saved: {success_count}/{len(results)} tickers")
-        if fail_count > 0:
-            print(f"✗ Failed: {fail_count} tickers")
+        print(f"✓ Successfully fetched: {results['success']}/{len(TICKERS)} tickers")
+        print(f"✓ Rows inserted: {results['total_rows']}")
+        if results['failed']:
+            print(f"✗ Failed: {results['failed']} tickers")
         print(f"Next fetch scheduled for: {FETCH_TIME} ET tomorrow")
         print("=" * 80)
+
+        # Surface holes while they can still be repaired. Yahoo serves 1-minute bars for
+        # ~30 days only, so a gap noticed later is permanent — the 2026-06-23 outage
+        # (23 bars for every ticker) was found months afterwards, by an experiment.
+        print("\nChecking minute-bar coverage...")
+        try:
+            report_gaps(tickers=TICKERS)
+        except Exception as e:
+            print(f"⚠ Coverage check failed: {e}")
 
         print("\nComputing graph price movements...")
         try:
@@ -184,14 +190,14 @@ if __name__ == "__main__":
     parser.add_argument(
         '--tickers',
         nargs='+',
-        default=POPULAR_TICKERS,
+        default=DEFAULT_TICKERS,
         help='List of ticker symbols to fetch'
     )
     
     args = parser.parse_args()
     
     # Update tickers if specified
-    if args.tickers != POPULAR_TICKERS:
+    if args.tickers != DEFAULT_TICKERS:
         TICKERS = args.tickers
         print(f"Using custom tickers: {', '.join(TICKERS)}")
     

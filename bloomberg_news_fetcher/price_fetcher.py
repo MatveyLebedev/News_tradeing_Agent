@@ -2,10 +2,14 @@
 Stock price fetcher V2 - Per-ticker tables
 Fetches 1-minute historical data and stores in separate tables per ticker
 """
-import yfinance as yf
+import math
+from datetime import date, datetime, timedelta
+
+import pandas as pd
 import psycopg2
-from datetime import datetime
 import pytz
+import yfinance as yf
+
 from config import DB_CONFIG
 from logger import DatabaseLogger
 
@@ -61,6 +65,26 @@ TOP_50_TICKERS = [
     'PLD', 'AMT', 'CCI', 'EQIX', 'PSA'
 ]
 
+# Intraday benchmarks — the minute-bar mirror of daily_price_fetcher.BENCHMARK_TICKERS.
+# Kept OUT of TOP_50_TICKERS on purpose: that list feeds
+# LongTermAgentConfig.get_universe(), so it must stay agent-analyzable companies only —
+# the long-term agent would otherwise try to build a news background for an ETF.
+#
+# Why these tables did not exist until 2026-07-29: every minute fetch ever run passed the
+# bare company list, so the intraday side has 121 single names and ZERO ETFs, while the
+# DAILY side has had SPY + all 11 sector ETFs for a while. That gap is what forces an
+# intraday experiment to synthesise its market factor from an equal-weight basket
+# (longterm_agent/holding_curve_lt.py) instead of netting against SPY.
+#
+# ⚠ This fixes the data GOING FORWARD only. Yahoo serves 1-minute bars for the last
+# ~30 days and at most 8 days per request (measured 2026-07-29: 2026-07-01 returns bars,
+# 2026-06-29 returns empty), so no run of this fetcher can backfill an older window.
+# Recovering one needs a vendor with intraday history; FMP is wired here for earnings on
+# the free tier only.
+BENCHMARK_TICKERS = ["SPY", "XLB", "XLC", "XLY", "XLP", "XLE", "XLF", "XLV", "XLI",
+                     "XLRE", "XLK", "XLU"]
+DEFAULT_TICKERS = TOP_50_TICKERS + BENCHMARK_TICKERS
+
 
 def get_db_connection():
     """Create and return a database connection"""
@@ -76,6 +100,15 @@ def get_db_connection():
     except Exception as e:
         print(f"Error connecting to database: {e}")
         raise
+
+
+def _finite(v):
+    """float(v) when it is a real number, else None — the NaN gate for every written bar."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
 
 
 def get_table_name(ticker):
@@ -137,31 +170,102 @@ def create_ticker_table(ticker):
         return False
 
 
-def fetch_1m_prices(ticker, period='1d'):
+# Yahoo's two hard limits on 1-minute bars, both measured against the live API on
+# 2026-07-29 rather than taken from documentation:
+#   * per request — "Only 8 days worth of 1m granularity data are allowed to be fetched
+#     per request"; we chunk at 7 to keep a margin.
+#   * total history — "The requested range must be within the last 30 days". Probed:
+#     a window starting 2026-07-01 returned bars, 2026-06-29 returned empty.
+# The second one is why an older window can never be recovered from this source, and why
+# a coverage hole has to be found and repaired INSIDE the 30-day window or not at all
+# (see report_gaps).
+MAX_1M_SPAN_DAYS = 7
+MAX_1M_HISTORY_DAYS = 29
+
+# Periods small enough for a single request keep the original, proven call shape.
+_DIRECT_PERIODS = {'1d': 1, '5d': 5, '7d': 7}
+_PERIOD_DAYS = {**_DIRECT_PERIODS, '1mo': 30}
+
+
+def _resolve_window(period, start, end):
+    """(start_date, end_date, note) for a range fetch. `end` is exclusive, yfinance-style."""
+    today = datetime.now(EASTERN_TZ).date()
+    horizon = today - timedelta(days=MAX_1M_HISTORY_DAYS)
+    note = None
+
+    e = date.fromisoformat(end) if end else today + timedelta(days=1)
+    s = date.fromisoformat(start) if start else today - timedelta(days=_PERIOD_DAYS.get(period, 1))
+
+    if s < horizon:
+        # Say so instead of returning an empty frame: the previous code asked Yahoo for
+        # `period='1mo'` at a 1m interval, got a rejection, and reported "no data" — the
+        # failure looked identical to a delisted ticker.
+        note = (f"1m history reaches back only to {horizon} "
+                f"(requested {s}); clamped — older bars need a vendor with intraday history")
+        s = horizon
+    return s, e, note
+
+
+def _chunks(start, end, span_days=MAX_1M_SPAN_DAYS):
+    cur = start
+    while cur < end:
+        nxt = min(cur + timedelta(days=span_days), end)
+        yield cur, nxt
+        cur = nxt
+
+
+def fetch_1m_prices(ticker, period='1d', start=None, end=None, verbose=False):
     """
-    Fetch 1-minute price data for a ticker
-    
+    Fetch 1-minute price data for a ticker.
+
     Args:
         ticker: Stock ticker symbol
-        period: Time period ('1d', '5d', '1mo')
-        
+        period: '1d' | '5d' | '7d' | '1mo' — ignored when start/end are given
+        start, end: 'YYYY-MM-DD' range (end exclusive). Enables targeted repair of a
+            specific day, which `period` alone cannot express.
+
+    Anything wider than one request is split into <=7-day chunks and concatenated, so
+    '1mo' now returns a month instead of nothing.
+
     Returns:
-        DataFrame with price data or None
+        DataFrame indexed by NAIVE US/Eastern timestamps, or None.
     """
     try:
         stock = yf.Ticker(ticker)
-        # Download 1-minute data
-        df = stock.history(period=period, interval='1m')
-        
-        if df.empty:
+
+        if start is None and end is None and period in _DIRECT_PERIODS:
+            df = stock.history(period=period, interval='1m')
+        else:
+            s, e, note = _resolve_window(period, start, end)
+            if note and verbose:
+                print(f"  ⚠ {ticker}: {note}")
+            frames = []
+            for c_start, c_end in _chunks(s, e):
+                part = stock.history(start=str(c_start), end=str(c_end), interval='1m')
+                if part is not None and not part.empty:
+                    frames.append(part)
+            if not frames:
+                return None
+            df = pd.concat(frames)
+            df = df[~df.index.duplicated(keep='last')].sort_index()
+
+        if df is None or df.empty:
             return None
-        
+
+        # Convert explicitly rather than dropping the offset. yfinance returns the
+        # exchange timezone for US names, so `.replace(tzinfo=None)` happened to be
+        # right — but on any row that came back in UTC it would have written bars 4-5
+        # hours off, silently, into a column the whole repo reads as naive ET.
+        if getattr(df.index, "tz", None) is not None:
+            df.index = df.index.tz_convert(EASTERN_TZ).tz_localize(None)
+
         return df
-        
+
     except Exception as e:
         print(f"Error fetching data for {ticker}: {e}")
         logger.error('PRICE_FETCH_ERROR', f'Failed to fetch prices for {ticker}',
-                    details={'ticker': ticker, 'error': str(e), 'period': period})
+                    details={'ticker': ticker, 'error': str(e), 'period': period,
+                             'start': start, 'end': end})
         return None
 
 
@@ -191,20 +295,32 @@ def save_prices_to_db(ticker, df):
         fetch_time_naive = datetime.now(EASTERN_TZ).replace(tzinfo=None)
 
         # Build all rows as a batch
-        rows = []
+        rows, dropped = [], 0
         for timestamp, row in df.iterrows():
             try:
+                close = _finite(row['Close'])
+                if close is None:
+                    # Mirrors daily_price_fetcher.save_daily. A NaN close is what cost a
+                    # live cohort on 2026-07-24 (BACKTEST_LEDGER `live_0726`): the minute
+                    # writer was the one layer that never got the guard, so a poisoned bar
+                    # could still reach a table every intraday reader trusts.
+                    dropped += 1
+                    continue
                 rows.append((
-                    timestamp.replace(tzinfo=None),
-                    float(row['Open']),
-                    float(row['High']),
-                    float(row['Low']),
-                    float(row['Close']),
-                    int(row['Volume']),
+                    timestamp.replace(tzinfo=None) if getattr(timestamp, "tzinfo", None)
+                    else timestamp,
+                    _finite(row['Open']), _finite(row['High']), _finite(row['Low']), close,
+                    int(vol) if (vol := _finite(row['Volume'])) is not None else None,
                     fetch_time_naive,
                 ))
             except Exception as e:
+                dropped += 1
                 print(f"  Skipping malformed row for {ticker} at {timestamp}: {e}")
+
+        if dropped:
+            print(f"  ⚠ {ticker}: dropped {dropped} non-finite/malformed bar(s)")
+            logger.error('PRICE_NONFINITE_BAR', f'{ticker}: {dropped} unusable bars dropped',
+                         details={'ticker': ticker, 'dropped': dropped})
 
         if not rows:
             cursor.close()
@@ -238,12 +354,12 @@ def save_prices_to_db(ticker, df):
         return 0
 
 
-def fetch_all_tickers(tickers=None, period='1d', verbose=False):
+def fetch_all_tickers(tickers=None, period='1d', verbose=False, start=None, end=None):
     """
     Fetch 1-minute price data for multiple tickers
     
     Args:
-        tickers: List of ticker symbols (default: TOP_50_TICKERS)
+        tickers: List of ticker symbols (default: DEFAULT_TICKERS — companies + benchmarks)
         period: Time period to fetch
         verbose: If True, prints progress logs (default: False)
         
@@ -251,8 +367,8 @@ def fetch_all_tickers(tickers=None, period='1d', verbose=False):
         Dictionary with results
     """
     if tickers is None:
-        tickers = TOP_50_TICKERS
-    
+        tickers = DEFAULT_TICKERS
+
     if verbose:
         print(f"\n{'=' * 80}")
         print("FETCHING 1-MINUTE PRICE DATA (PER-TICKER TABLES)")
@@ -283,8 +399,8 @@ def fetch_all_tickers(tickers=None, period='1d', verbose=False):
             if table_name not in results['tables_created']:
                 results['tables_created'].append(table_name)
         
-        df = fetch_1m_prices(ticker, period=period)
-        
+        df = fetch_1m_prices(ticker, period=period, start=start, end=end, verbose=verbose)
+
         if df is not None and not df.empty:
             rows_inserted = save_prices_to_db(ticker, df)
             
@@ -349,6 +465,70 @@ def list_ticker_tables():
         return []
 
 
+FULL_SESSION_BARS = 390  # 09:30–15:59 inclusive
+
+
+def report_gaps(tickers=None, days=MAX_1M_HISTORY_DAYS, min_bars=FULL_SESSION_BARS,
+                verbose=True):
+    """Sessions with fewer bars than a full day, for tickers still inside the repair window.
+
+    This exists because a hole is only fixable while Yahoo still serves the day. Two
+    outages sit in the current data — 2026-03-27 (~147 bars) and 2026-06-23 (23 bars),
+    identical across every ticker, so a feed failure rather than a short session — and
+    both were found months later by an experiment, when nothing could be done. Run this
+    after a fetch and a fresh hole can simply be re-requested with --start/--end.
+
+    Returns {ticker: [(day, bar_count), ...]} for days below `min_bars`.
+    """
+    tickers = tickers or DEFAULT_TICKERS
+    since = datetime.now(EASTERN_TZ).date() - timedelta(days=days)
+    existing = set(list_ticker_tables())
+    out = {}
+
+    conn = get_db_connection()
+    if conn is None:
+        return out
+    try:
+        with conn.cursor() as cursor:
+            for ticker in tickers:
+                table = get_table_name(ticker)
+                if table not in existing:
+                    continue
+                cursor.execute(
+                    f"SELECT timestamp::date AS d, count(*) FROM {table} "  # noqa: S608
+                    "WHERE timestamp >= %s GROUP BY 1 HAVING count(*) < %s ORDER BY 1",
+                    (since, min_bars))
+                rows = [(d, n) for d, n in cursor.fetchall()]
+                if rows:
+                    out[ticker] = rows
+    finally:
+        conn.close()
+
+    if verbose:
+        horizon = datetime.now(EASTERN_TZ).date() - timedelta(days=MAX_1M_HISTORY_DAYS)
+        if not out:
+            print(f"No coverage gaps in the last {days} days "
+                  f"({len(tickers)} tickers, threshold {min_bars} bars).")
+        else:
+            print(f"\nCoverage gaps in the last {days} days "
+                  f"(session = {min_bars} bars; ✎ = still refetchable, ✗ = past Yahoo's "
+                  f"{MAX_1M_HISTORY_DAYS}-day 1m window and permanent):")
+            for ticker, rows in sorted(out.items()):
+                shown = ", ".join(f"{'✎' if d >= horizon else '✗'}{d} ({n})"
+                                  for d, n in rows[:6])
+                more = f" +{len(rows) - 6} more" if len(rows) > 6 else ""
+                print(f"  {ticker:6s} {shown}{more}")
+            fixable = sorted({d for rows in out.values() for d, _ in rows if d >= horizon})
+            if fixable:
+                d = fixable[0]
+                print(f"\n  repair:  python price_fetcher.py --start {d} "
+                      f"--end {d + timedelta(days=1)} --tickers <TICKER>")
+            else:
+                print(f"\n  nothing repairable: every gap predates {horizon}. Recovering "
+                      "these needs a vendor with intraday history.")
+    return out
+
+
 def get_table_stats(table_name):
     """Get statistics for a specific table"""
     try:
@@ -390,9 +570,16 @@ if __name__ == "__main__":
     parser.add_argument(
         '--period',
         default='1d',
-        choices=['1d', '5d', '1mo'],
-        help='Time period to fetch (default: 1d)'
+        choices=['1d', '5d', '7d', '1mo'],
+        help='Time period to fetch (default: 1d). Anything over 7d is split into '
+             '7-day requests automatically.'
     )
+    parser.add_argument('--start', help='Range start YYYY-MM-DD (overrides --period). '
+                                        'Use to repair a specific session.')
+    parser.add_argument('--end', help='Range end YYYY-MM-DD, exclusive (default: tomorrow)')
+    parser.add_argument('--gaps', action='store_true',
+                        help='Report sessions with fewer than 390 bars that are still '
+                             'inside the 30-day repair window, then exit')
     parser.add_argument(
         '--tickers',
         nargs='+',
@@ -431,9 +618,12 @@ if __name__ == "__main__":
                 total_rows += stats['row_count']
         print(f"{'=' * 80}")
         print(f"Total: {total_rows} rows across {len(tables)} tables\n")
+    elif args.gaps:
+        report_gaps(tickers=args.tickers or DEFAULT_TICKERS)
     else:
-        tickers = args.tickers if args.tickers else TOP_50_TICKERS
-        results = fetch_all_tickers(tickers=tickers, period=args.period)
+        tickers = args.tickers if args.tickers else DEFAULT_TICKERS
+        results = fetch_all_tickers(tickers=tickers, period=args.period,
+                                    start=args.start, end=args.end, verbose=True)
         print(f"\nProcessed {len(tickers)} tickers")
         print(f"Total rows inserted: {results['total_rows']}")
         print(f"Tables created/used: {len(results['tables_created'])}")
