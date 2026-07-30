@@ -1124,6 +1124,88 @@ protective story this experiment was first imagined for.
   once the July semis-wave cohorts mature (the window v3 exists for). Criteria in
   BACKTESTS_2026Q2_PH6_12_13.md §3.
 
+### `intraday_curve34` — profit vs holding time, intraday Monday entry (pre-registered 2026-07-29, BEFORE launch)
+
+**Not `midday_mon`.** That entry (registered 2026-07-22) asks whether a midday decision beats
+the morning one, is frozen to 30 tickers / 12:01 fill / provider pinned, and is **forward
+cohorts only**. This is a different question — the SHAPE of profit against holding time —
+and it runs on a replayed window, so it inherits none of that entry's acceptance rights and
+does not consume its prerequisites. `midday_mon` stays open and unspent.
+
+**Question.** A position the long-term agent opens Monday **inside the session** — decision
+stamped 12:00 ET, agent given 1 minute, fill at the open of the first bar starting strictly
+after (12:02) — has what profit as a function of how long it is held? Every horizon is
+evaluated on the SAME entry; only the exit moves.
+
+**Fill convention `mid_1m`** (new; `longterm_agent/intraday_entry.py`). The first intraday
+fill in this repo — every prior book used daily bars (`open_t1`, `open_d0`). Exits form two
+legs glued to one axis of *session minutes held* (overnight counts zero, being untradable):
+intraday 1…240 min on the entry day's minute bars, then closes of trading days 0…60. The
+legs meet at `eod:0`; that seam is printed as a data check (measured: 16:00 minute print vs
+official close, median 0.027%).
+
+**Grid.** 14 Mondays 2026-04-27 → 2026-07-27, Memorial Day 05-25 rolled forward to Tuesday
+05-26 (`--roll-holidays`; rolling beats skipping on a block-starved book). 04-13 and 04-20
+excluded: the March holdout family ran every live name on them.
+
+**Universe — 34 low-burn names, chosen by burn intensity, not by a fresh/burnt flag.**
+Burn is three-level over these cohorts: 21 names untouched (0 sweeps), 13 lightly touched
+(1 sweep `wf_extra13`, 7/14 cells, ≤2 trades), 30 heavily burned (23 sweeps, up to 8 trades,
+all dissected in `FAILURE_MODES_monday_t1_pit.md`). The book takes the first two levels:
+**476 cells, 81% untouched, 19% lightly touched, zero heavily burned**, constant composition
+across all 14 cohorts. All 34 are drawn from the live production universe (snapshot
+2026-07-26). Sector deviation from production **15%** (the untouched 21 alone would be 26%;
+the 13 supply exactly the tech/financial weight prior sweeps burned away).
+
+**Settings, frozen:** `LT_LLM_CACHE=true LT_MAX_REFLECTION=0
+LT_BUCKET_CACHE_VERSION=0.1.0-mid1200`, deep analysis ON (as live today), detection v1,
+models `deepseek/deepseek-v4-pro` + map `google/gemini-3.1-flash-lite-preview`, temperature
+0, `--horizons 28 --workers 8 --no-grade`. The bucket-cache namespace is deliberate: keyed
+`(ticker, week_start)`, it would otherwise hand this sweep the 06:30 grid's weekly summaries,
+whose bucket boundaries differ by 5.5h. **`--no-grade` is mandatory** — `backtest.py`'s daily
+grader would fill at 09:30, hours before a midday decision exists.
+
+**Provider NOT pinned — disclosed.** `llm_provider_routing()` returns None, so requests may
+land on any of 18 backends serving the model. `midday_mon` requires pinning; this entry does
+not, and the resulting quantisation drift is a known limit rather than a controlled variable.
+
+**Benchmark.** Equal-weight over the book for the entry-day stub (no ETF minute table exists
+for this window — `historical_data_spy` was never fetched; the intraday fetcher's missing
+`BENCHMARK_TICKERS` split was fixed 2026-07-29 but Yahoo's 30-day 1m cap means April–June
+cannot be backfilled), then **real SPY daily closes** from the entry close onward. So the
+synthetic part is one afternoon; the multi-week leg that carries the variance is graded
+against the same instrument every daily book here uses. `--benchmark ew` is the robustness
+arm (measured 2.6pp mean difference at `eod:20` on a plumbing check).
+
+**Pre-registered readings.** Primary horizon `eod:20` (≈4w, the agent's own). Primary
+statistic: mean signed excess with a **cohort-block** bootstrap CI. Support needs all three —
+CI excludes zero, sign-flip `p<0.05` (one coin per cohort), and the mean beats the
+direction-blind always-long control. The **shape** claim is decided on the paired table
+(each horizon minus `eod:20` on the same trade), which cancels the cohort shock before
+averaging and is the only reading with real power at 6–9 blocks; it must also survive
+`drop`/`clamp`/`balanced` and `--agent-minutes 2` (measured pipeline p50 is 121s, so the
+1-minute premise is ~2× optimistic). Secondary readings, all fixed now: the untouched-21
+sub-book as the strict-burn check; without `NOW`/`COST` (their tickers collide with English
+words, ~6% of the book); `--all-directional`; `--cost-bps 10`.
+
+**Multiplicity acknowledged:** day-time family variant #3 (Sunday, Mon 06:30, Mon midday).
+The reported maximum over the ~26-horizon grid is a SELECTED maximum, denominator 26.
+
+**Power, stated before the run.** ≈35–45 trades in ~6–9 non-empty cohorts (`monday_t1_pit`
+yielded 41 trades over 12 Mondays with 29 on two of them, and five consecutive Mondays where
+the detector fired on 0–1 of 30 names with max conviction 0.20–0.25 against a 0.55 gate — so
+this is a detector property, not a sampling accident, and no universe widening fixes it).
+An inconclusive result is the likely outcome and must be reported as inconclusive.
+
+**Cost, measured not estimated:** $0.039/run at the coldest point of a sweep (first cohort,
+empty bucket cache), converging lower as consecutive Mondays share 8 of 9 weekly buckets →
+**476 runs ≈ $14**, ~4-6h at 8 workers. Full write-up:
+`docs/PREREG_MONDAY_MIDDAY_HOLDING_2026-07-29.md`.
+
+**Status: registered, NOT launched.** A 13-row fragment under the discarded id
+`monday_mid1200` (cohort 2026-04-13, outside this grid) and a 1-row `monday_mid1200_smoke`
+exist from a design that was superseded; neither is read by this experiment.
+
 ### Formulated, NOT yet pre-registered (each needs its own frozen entry here before any sweep)
 
 - **Catalyst-guard (deterministic risk-gate)** — veto/penalize a NEW direction initiated

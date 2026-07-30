@@ -26,8 +26,12 @@ build the thing that produces it.
   independently, so a short-horizon edge isn't conflated with a long-horizon one.
 - **Benchmarks: SPY *and* a sector ETF.** "Beat the market" must not just mean "tech rose."
   Run the sweep once per benchmark (`--benchmark SPY`, then `--benchmark XLK`, …) under the same
-  `--backtest-id` family. *Data note:* only SPY is currently in `stock_prices_daily`; the
-  sector-ETF leg is blocked until those prices are ingested.
+  `--backtest-id` family. *Data note (corrected 2026-07-29):* `stock_prices_daily` now holds
+  SPY **and all 11 sector ETFs** (XLB XLC XLY XLP XLE XLF XLV XLI XLRE XLK XLU) — the
+  sector-ETF leg is no longer blocked. The MINUTE tables carry no ETF before ~2026-07-01;
+  `price_fetcher.py` was fixed that day to fetch them going forward, but Yahoo's 30-day cap
+  on 1-minute history means older windows cannot be backfilled from it (see
+  `docs/PREREG_MONDAY_MIDDAY_HOLDING_2026-07-29.md` §1.1a).
 - **Fill convention `open_t1`** (2026-07-19; `exit_rules.py`, stamped per row): entry = OPEN of
   the first trading bar STRICTLY AFTER the as_of date; horizon and exits anchor at the entry
   bar; benchmarks fill the same way; the stop walk includes the entry bar's own close. The
