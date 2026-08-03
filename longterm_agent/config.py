@@ -62,7 +62,13 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   must match the shipped image.
 #   Provenance note: the `live_0726` backfill ran on this code but started before the
 #   bump, so its snapshots carry 0.9.5. Same class of gap 0.9.3 recorded, stated here.
-PIPELINE_VERSION = "0.9.6"
+# 0.9.7 (2026-08-03): stats-bot only, no decision or detection path touched. /open died
+#   silently once the live book passed Telegram's 4096-char cap (17 positions → 6673
+#   chars): the BadRequest killed the handler before the chart sent, and with no error
+#   handler registered the command answered with nothing for two days. Replies now split
+#   on line boundaries (_reply_long), and an error handler names any future failure
+#   instead of swallowing it. Bumped per the 0.9.3 rule — the stamp must match the tag.
+PIPELINE_VERSION = "0.9.7"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.

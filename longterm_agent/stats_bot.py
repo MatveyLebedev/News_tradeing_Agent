@@ -26,6 +26,7 @@ from html import escape
 
 
 from telegram import BotCommand, Update
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 from longterm_agent.config import LongTermAgentConfig
@@ -37,9 +38,65 @@ log = logging.getLogger(__name__)
 _cfg = LongTermAgentConfig()
 ALLOWED_IDS = {int(x) for x in _cfg.TELEGRAM_ALLOWED_USER_IDS.split(",") if x.strip().isdigit()}
 
+# Telegram caps a message at 4096 chars; leave room for the "(1/3)" part counter.
+TELEGRAM_MSG_LIMIT = 4096
+_CHUNK_LIMIT = 3900
+
 
 def _pct(x):
     return f"{x*100:+.1f}%" if isinstance(x, (int, float)) else "—"
+
+
+def _split_html(text: str, limit: int = _CHUNK_LIMIT) -> list[str]:
+    """Split a message on line boundaries so each part fits Telegram's cap.
+
+    Every formatter in this module emits self-contained HTML per line — tags open and
+    close on the same line — so a newline is always a safe cut. A single line longer
+    than the limit is hard-split; that can tear a tag, which is what the plain-text
+    retry in _reply_long is for.
+    """
+    if len(text) <= limit:
+        return [text]
+    parts: list[str] = []
+    buf = ""
+    for line in text.split("\n"):
+        while len(line) > limit:
+            if buf:
+                parts.append(buf)
+                buf = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        if buf and len(buf) + 1 + len(line) > limit:
+            parts.append(buf)
+            buf = line
+        else:
+            buf = f"{buf}\n{line}" if buf else line
+    if buf:
+        parts.append(buf)
+    return parts
+
+
+async def _reply_long(update: Update, text: str, parse_mode: str = "HTML") -> None:
+    """reply_text that survives a message over Telegram's 4096-char cap.
+
+    /open went silent for two days because the live book outgrew the limit: the
+    BadRequest killed the handler before the chart ever sent, and with no error handler
+    registered the user saw nothing at all. Message length is a property of the data,
+    not of the command, so every variable-length reply goes through here.
+    """
+    parts = _split_html(text)
+    n = len(parts)
+    for i, part in enumerate(parts, 1):
+        body = part
+        if n > 1:
+            body += f"\n<i>({i}/{n})</i>" if parse_mode == "HTML" else f"\n({i}/{n})"
+        try:
+            await update.message.reply_text(body, parse_mode=parse_mode)
+        except BadRequest:
+            # A hard-split can tear an HTML tag. Unstyled text looks worse than HTML
+            # and is infinitely better than the silence this function exists to fix.
+            log.exception("HTML reply failed, retrying as plain text")
+            await update.message.reply_text(part, parse_mode=None)
 
 
 def authorized(fn):
@@ -76,9 +133,8 @@ async def cmd_freshness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from core.freshness import check_freshness, format_report
     rep = await asyncio.to_thread(check_freshness)
     icon = "❌" if rep["any_stale"] else "✅"
-    await update.message.reply_text(
-        f"{icon} <b>Data freshness</b>\n<pre>{escape(format_report(rep))}</pre>",
-        parse_mode="HTML")
+    await _reply_long(
+        update, f"{icon} <b>Data freshness</b>\n<pre>{escape(format_report(rep))}</pre>")
 
 
 @authorized
@@ -113,7 +169,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"\n  ⚠️ {h['overdue']} matured but ungraded"
     if err["last_error_time"]:
         text += f"\n  last: {escape(str(err['last_error_time'])[:19])}"
-    await update.message.reply_text(text, parse_mode="HTML")
+    await _reply_long(update, text)
 
 
 @authorized
@@ -135,7 +191,7 @@ async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
             outcome = f" → {_pct(ex)} vs SPY"
         lines.append(f"{mark} {escape(str(s['as_of']))} <b>{escape(s['ticker'])}</b> "
                      f"{escape(s['verdict'])} ({conv}){escape(outcome)}")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    await _reply_long(update, "\n".join(lines))
 
 
 @authorized
@@ -154,13 +210,13 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<i>A trade = a directional signal that passed the risk gate. "
         f"Win = beat SPY over 4 weeks. Pending = horizon not matured yet.</i>"
     )
-    await update.message.reply_text(text, parse_mode="HTML")
+    await _reply_long(update, text)
 
 
 @authorized
 async def cmd_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
     rows = await asyncio.to_thread(stats.open_positions)
-    await update.message.reply_text(stats.format_open_positions_html(rows), parse_mode="HTML")
+    await _reply_long(update, stats.format_open_positions_html(rows))
     # Same chart the weekly digest uses — the live book is the live book.
     try:
         from longterm_agent import charts
@@ -177,7 +233,7 @@ async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # HTML, not <pre>: a code block renders as Telegram's monospace "copy" card, which
     # reads as a dump. Text first, then the charts — a caption is capped at 1024 chars
     # and the digest outgrows it as soon as a week has more than a few positions.
-    await update.message.reply_text(stats.format_weekly_report_html(rep), parse_mode="HTML")
+    await _reply_long(update, stats.format_weekly_report_html(rep))
     await _send_charts(update, rep)
 
 
@@ -203,13 +259,13 @@ async def _send_charts(update: Update, rep) -> None:
 @authorized
 async def cmd_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     g = await asyncio.to_thread(stats.gate_breakdown)
-    await update.message.reply_text(stats.format_gate_breakdown(g), parse_mode="HTML")
+    await _reply_long(update, stats.format_gate_breakdown(g))
 
 
 @authorized
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     h = await asyncio.to_thread(stats.health_report)
-    await update.message.reply_text(stats.format_health(h), parse_mode="HTML")
+    await _reply_long(update, stats.format_health(h))
 
 
 @authorized
@@ -229,7 +285,7 @@ async def cmd_errors(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tk = f" {escape(r['ticker'])}" if r["ticker"] else ""
         lines.append(f"<code>{escape(str(r['time'])[:19])}</code> {escape(r['event'] or '')}{tk}\n"
                      f"  {escape((r['message'] or '')[:160])}")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    await _reply_long(update, "\n".join(lines))
 
 
 @authorized
@@ -241,7 +297,24 @@ async def cmd_ticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not st:
         await update.message.reply_text(f"No runs for {escape(context.args[0].upper())}.")
         return
-    await update.message.reply_text(stats.format_ticker_status_html(st), parse_mode="HTML")
+    await _reply_long(update, stats.format_ticker_status_html(st))
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Turn a handler crash into a visible reply.
+
+    With no error handler registered, python-telegram-bot logs "No error handlers are
+    registered" and the user sees nothing — which is how an over-long /open read as
+    "the bot is down" for two days. A named failure is the minimum honest answer.
+    """
+    log.error("handler failed", exc_info=context.error)
+    msg = getattr(update, "effective_message", None)
+    if msg is None:
+        return
+    try:
+        await msg.reply_text(f"⚠️ Command failed: {type(context.error).__name__}")
+    except Exception:
+        log.exception("error reply failed")
 
 
 async def _post_init(app: Application):
@@ -275,6 +348,7 @@ def main():
     app.add_handler(CommandHandler("errors", cmd_errors))
     app.add_handler(CommandHandler("ticker", cmd_ticker))
     app.add_handler(CommandHandler("freshness", cmd_freshness))
+    app.add_error_handler(on_error)
     print(f"Starting long-term stats bot (auth: {len(ALLOWED_IDS) or 'OPEN'} ids)…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
