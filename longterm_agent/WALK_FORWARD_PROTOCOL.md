@@ -44,6 +44,19 @@ build the thing that produces it.
   a daily bar is visible only after its session closes — a no-op for live weekend/pre-open
   runs, PIT-correct for future backtest cohorts. Changing either rule is a convention change:
   pre-register it in the ledger first.
+- **Fill convention `mid_1m`** (2026-08-05; `docs/STRATEGY_MONDAY_MIDDAY.md`): an IN-SESSION
+  decision fills at the OPEN of the first MINUTE bar starting strictly after the decision
+  moment (`run_timestamp`, stamped after the pipeline finished). Neither daily convention can
+  price one — `open_t1` buys the next session's open ~21h late, `open_d0` buys an open that
+  printed before the decision existed. `exit_rules.resolve_entry` picks per row from the
+  decision's own clock, so pre-open and weekend books are untouched. Blocked in production
+  until ETF minute bars ship: both legs must share a convention, so in-session rows stay
+  PENDING rather than grade against a 09:30 benchmark.
+- **Scoring metric `excess_beta`** (2026-07-31; `docs/BENCHMARK_CONVENTION.md`): a trade is
+  scored against a BETA-MATCHED short of SPY, never a flat 1:1 short. Beta is fitted on the
+  180 daily bars strictly before the entry, so the hedge ratio is knowable at decision time.
+  Computed in `grade_results.py` (live), `backtest.py::grade`, and `holding_curve_lt.py`
+  (default on). Results published at beta 1 are not comparable to results under this rule.
 - **Visibility cutoffs** (2026-07-19 PIT audit; `tools/pit.py`). Three rules, one per input
   class, so "what could this decision know?" is answered in code rather than per reader:
   prices → `daily_bar_cutoff`; third-party document dates (EDGAR/8-K/Form-4 `filed_date`,

@@ -52,6 +52,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from core.db import get_conn  # noqa: E402
+from longterm_agent.beta import estimate_beta  # noqa: E402
 from longterm_agent.intraday_entry import (  # noqa: E402
     DEFAULT_AGENT_MINUTES,
     DEFAULT_DECISION_TIME,
@@ -208,8 +209,16 @@ def load_spy_closes(conn, start: date, end: date) -> dict[date, float]:
 
 def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_minutes: float,
                 at_or_after: bool, entry_tolerance: int, truncation: str, cost_bps: float,
-                benchmark: str, bench_universe: set[str] | None) -> tuple[pd.DataFrame, Counter]:
-    """One row per (trade, exit spec). `ret_pct` is signed by the trade's direction."""
+                benchmark: str, bench_universe: set[str] | None,
+                beta_adjust: bool = True) -> tuple[pd.DataFrame, Counter]:
+    """One row per (trade, exit spec). `ret_pct` is signed by the trade's direction.
+
+    The hedge is BETA-MATCHED by default (`beta_adjust`), the standing convention of
+    `docs/BENCHMARK_CONVENTION.md`: the benchmark leg is scaled by the stock's own beta to
+    SPY, estimated on daily bars strictly before the entry. A flat 1:1 short of SPY prices
+    a defensive name as if it moved with the market one-for-one, and this book's median
+    beta is 0.48 — the un-scaled hedge leaves ~0.4 beta units of unintended SHORT market
+    exposure per trade. `--no-beta-adjust` restores the old beta=1 arithmetic."""
     dropped = Counter()
     if not decisions:
         return pd.DataFrame(), dropped
@@ -254,6 +263,8 @@ def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_mi
     max_intraday = max([n for _, n in intraday_specs], default=0)
 
     rows, seams = [], []
+    beta_cache: dict[tuple[str, date], float | None] = {}
+    beta_fallbacks = 0
     cur = conn.cursor()
     for trade_id, dec in enumerate(decisions):
         day, ticker = dec["cohort"], dec["ticker"]
@@ -279,6 +290,23 @@ def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_mi
         if entry_time < decision:  # belt-and-braces: the fill can never precede the decision
             dropped["fill_before_decision"] += 1
             continue
+
+        # Beta is a property of the stock at decision time: `estimate_beta` reads daily
+        # bars STRICTLY before the cohort date, so it never peeks. Cached per (ticker,
+        # cohort) — it is identical for all 25 exit specs of one trade.
+        beta = 1.0
+        if beta_adjust:
+            key = (ticker, day)
+            if key not in beta_cache:
+                beta_cache[key] = estimate_beta(cur, ticker, day, "SPY")
+            est = beta_cache[key]
+            if est is None:
+                # Too short a price history to fit one. Falling back to 1.0 keeps the trade
+                # in the sample under the OLD convention rather than silently changing the
+                # denominator; the count is printed so the mix is never invisible.
+                beta_fallbacks += 1
+            else:
+                beta = est
 
         closes = trading_day_closes(cur, ticker, day, max_eod) if eod_specs else []
         room_intraday = GRID_POINTS - 1 - entry_pt
@@ -354,7 +382,12 @@ def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_mi
                 continue
 
             raw = (exit_px - entry_px) / entry_px
-            adj = raw - bench if bench is not None else raw
+            # Beta scales the SPY leg only. The intraday leg is hedged against the
+            # equal-weight basket of the sweep's own universe (no ETF minute bars exist),
+            # and a beta measured against SPY does not describe that hedge — so inside the
+            # session the ratio stays 1:1, which is also the conservative choice there.
+            beta_used = beta if leg == "eod" else 1.0
+            adj = raw - beta_used * bench if bench is not None else raw
             ret = dec["side"] * adj * 100.0 - cost_bps / 100.0
 
             rows.append({
@@ -380,6 +413,8 @@ def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_mi
                 # equal-weight adjusted, whatever mode the run asked for.
                 "benchmark": ("none" if benchmark == "none"
                               else ("ew" if leg == "intraday" else benchmark)),
+                "beta": beta,
+                "beta_used": beta_used,
                 "ret_pct": ret,
                 # Direction-blind control, adjusted the same way the signal is: if the
                 # signed curve does not clear it, the agent is selling you market drift.
@@ -390,6 +425,16 @@ def build_panel(conn, decisions: list[dict], grid, decision_time: time, agent_mi
     cur.close()
 
     panel = pd.DataFrame(rows)
+    if beta_adjust and not panel.empty:
+        per_trade = panel.drop_duplicates("trade_id")["beta"]
+        print(f"hedge: beta-matched vs SPY on the eod leg · median beta {per_trade.median():.2f} "
+              f"(IQR {per_trade.quantile(.25):.2f}–{per_trade.quantile(.75):.2f})"
+              + (f" · {beta_fallbacks} trade(s) fell back to 1.0" if beta_fallbacks else ""))
+        if per_trade.median() < 0.8 or per_trade.median() > 1.25:
+            print(f"  ⚠ the book is far from beta 1 — a 1:1 hedge would have carried "
+                  f"{1 - per_trade.median():+.2f} beta units of unintended market exposure.")
+    elif not beta_adjust:
+        print("hedge: 1:1 vs benchmark (beta forced to 1.0) — NOT the standing convention")
     if seams:
         worst = max(seams)
         print(f"seam check (16:00 minute print vs official close): median "
@@ -536,7 +581,7 @@ def parse_ref(text: str) -> tuple[str, int]:
 # ── output ───────────────────────────────────────────────────────────────────────────
 
 
-def plot_curve(summary: pd.DataFrame, path: str, subtitle: str) -> None:
+def plot_curve(summary: pd.DataFrame, path: str, subtitle: str, xscale: str = "log") -> None:
     fig, (ax, ax2) = plt.subplots(
         2, 1, figsize=(12, 9), sharex=True, gridspec_kw={"height_ratios": [3, 1.4]})
     x = summary["held_min"]
@@ -572,9 +617,16 @@ def plot_curve(summary: pd.DataFrame, path: str, subtitle: str) -> None:
     axw.set_ylabel("win rate %", color="#28A745")
     axw.set_ylim(0, 100)
 
-    ax2.set_xscale("log")
-    ticks = [1, 5, 15, 30, 60, 120, 240, 390, 1950, 3900, 7800, 15600, 23400]
-    labels = ["1m", "5m", "15m", "30m", "1h", "2h", "4h", "1d", "5d", "10d", "20d", "40d", "60d"]
+    ax2.set_xscale(xscale)
+    if xscale == "log":
+        ticks = [1, 5, 15, 30, 60, 120, 240, 390, 1950, 3900, 7800, 15600, 23400]
+        labels = ["1m", "5m", "15m", "30m", "1h", "2h", "4h", "1d",
+                  "5d", "10d", "20d", "40d", "60d"]
+    else:
+        # Linear puts every intraday point inside the first ~1% of the axis; label in days
+        # only, since a "15m" tick there would sit on top of the "1m" one.
+        ticks = [0, 390, 1950, 3900, 7800, 11700, 15600, 19500, 23400]
+        labels = ["0", "1d", "5d", "10d", "20d", "30d", "40d", "50d", "60d"]
     keep = [(t, s) for t, s in zip(ticks, labels) if x.min() * 0.8 <= t <= x.max() * 1.25]
     ax2.set_xticks([t for t, _ in keep])
     ax2.set_xticklabels([s for _, s in keep])
@@ -665,6 +717,14 @@ def main() -> int:
     ap.add_argument("--bootstrap", type=int, default=2000)
     ap.add_argument("--permutations", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=17)
+    ap.add_argument("--no-beta-adjust", dest="beta_adjust", action="store_false",
+                    help="hedge 1:1 instead of beta-matched. Reproduces results produced "
+                         "before docs/BENCHMARK_CONVENTION.md; not the standing convention")
+    ap.set_defaults(beta_adjust=True)
+    ap.add_argument("--xscale", choices=("log", "linear"), default="log",
+                    help="x-axis (session minutes held). log spreads the intraday leg out; "
+                         "linear shows true elapsed proportion, which squashes all of the "
+                         "intraday points against the origin")
     ap.add_argument("--tag", default="", help="suffix for the output filenames")
     args = ap.parse_args()
 
@@ -680,7 +740,9 @@ def main() -> int:
               f"({src}) + {args.agent_minutes}m agent → fill at bar "
               f"{(datetime.combine(date(2026, 1, 5), SESSION_OPEN) + timedelta(minutes=fill_pt)).time()}"
               f" ({FILL_CONVENTION_MID}) · truncation={args.truncation} "
-              f"· benchmark={args.benchmark} · cost={args.cost_bps}bps")
+              f"· benchmark={args.benchmark}"
+              f"{' (beta-matched)' if args.beta_adjust else ' (1:1, beta=1)'}"
+              f" · cost={args.cost_bps}bps")
 
         decisions = load_decisions(conn, args.backtest_id, not args.all_directional,
                                    args.min_conviction)
@@ -696,7 +758,7 @@ def main() -> int:
         panel, dropped = build_panel(
             conn, decisions, grid, decision_time, args.agent_minutes, args.at_or_after,
             args.entry_tolerance, args.truncation, args.cost_bps, args.benchmark,
-            bench_universe)
+            bench_universe, args.beta_adjust)
 
     if args.exclude_cohorts and not panel.empty:
         drop = {datetime.strptime(d.strip(), "%Y-%m-%d").date()
@@ -759,9 +821,11 @@ def main() -> int:
                 f"{args.agent_minutes:g}m ET ({FILL_CONVENTION_MID}) · "
                 f"n={len(trades)} trades / {trades['cohort'].nunique()} Monday cohorts · "
                 f"truncation={args.truncation}"
-                + (" · EW-adjusted" if args.benchmark == "ew" else " · raw")
+                + {"ew": " · EW-adjusted", "none": " · raw, unhedged",
+                   "spy": (" · vs SPY, beta-matched" if args.beta_adjust
+                           else " · vs SPY, 1:1 hedge")}[args.benchmark]
                 + (f" · {args.cost_bps}bps round-trip" if args.cost_bps else ""))
-    plot_curve(summary, os.path.join(out_dir, f"{stem}.png"), subtitle)
+    plot_curve(summary, os.path.join(out_dir, f"{stem}.png"), subtitle, args.xscale)
     return 0
 
 

@@ -25,7 +25,7 @@ Simulation conventions:
   - take_profit=0 disables it (measured useless at the 4w horizon: 1 trade in 44
     ever reached +20%).
 """
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 Path = List[Tuple[Any, float]]  # [(date, close)] ascending
@@ -35,6 +35,88 @@ FILL_CONVENTION = "open_t1"
 # Pre-open cohorts (as_of before 09:30 with the PIT feature cutoff active) may fill at
 # the as_of day's OWN open — legal because that bar is not a decision input there.
 FILL_CONVENTION_D0 = "open_d0"
+# In-session decisions (e.g. the Monday-midday book) fill on MINUTE bars: neither daily
+# convention can price them. `open_t1` would buy the NEXT session's open — ~21h late, the
+# rest of the decision day discarded — and `open_d0` would buy the as_of day's 09:30 open,
+# hours BEFORE the decision existed, which is look-ahead. See docs/BENCHMARK_CONVENTION.md
+# and longterm_agent/intraday_entry.py, which implements the same rule research-side.
+FILL_CONVENTION_MID = "mid_1m"
+
+SESSION_OPEN = time(9, 30)
+SESSION_CLOSE = time(16, 0)
+# Order routing between "the signal exists" and "the order rests". 0 by default on the LIVE
+# path because the decision moment there is `run_timestamp`, stamped AFTER the pipeline
+# finished — its runtime is already inside the anchor and must not be charged twice.
+DEFAULT_LATENCY_MIN = 0
+# How far past the wanted minute we may look for a real print. A thin name can simply not
+# trade for a few minutes; beyond this the bar is missing, not late.
+DEFAULT_MINUTE_TOLERANCE = 15
+
+
+def minute_table(ticker: str) -> str:
+    """Per-ticker minute table. Mirrors profit_compute.holding_curve._table."""
+    return "historical_data_" + ticker.lower().replace("-", "_").replace(".", "_")
+
+
+def in_session(moment: datetime) -> bool:
+    """Is this wall-clock ET moment inside the regular session? A decision stamped at
+    15:59 still has a fill; one at 16:00 does not — the 16:00 print is the close."""
+    return SESSION_OPEN <= moment.time() < SESSION_CLOSE
+
+
+def entry_bar_mid(cur, ticker: str, decision_et: datetime,
+                  latency_minutes: int = DEFAULT_LATENCY_MIN,
+                  tolerance_minutes: int = DEFAULT_MINUTE_TOLERANCE
+                  ) -> Optional[Tuple[Any, float]]:
+    """(entry_date, entry_px) under `mid_1m`: the OPEN of the first minute bar that starts
+    STRICTLY AFTER `decision_et + latency_minutes`, on the decision's own day.
+
+    Strictly after, not at-or-after: a bar stamped 12:02 covers 12:02:00–12:02:59, so a
+    decision at 12:02:00 could otherwise fill at a price printed in the same minute it was
+    made. None when the moment is outside the session, or no real print lands inside the
+    tolerance (holiday, halt, or a hole the minute fetcher never filled — those are
+    permanent after ~30 days, so they must surface rather than silently fall back).
+    """
+    if not in_session(decision_et):
+        return None
+    want = decision_et + timedelta(minutes=latency_minutes)
+    hi = min(datetime.combine(decision_et.date(), SESSION_CLOSE),
+             want + timedelta(minutes=tolerance_minutes))
+    if want >= hi:
+        return None
+    try:
+        cur.execute(  # noqa: S608 - table name derived from a fixed ticker list
+            f"SELECT timestamp, open, close FROM {minute_table(ticker)} "
+            "WHERE timestamp > %s AND timestamp <= %s ORDER BY timestamp LIMIT 1",
+            [want, hi])
+    except Exception:
+        return None  # no minute table for this ticker (ETFs today) — caller decides
+    row = cur.fetchone()
+    if not row:
+        return None
+    ts, o, c = row
+    px = float(o) if o else (float(c) if c else 0.0)
+    return (ts.date(), px) if px > 0 else None
+
+
+def resolve_entry(cur, ticker: str, as_of_date, decision_et: Optional[datetime] = None,
+                  tolerance_days: int = 7, latency_minutes: int = DEFAULT_LATENCY_MIN
+                  ) -> Optional[Tuple[str, Any, float]]:
+    """(convention, entry_date, entry_px) — ONE place that picks the fill convention.
+
+    An in-session decision fills on minute bars (`mid_1m`); anything else keeps the daily
+    convention it already had. Deciding per row from the decision's own clock, rather than
+    from a config flag, is what lets a Sunday 06:00 book and a Monday 12:00 book be graded
+    correctly by the same grader — and keeps every row already in the table untouched.
+    """
+    if decision_et is not None and in_session(decision_et) \
+            and decision_et.date() == as_of_date:
+        eb = entry_bar_mid(cur, ticker, decision_et, latency_minutes)
+        if eb is not None:
+            return (FILL_CONVENTION_MID, eb[0], eb[1])
+        return None  # in-session decision with no minute print: pending, never a fallback
+    eb = entry_bar(cur, ticker, as_of_date, tolerance_days)
+    return (FILL_CONVENTION, eb[0], eb[1]) if eb else None
 
 
 def entry_bar(cur, ticker: str, as_of_date, tolerance_days: int = 7,
@@ -76,11 +158,19 @@ def close_on_or_before(cur, ticker: str, target, tolerance_days: int = 7) -> Opt
 
 
 def t1_return(cur, ticker: str, as_of_date, horizon_days: int, tolerance_days: int = 7,
-              nth: int = 1, include_asof_day: bool = False) -> Optional[Dict[str, Any]]:
+              nth: int = 1, include_asof_day: bool = False,
+              entry: Optional[Tuple[Any, float]] = None) -> Optional[Dict[str, Any]]:
     """Hold-book return under the open-entry convention: entry-bar open → close ≤
     entry + horizon. Returns {entry_date, entry_px, ret} or None (no entry bar yet /
-    no prices)."""
-    eb = entry_bar(cur, ticker, as_of_date, tolerance_days, nth, include_asof_day)
+    no prices).
+
+    `entry` INJECTS an already-resolved (entry_date, entry_px) instead of re-deriving it
+    from daily bars — the one hook a `mid_1m` fill needs, since its price lives in the
+    minute tables. Everything after the entry is daily-close arithmetic anchored at
+    entry_date and is identical under both conventions.
+    """
+    eb = entry if entry is not None else entry_bar(cur, ticker, as_of_date, tolerance_days,
+                                                   nth, include_asof_day)
     if eb is None:
         return None
     e_date, e_px = eb
@@ -142,20 +232,32 @@ def simulate_exit(path: Path, entry_date, entry_px: float, direction: str,
 def stopped_returns(cur, ticker: str, as_of_date, direction: str, horizon_days: int,
                     benchmark: str = "SPY", stop_loss: float = 0.10,
                     take_profit: float = 0.0, tolerance_days: int = 7,
-                    nth: int = 1, include_asof_day: bool = False) -> Optional[Dict[str, Any]]:
+                    nth: int = 1, include_asof_day: bool = False,
+                    entry: Optional[Tuple[Any, float]] = None,
+                    bench_entry: Optional[Tuple[Any, float]] = None
+                    ) -> Optional[Dict[str, Any]]:
     """The stopped book for one trade under the open-entry convention: RAW stock +
     benchmark returns entry→exit (same units/conventions as the hold columns; excess is
     computed downstream by the same trade_excess the hold book uses). None when prices
-    are missing."""
-    eb = entry_bar(cur, ticker, as_of_date, tolerance_days, nth, include_asof_day)
+    are missing.
+
+    `entry`/`bench_entry` inject resolved fills for a `mid_1m` trade — see `t1_return`.
+    Both must be supplied together: pricing the stock intraday and the benchmark at a
+    daily open would measure the two legs over different windows.
+    """
+    eb = entry if entry is not None else entry_bar(cur, ticker, as_of_date, tolerance_days,
+                                                   nth, include_asof_day)
     if eb is None:
         return None
+    # A mid-session entry's own day is part of the trade, so the path must include it.
+    span_from_asof = include_asof_day or (entry is not None and eb[0] == as_of_date)
     path = fetch_price_path(cur, ticker, as_of_date, horizon_days, tolerance_days,
-                            include_asof_day)
+                            span_from_asof)
     sim = simulate_exit(path, eb[0], eb[1], direction, horizon_days, stop_loss, take_profit)
     if sim is None:
         return None
-    bb = entry_bar(cur, benchmark, as_of_date, tolerance_days, nth, include_asof_day)
+    bb = bench_entry if bench_entry is not None else entry_bar(
+        cur, benchmark, as_of_date, tolerance_days, nth, include_asof_day)
     if bb is None:
         return None
     b_exit = close_on_or_before(cur, benchmark, sim["exit_date"], tolerance_days)

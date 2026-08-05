@@ -18,17 +18,21 @@ from math import isfinite
 from types import SimpleNamespace
 
 import psycopg2
+import pytz
 from psycopg2.extras import Json
 
+from longterm_agent import oplog
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _has_data_through  # shared grading guard
-from longterm_agent.exit_rules import (FILL_CONVENTION, entry_bar, fetch_price_path,
-                                       simulate_exit, stopped_returns, t1_return)
+from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_MID, entry_bar,
+                                       fetch_price_path, resolve_entry, simulate_exit,
+                                       stopped_returns, t1_return)
 from longterm_agent.beta import beta_adjusted_excess, estimate_beta
 from longterm_agent.sector_map import SECTOR_ETF, SECTOR_OF
 from longterm_agent.targets import (classify_fundamentals_realized, classify_shift_outcome,
                                     worst_position_return)
 
+ET = pytz.timezone("America/New_York")
 BENCHMARK = "SPY"
 HORIZON_DAYS = 28  # 4 weeks (the primary checkpoint)
 # Phase 11 multi-target horizons (2w/12w ride alongside the primary 4w columns)
@@ -76,7 +80,23 @@ def _finite_ret(x):
     return v if v is not None and isfinite(v) else None
 
 
-def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, missing):
+def _decision_moment(run_timestamp):
+    """`run_timestamp` as a NAIVE ET wall clock — the moment the signal existed.
+
+    Stamped NOW() when the row is persisted, i.e. AFTER the pipeline finished, so it needs
+    no added "agent working time": the runtime is already inside it. Minute bars are stored
+    naive ET (docs: timezone conventions), so the tz has to come off before they can be
+    compared. Returns None when the column is empty (rows written before it existed).
+    """
+    if run_timestamp is None:
+        return None
+    if run_timestamp.tzinfo is not None:
+        run_timestamp = run_timestamp.astimezone(ET).replace(tzinfo=None)
+    return run_timestamp
+
+
+def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, missing,
+                         entry=None, bench_entry=None):
     """Fill 2w/12w return pairs that are matured, data-complete, and still NULL."""
     filled = 0
     for tag, days in EXTRA_HORIZONS.items():
@@ -88,8 +108,8 @@ def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, 
         if not (_has_data_through(cur, ticker, target, max_dates)
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             continue
-        r = _finite_ret(t1_return(cur, ticker, as_of, days))
-        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, days))
+        r = _finite_ret(t1_return(cur, ticker, as_of, days, entry=entry))
+        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, days, entry=bench_entry))
         if r is None or b is None:
             continue
         cur.execute(f"""UPDATE longterm_agent_results
@@ -127,7 +147,7 @@ def scan_open_breaches(cur, cfg, today) -> int:
     """One-time Telegram alert for open trades whose position return breached the stop.
     Best-effort: alerting must never block grading."""
     cur.execute("""
-        SELECT id, ticker, as_of, verdict FROM longterm_agent_results
+        SELECT id, ticker, as_of, verdict, run_timestamp FROM longterm_agent_results
         WHERE agent_version=%s AND traded AND verdict IN ('LONG','SHORT')
           AND outcome_filled_at IS NULL AND exit_alert_at IS NULL
     """, [cfg.AGENT_VERSION])
@@ -140,15 +160,20 @@ def scan_open_breaches(cur, cfg, today) -> int:
     except Exception:
         notifier = None
     alerted = 0
-    for rid, ticker, as_of, verdict in open_rows:
-        eb = entry_bar(cur, ticker, as_of)
-        if eb is None:
+    for rid, ticker, as_of, verdict, run_ts in open_rows:
+        # The stop is measured FROM THE FILL, so the scanner must resolve the entry the
+        # same way the grader does. Using the daily convention on a mid-session trade would
+        # measure the stop from a price the position never paid.
+        re_ = resolve_entry(cur, ticker, as_of, _decision_moment(run_ts))
+        if re_ is None:
             continue  # position opens at the next session's open — nothing to scan yet
-        e_date, e_px = eb
+        fill_conv, e_date, e_px = re_
         days_open = min((today - e_date).days, HORIZON_DAYS)
         if days_open <= 0:
             continue
-        path = [(d, c) for d, c in fetch_price_path(cur, ticker, as_of, days_open) if d <= today]
+        path = [(d, c) for d, c in fetch_price_path(
+            cur, ticker, as_of, days_open,
+            include_asof_day=(fill_conv == FILL_CONVENTION_MID)) if d <= today]
         sim = simulate_exit(path, e_date, e_px, verdict, days_open,
                             stop_loss=cfg.STOP_LOSS_PCT, take_profit=cfg.TAKE_PROFIT_PCT)
         if not sim or sim["reason"] != "stop":
@@ -159,7 +184,7 @@ def scan_open_breaches(cur, cfg, today) -> int:
                f"through the {cfg.STOP_LOSS_PCT:.0%} stop on {sim['exit_date']} — "
                f"exit per Phase 5.5 discipline")
         print(f"  {msg}")
-        if notifier and notifier.enabled():
+        if notifier and notifier.enabled:  # property, not a method
             try:
                 notifier.send(msg)
             except Exception as e:
@@ -186,7 +211,8 @@ def main():
                fwd_return_2w IS NULL, fwd_return_12w IS NULL,
                sector_benchmark, sector_benchmark_return_4w IS NULL,
                worst_position_return_4w IS NULL, aux_targets,
-               background_shift->>'direction', fundamentals_summary->>'verdict'
+               background_shift->>'direction', fundamentals_summary->>'verdict',
+               run_timestamp
         FROM longterm_agent_results
         WHERE agent_version=%s AND verdict IN ('LONG','SHORT')
           AND (outcome_filled_at IS NULL OR (traded AND exit_reason IS NULL)
@@ -210,18 +236,32 @@ def main():
         print(f"  ⚠ Neo4j unavailable — shift persistence targets deferred ({e})")
 
     graded, pending, backfilled, extras = 0, 0, 0, 0
+    mid_pending_bench = 0
     max_dates = {}
     for (rid, ticker, as_of, verdict, already, no_2w, no_12w, sector_bm, no_sec_ret,
-         no_worst, aux, shift_dir, fund_verdict) in rows:
-        eb = entry_bar(cur, ticker, as_of)
-        if eb is None:
-            pending += 1  # entry session hasn't landed in stock_prices_daily yet
+         no_worst, aux, shift_dir, fund_verdict, run_ts) in rows:
+        decision = _decision_moment(run_ts)
+        re_ = resolve_entry(cur, ticker, as_of, decision)
+        if re_ is None:
+            pending += 1  # entry session hasn't landed / no minute print yet
             continue
-        e_date, e_px = eb
+        fill_conv, e_date, e_px = re_
+        # Both legs must be priced under the SAME convention: a stock filled at 12:02
+        # against a benchmark filled at 09:30 measures the two over different windows and
+        # books the gap as skill. SPY has no minute table until the fetcher fix ships, so
+        # in-session rows stay PENDING rather than grade wrong — and the count says so.
+        entry = bench_entry = None
+        if fill_conv == FILL_CONVENTION_MID:
+            bre = resolve_entry(cur, BENCHMARK, as_of, decision)
+            if bre is None or bre[0] != FILL_CONVENTION_MID:
+                mid_pending_bench += 1
+                pending += 1
+                continue
+            entry, bench_entry = (e_date, e_px), (bre[1], bre[2])
         # --- Phase 11 multi-horizon fills (each matures on its own clock) --------------
         missing = {t for t, flag in (("2w", no_2w), ("12w", no_12w)) if flag}
         extras += _fill_extra_horizons(cur, rid, ticker, as_of, e_date, today, max_dates,
-                                       missing)
+                                       missing, entry=entry, bench_entry=bench_entry)
 
         target = e_date + timedelta(days=HORIZON_DAYS)
         if target > today:
@@ -233,15 +273,16 @@ def main():
                 and _has_data_through(cur, BENCHMARK, target, max_dates)):
             pending += 1
             continue
-        r = _finite_ret(t1_return(cur, ticker, as_of, HORIZON_DAYS))
-        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, HORIZON_DAYS))
+        r = _finite_ret(t1_return(cur, ticker, as_of, HORIZON_DAYS, entry=entry))
+        b = _finite_ret(t1_return(cur, BENCHMARK, as_of, HORIZON_DAYS, entry=bench_entry))
         if r is None or b is None:
             pending += 1
             continue
         # stopped book (Phase 5.5) — same trade under the structural exit rule
         stopped = stopped_returns(cur, ticker, as_of, verdict, HORIZON_DAYS,
                                   benchmark=BENCHMARK, stop_loss=cfg.STOP_LOSS_PCT,
-                                  take_profit=cfg.TAKE_PROFIT_PCT)
+                                  take_profit=cfg.TAKE_PROFIT_PCT,
+                                  entry=entry, bench_entry=bench_entry)
         s_fwd = _finite_ret(stopped["fwd"]) if stopped else None
         s_bench = _finite_ret(stopped["bench"]) if stopped else None
         if stopped and s_fwd is not None and s_bench is not None:
@@ -263,7 +304,7 @@ def main():
                 UPDATE longterm_agent_results
                 SET fwd_return_4w=%s, benchmark_return_4w=%s, outcome_filled_at=%s,
                     entry_date=%s, entry_px=%s, fill_convention=%s WHERE id=%s
-            """, [round(r, 4), round(b, 4), today, e_date, e_px, FILL_CONVENTION, rid])
+            """, [round(r, 4), round(b, 4), today, e_date, e_px, fill_conv, rid])
             graded += 1
         else:
             backfilled += 1
@@ -322,8 +363,19 @@ def main():
                         [Json(aux), rid])
             extras += 1
 
-    alerted = scan_open_breaches(cur, cfg, today)
+    # Grading commits BEFORE the best-effort breach scan. The scan used to run inside the
+    # same uncommitted transaction, so anything it raised discarded the whole run's grades
+    # and the next run re-did — and re-lost — identical work (2026-08-05: a TypeError in the
+    # alert path left the book ungraded every day while only the error reached Telegram).
     conn.commit()
+    try:
+        alerted = scan_open_breaches(cur, cfg, today)
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        alerted = 0
+        oplog.error("BREACH_SCAN_ERROR", f"{type(e).__name__}: {e}")
+        print(f"  ⚠ stop-breach scan failed (grading already committed): {e}")
     conn.close()
     if neo is not None:
         try:
@@ -333,6 +385,13 @@ def main():
     print(f"Graded {graded} rows (4w horizon matured); {pending} pending_data "
           f"(price series not caught up); stopped-book backfilled {backfilled}; "
           f"multi-target fills {extras}; stop-breach alerts {alerted}.")
+    if mid_pending_bench:
+        # Loud on purpose: without ETF minute bars an in-session book cannot be graded at
+        # all, and a silent zero would read as "no in-session trades" instead of
+        # "every in-session trade is stuck". Fix = ship the price_fetcher ETF change.
+        print(f"  ⚠ {mid_pending_bench} in-session ({FILL_CONVENTION_MID}) row(s) held back: "
+              f"no {BENCHMARK} MINUTE bar for the fill moment. Both legs must share a "
+              f"convention, so these stay ungraded until the ETF minute fetch is deployed.")
     return graded
 
 
