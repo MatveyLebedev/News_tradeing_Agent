@@ -47,6 +47,24 @@ this document as evidence of anything.
 `mid_1m`, anything else → the daily rule it already had. No flag, and every row already in
 the table keeps its convention.
 
+### 2.1 What "in session" means — corrected 2026-08-10
+
+`in_session` originally read **only the clock**, so it answered TRUE for a Sunday 12:40. A
+weekend batch that overran into those hours would then be treated as an in-session decision
+that can never fill — the market was shut, no minute bar exists, and `resolve_entry` returns
+None by design ("pending, never a fallback"), so the row sits PENDING for good. It now tests
+the weekday first.
+
+Holidays are handled one level up, because they need the price table: when an in-session
+decision finds no minute print, `resolve_entry` asks `market_traded_on` whether the market
+opened **at all** that day. If it did not — a weekday holiday, and Monday cohorts are exposed
+to several — the daily convention below is the correct answer, not a fallback. If it did, the
+row stays PENDING, because then the missing print is a data hole or a halt in one ticker and
+must not quietly change convention.
+
+The frozen rule itself is unchanged: fill at the open of the first minute bar strictly after
+the decision. What changed is that a closed market is no longer called a session.
+
 ## 3. Preconditions that are NOT yet met
 
 **The live path cannot grade an in-session row today.** Both legs must share a convention —
@@ -88,6 +106,22 @@ implicated the harness rather than the market.
 
 The change is frozen because it is judged **more correct and safer** — a fill inside a liquid
 session, no overnight gap between decision and entry — not because it earned a number.
+
+**And the head-to-head does not exist — that is an absence, not a negative result.** Recorded
+2026-08-10, because the sentence above is easy to read as "we compared and it did not win".
+Nothing was compared. `cohort_time_et` is stamped on three books only (`monday_mid1200`,
+`monday_mid1200_smoke`, `intraday_curve34`), all at 12:00; every other book is pre-open or
+weekend. `monday_t1_pit` starts on the same day but on 30 burned tickers under a different
+entry convention, so it is not a control.
+
+What `intraday_curve34` answered is the **moment of execution** given a decision: the
+intraday leg is flat from one minute to the close (−0.006%…+0.056%, every CI covering zero),
+so delaying a fill by hours inside the session changes nothing. What it did not answer is the
+**moment of decision** — an agent run at 06:30 Sunday and one run at 12:00 Monday read
+different news. Testing that needs a paired sweep over the same 34 names and the same 14
+Mondays at `--at 06:30`; ~476 runs, roughly $13. Until it is run, moving the live schedule to
+Monday midday is an **unmeasured change**, adopted on the same execution-safety grounds as
+the convention itself.
 
 ### 4.2 Why the horizon stayed at 20 days
 

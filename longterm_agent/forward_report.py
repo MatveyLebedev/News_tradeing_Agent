@@ -32,7 +32,8 @@ def _graded_trades(days: int = 3650):
                    (background_shift->>'has_shifted')::boolean,
                    fwd_return_4w, benchmark_return_4w
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded=TRUE AND verdict IN ('LONG','SHORT')
+            WHERE agent_version=%s AND traded=TRUE AND pit_excluded IS NULL
+              AND verdict IN ('LONG','SHORT')
               AND outcome_filled_at IS NOT NULL AND fwd_return_4w IS NOT NULL
               AND as_of >= (CURRENT_DATE - %s::int)
             ORDER BY as_of, ticker
@@ -82,7 +83,8 @@ def cohort_maturity(days: int = 3650, horizon_days: int = HORIZON_DAYS, today: d
     with conn.cursor() as cur:
         cur.execute("""
             SELECT as_of, outcome_filled_at FROM longterm_agent_results
-            WHERE agent_version=%s AND traded=TRUE AND verdict IN ('LONG','SHORT')
+            WHERE agent_version=%s AND traded=TRUE AND pit_excluded IS NULL
+              AND verdict IN ('LONG','SHORT')
               AND as_of >= (CURRENT_DATE - %s::int)
         """, [_version(), days])
         rows = cur.fetchall()

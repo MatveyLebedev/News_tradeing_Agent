@@ -48,6 +48,38 @@ the session rule on snapshots would break live: the Sunday 06:00 batch must see 
 05:00 fundamentals fetch. Using the ingestion rule on filings would be meaningless — we
 backfill them years later.
 
+### 1.1 `as_of` is per ticker, and it must fall on the cohort's own day
+
+Adopted 2026-08-10.
+
+`run_batch` hands **each ticker its own `as_of`**, stamped when that ticker's run begins,
+rather than one value for the whole batch (`decision_moment`). The batch is serial and runs
+~1.6h, so the old behaviour gave the last ticker a cutoff 1.6h older than its own fill while
+the first got one three minutes old. Refreshing per ticker tightens the cutoff; it does not
+redefine it, because `ingest_cutoff` has always documented `as_of` as an ET wall-clock
+decision moment and only falls back to midnight for a bare date.
+
+The cohort key is unaffected: `longterm_agent_results.as_of` is a `date` column and
+`persist_run` stores `as_of.date()`, so every ticker still lands in one cohort. Two cases are
+never refreshed — a historical replay (`--as-of`), which would silently become a live run,
+and a batch crossing midnight, which would split the cohort and break the date-keyed resume.
+
+**The rule this creates:** every row of a cohort must carry `run_timestamp` on the cohort's
+own date. The daily fill convention prices a trade from `as_of` — the first bar strictly
+after it — which is sound only while the decision was made no later than `as_of`.
+
+**Why it is enforced rather than assumed.** `_already_done` keys the resume on
+`(version, as_of)`, so a batch re-run days later correctly rejoins its cohort while
+`run_timestamp` is stamped `NOW()` and drifts. Cohort 2026-07-26: 5 rows written on the
+Sunday, 59 on **Tuesday the 28th**, and all 6 traded ones resolved to an entry at Monday the
+27th's open — a price that existed before the decision did. Nothing raised. It was found by
+inspecting the cohort by hand.
+
+`batch_run_longterm.lagged_decisions` now checks this at the end of every batch and alerts;
+the six leaked rows carry `pit_excluded` and are filtered out of `stats` and
+`forward_report`. They are marked, not deleted: the record of the leak is worth keeping, and
+deleting them would only let the next re-run recreate them.
+
 ---
 
 ## 2. The graph has two clocks

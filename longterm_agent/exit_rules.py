@@ -60,8 +60,37 @@ def minute_table(ticker: str) -> str:
 
 def in_session(moment: datetime) -> bool:
     """Is this wall-clock ET moment inside the regular session? A decision stamped at
-    15:59 still has a fill; one at 16:00 does not — the 16:00 print is the close."""
+    15:59 still has a fill; one at 16:00 does not — the 16:00 print is the close.
+
+    The weekday test is not decoration. Until it was added this answered TRUE for a Sunday
+    12:40, because it read only the clock — and a Sunday batch that overran into those hours
+    (2026-07-26 ran 06:23→15:39) produced 59 rows that `resolve_entry` then treated as
+    in-session decisions. They can never fill: the market was shut, so no minute bar exists,
+    and the row sits PENDING for good.
+
+    Holidays are NOT covered here — a weekday holiday still reads TRUE — because that needs
+    the price table and this function is pure and called per row. `resolve_entry` handles it
+    at the point where a cursor is in hand.
+    """
+    if moment.weekday() >= 5:          # 5,6 = Saturday, Sunday
+        return False
     return SESSION_OPEN <= moment.time() < SESSION_CLOSE
+
+
+def market_traded_on(cur, day) -> bool:
+    """Did the market trade at all on `day`? Distinguishes a holiday from a thin ticker.
+
+    Uses the daily bars rather than the minute tables because grading runs the morning
+    after at the earliest, by which time the day's daily bar exists (or does not, which is
+    the answer). SPY specifically: it is the benchmark, it never fails to print on a real
+    session, and one row beats scanning 121 per-ticker minute tables.
+    """
+    try:
+        cur.execute("SELECT 1 FROM stock_prices_daily WHERE ticker='SPY' AND date=%s LIMIT 1",
+                    [day])
+        return cur.fetchone() is not None
+    except Exception:
+        return True     # unknown ⇒ assume a session, i.e. keep the stricter PENDING path
 
 
 def entry_bar_mid(cur, ticker: str, decision_et: datetime,
@@ -114,7 +143,14 @@ def resolve_entry(cur, ticker: str, as_of_date, decision_et: Optional[datetime] 
         eb = entry_bar_mid(cur, ticker, decision_et, latency_minutes)
         if eb is not None:
             return (FILL_CONVENTION_MID, eb[0], eb[1])
-        return None  # in-session decision with no minute print: pending, never a fallback
+        # No minute print. Two different situations, and they must not share an answer:
+        #   * the market never opened that day (a weekday holiday — Monday cohorts are
+        #     exposed to several) — then there was no in-session decision to price, and the
+        #     daily convention below is the right one, not a fallback;
+        #   * the market DID trade and this ticker simply did not print — that is a data
+        #     hole or a halt, and it stays PENDING rather than quietly changing convention.
+        if market_traded_on(cur, as_of_date):
+            return None
     eb = entry_bar(cur, ticker, as_of_date, tolerance_days)
     return (FILL_CONVENTION, eb[0], eb[1]) if eb else None
 

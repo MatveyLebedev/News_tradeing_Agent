@@ -68,7 +68,19 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   handler registered the command answered with nothing for two days. Replies now split
 #   on line boundaries (_reply_long), and an error handler names any future failure
 #   instead of swallowing it. Bumped per the 0.9.3 rule — the stamp must match the tag.
-PIPELINE_VERSION = "0.9.7"
+# 0.10.0 (2026-08-10): a MINOR bump, not a patch, because the decision path moves. `as_of`
+#   is now stamped per ticker at the moment its run begins instead of once for the batch
+#   (docs/PIT_RULES.md §1.1): the batch is serial and runs ~1.6h, so the last ticker used to
+#   decide on data 1.6h older than its own fill. The cutoff tightens, tool outputs shift with
+#   it, and runs before and after are therefore NOT like-for-like — same rule as 0.9.0.
+#   Also: `in_session` no longer calls a weekend a session (a Sunday overrun produced rows
+#   that could never fill), holidays resolve through `market_traded_on`, a batch that would
+#   overrun the close stops rather than splitting its cohort across two fill conventions,
+#   and a cohort decided on a day other than its own `as_of` now alerts — that leak was
+#   found by hand on 2026-07-26 and its six traded rows carry `pit_excluded`.
+#   The paper-broker package ships INERT: LT_BROKER_ENABLED defaults false, and when on it
+#   is dry-run by default. Nothing in it can write to longterm_agent_results.
+PIPELINE_VERSION = "0.10.0"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -185,6 +197,20 @@ class LongTermAgentConfig:
     # not a config tweak. The existing monday_t1_pit cohorts mature regardless — the free
     # ~2026-08-10 read happens with or without new cohorts.
     MONDAY_FWD = os.getenv("LT_MONDAY_FWD", "false").lower() == "true"
+
+    # --- Paper broker (longterm_agent/broker) ---
+    # OFF by default, and DRY RUN by default when on. Two flags rather than one because the
+    # interesting failure is not "the broker was off" but "the broker was live before anyone
+    # meant it to be": enabling the layer to watch what it *would* do must not be the same
+    # keystroke as letting it place orders. The keys in use are paper-only (the live endpoint
+    # 401s them), so the worst case is a paper position, but the book it produces is meant to
+    # be a forward record and a stray cohort would sit in it forever.
+    BROKER_ENABLED = os.getenv("LT_BROKER_ENABLED", "false").lower() == "true"
+    BROKER_DRY_RUN = os.getenv("LT_BROKER_DRY_RUN", "true").lower() == "true"
+    # Only cohorts from this date onward reach the broker; everything older keeps showing
+    # the prices the grader derived. Without a cutoff, switching the layer on would try to
+    # open positions for trades that are already weeks into their horizon.
+    BROKER_START_DATE = os.getenv("LT_BROKER_START_DATE", "")
     # Rows: fundamentals-trend verdict; columns: shift_score buckets
     # [0, .4) / [.4, .7) / [.7, 1]. Priors mirroring the synthesis matrix semantics:
     # confirms trades (mid+ score clears the 0.55 gate), contradicts = overreaction/hype

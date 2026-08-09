@@ -97,6 +97,9 @@ class Ops:
             print(f"❌ weekly batch failed: {detail}")
         # Grade whatever matured this week right after producing new signals.
         self.daily_grade()
+        # Paper broker: open the cohort just written. After grading so a matured position
+        # is not opened and closed in the same pass.
+        self.broker_entries(as_of)
         # Weekly trades digest (new / open / closed) — same text as the bot's /week.
         try:
             from longterm_agent.stats import weekly_report, format_weekly_report
@@ -140,6 +143,120 @@ class Ops:
         except Exception as e:
             print(f"  ⚠ monday_fwd health check failed: {e}")
 
+    # --- paper broker ------------------------------------------------------
+    def _broker(self):
+        """(client, cursor-context) or None when the layer is off/misconfigured.
+
+        Every broker step is wrapped so it can only ever be a no-op: this runs inside the
+        job that produces the research book, and a broker outage must not be able to stop a
+        cohort from being written or graded.
+        """
+        if not self.cfg.BROKER_ENABLED:
+            return None
+        try:
+            from longterm_agent.broker.alpaca_client import AlpacaPaper
+            return AlpacaPaper()
+        except Exception as e:
+            print(f"  ⚠ broker unavailable: {type(e).__name__}: {e}")
+            return None
+
+    def broker_entries(self, as_of):
+        """Entry orders for the cohort just written, then one netted hedge rebalance."""
+        client = self._broker()
+        if client is None:
+            return
+        dry = self.cfg.BROKER_DRY_RUN
+        tag = "DRY RUN" if dry else "LIVE"
+        try:
+            from longterm_agent.broker import execution as ex, hedge, ledger
+            with self.db.get_cursor() as cur:
+                ledger.ensure_schema(cur)
+                rows = ledger.entry_candidates(cur, self.cfg.DETECTION_VERSION, as_of.date(),
+                                               ex.NOTIONAL_PER_POSITION,
+                                               self.cfg.BROKER_START_DATE or None)
+                if not rows:
+                    print(f"  broker [{tag}]: nothing to open for {as_of.date()}")
+                    return
+                out = ex.submit_entries(client, cur, rows,
+                                        agent_version=self.cfg.DETECTION_VERSION,
+                                        notifier=self.notifier, dry_run=dry)
+                # Hedge the book the BROKER holds, not the research book — until the cutoff
+                # ages out the two differ by construction.
+                book = rows if dry else ledger.broker_book(
+                    cur, self.cfg.DETECTION_VERSION, ex.NOTIONAL_PER_POSITION)
+                cur.execute("""SELECT close FROM stock_prices_daily
+                                WHERE ticker='SPY' ORDER BY date DESC LIMIT 1""")
+                spy = cur.fetchone()
+                h = hedge.submit_rebalance(client, cur, book, float(spy[0]),
+                                           agent_version=self.cfg.DETECTION_VERSION,
+                                           as_of=as_of.date(), dry_run=dry) if spy else {}
+            msg = (f"🧾 broker [{tag}] {as_of.date()}: {out['submitted']} entries"
+                   + (f", skipped {len(out['skipped'])}" if out["skipped"] else "")
+                   + (f", hedge {h.get('target')} SPY" if h else "")
+                   + (" · ⚠️ HALTED" if out.get("halted") else ""))
+            print("  " + msg)
+            oplog.info("BROKER", msg, as_of=as_of, details={"dry_run": dry, **out})
+            self.notifier.send(msg)
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            oplog.error("BROKER_FAILED", detail, as_of=as_of,
+                        details={"traceback": traceback.format_exc()[-2000:]})
+            self.notifier.notify_error("broker_entries", detail)
+
+    def broker_exits(self):
+        """Close what reached its horizon (MOC) or breached its stop (market).
+
+        Runs from the daily job, which fires at LT_GRADE_TIME — well inside the MOC window,
+        so a horizon exit reaches the same closing print the grader scores. Deliberately
+        AFTER grading: `scan_open_breaches` stamps `exit_alert_at` in that pass, and this
+        reads it.
+        """
+        client = self._broker()
+        if client is None:
+            return
+        dry = self.cfg.BROKER_DRY_RUN
+        tag = "DRY RUN" if dry else "LIVE"
+        try:
+            from longterm_agent.broker import exits
+            now = datetime.now(ET)
+            with self.db.get_cursor() as cur:
+                rows = exits.closable(cur, self.cfg.DETECTION_VERSION, now.date())
+                if not rows:
+                    return
+                out = exits.submit_exits(client, cur, rows,
+                                         agent_version=self.cfg.DETECTION_VERSION,
+                                         now_time=now.time(), dry_run=dry)
+            msg = (f"🔚 broker [{tag}]: {out['exits']} horizon exits, {out['stops']} stops"
+                   + (f", deferred past the MOC window: {', '.join(out['deferred'])}"
+                      if out["deferred"] else ""))
+            print("  " + msg)
+            oplog.info("BROKER_EXIT", msg, details={"dry_run": dry, **out})
+            self.notifier.send(msg)
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            oplog.error("BROKER_EXIT_FAILED", detail,
+                        details={"traceback": traceback.format_exc()[-2000:]})
+            self.notifier.notify_error("broker_exits", detail)
+
+    def broker_reconcile(self):
+        """Pull fills, then compare the two books. Runs daily, alongside grading."""
+        client = self._broker()
+        if client is None:
+            return
+        try:
+            from longterm_agent.broker import reconcile
+            with self.db.get_cursor() as cur:
+                out = reconcile.run(cur, notifier=self.notifier,
+                                    agent_version=self.cfg.DETECTION_VERSION,
+                                    client=client)
+            print(f"  broker reconcile: {out['sync']}")
+            oplog.info("BROKER_SYNC", f"reconcile: {out['sync']}", details=out["sync"])
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            oplog.error("BROKER_SYNC_FAILED", detail,
+                        details={"traceback": traceback.format_exc()[-2000:]})
+            self.notifier.notify_error("broker_reconcile", detail)
+
     def daily_grade(self):
         print(f"\n--- GRADING @ {datetime.now(ET):%Y-%m-%d %H:%M} ET ---")
         try:
@@ -148,6 +265,10 @@ class Ops:
             n_res = grade_results_main() or 0
             grade_shifts_main()
             oplog.info("GRADE", f"graded {n_res} matured result rows")
+            # Sync fills first so an entry that just filled is closable, then close what is
+            # due — grading has already stamped any stop breach by this point.
+            self.broker_reconcile()
+            self.broker_exits()
         except SystemExit:
             pass  # argparse in the grading mains may call sys.exit on --help only
         except Exception as e:

@@ -14,7 +14,7 @@ Vocabulary:
 """
 import statistics
 from datetime import date, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import psycopg2
 
@@ -90,7 +90,8 @@ def signals_summary(days: int = 30) -> Dict[str, Any]:
                    COUNT(*) FILTER (WHERE traded),
                    AVG(conviction)
             FROM longterm_agent_results
-            WHERE agent_version = %s AND as_of >= (CURRENT_DATE - %s::int)
+            WHERE agent_version = %s AND pit_excluded IS NULL
+              AND as_of >= (CURRENT_DATE - %s::int)
             GROUP BY verdict
         """, [_version(), days])
         by_verdict = {}
@@ -121,7 +122,8 @@ def trades_summary(days: int = 365) -> Dict[str, Any]:
         cur.execute("""
             SELECT verdict, fwd_return_4w, benchmark_return_4w, outcome_filled_at
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded=TRUE AND as_of >= (CURRENT_DATE - %s::int)
+            WHERE agent_version=%s AND traded=TRUE AND pit_excluded IS NULL
+              AND as_of >= (CURRENT_DATE - %s::int)
         """, [_version(), days])
         rows = [{"verdict": v, "fwd_return_4w": f, "benchmark_return_4w": b, "filled": o}
                 for v, f, b, o in cur.fetchall()]
@@ -246,7 +248,7 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
         cur.execute("""
             SELECT ticker, as_of, verdict, conviction
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded AND as_of >= CURRENT_DATE - %s
+            WHERE agent_version=%s AND traded AND pit_excluded IS NULL AND as_of >= CURRENT_DATE - %s
             ORDER BY as_of DESC, ticker
         """, [_version(), days])
         new = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c}
@@ -255,7 +257,7 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
         cur.execute("""
             SELECT ticker, as_of, verdict, conviction
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+            WHERE agent_version=%s AND traded AND pit_excluded IS NULL AND fwd_return_4w IS NULL
               AND as_of < CURRENT_DATE - %s
             ORDER BY as_of, ticker
         """, [_version(), days])
@@ -264,14 +266,15 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
         # Live P&L on BOTH lists: a position opened this week is "new" for the digest but
         # is just as open, and a blank return on the freshest trades is what makes the
         # chart empty exactly when there is most to look at.
+        fills = broker_fills(cur)
         for r in open_rows + new:
-            _stamp_position(cur, r)
+            _stamp_position(cur, r, fills)
 
         cur.execute("""
             SELECT ticker, as_of, verdict, fwd_return_4w, benchmark_return_4w,
                    fwd_return_stopped, benchmark_return_stopped, exit_reason, exit_days
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded
+            WHERE agent_version=%s AND traded AND pit_excluded IS NULL
               AND outcome_filled_at >= CURRENT_DATE - %s
             ORDER BY as_of, ticker
         """, [_version(), days])
@@ -290,7 +293,30 @@ def weekly_report(days: int = 7) -> Dict[str, Any]:
             "closed_mean_excess": statistics.fmean(graded) if graded else None}
 
 
-def _stamp_position(cur, r) -> None:
+def broker_fills(cur) -> Dict[Any, float]:
+    """{(ticker, as_of): filled_avg_price} for entries opened through the paper account.
+
+    One query for the whole book rather than a lookup per row, and guarded by `to_regclass`
+    rather than try/except: a missing table raises inside the transaction and would poison
+    every query after it on the same cursor, so /open would go blank rather than degrade.
+
+    Empty dict is the normal answer until the broker layer ships, and every caller treats it
+    as "use the grader's price" — which is exactly what older trades should keep doing.
+    """
+    cur.execute("SELECT to_regclass('public.paper_orders') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return {}
+    cur.execute("""
+        SELECT r.ticker, r.as_of, o.filled_avg_price
+          FROM paper_orders o
+          JOIN longterm_agent_results r ON r.id = o.result_id
+         WHERE o.role = 'entry' AND o.filled_avg_price IS NOT NULL
+           AND r.agent_version = %s
+    """, [_version()])
+    return {(t, a): float(px) for t, a, px in cur.fetchall()}
+
+
+def _stamp_position(cur, r, fills: Optional[Dict[Any, float]] = None) -> None:
     """Attach the current direction-signed return and days held to a live position.
 
     Entry price comes from the stamped `entry_px` (the open of the first bar after the
@@ -310,6 +336,13 @@ def _stamp_position(cur, r) -> None:
                     [r["ticker"], r["as_of"]])
         got = cur.fetchone()
         entry = float(got[0]) if got and got[0] else None
+    # What the position actually PAID beats what the convention assumed. A trade opened
+    # through the paper account carries a real fill; older ones have none and keep the
+    # grader's price. No marker either way — the number is simply the truer one where it
+    # exists, and the gap between assumed and paid belongs in the ledger, not the display.
+    filled = (fills or {}).get((r["ticker"], r["as_of"]))
+    if filled:
+        entry = filled
     cur.execute("""SELECT close FROM stock_prices_daily
                    WHERE ticker=%s ORDER BY date DESC LIMIT 1""", [r["ticker"]])
     got = cur.fetchone()
@@ -594,7 +627,7 @@ def open_positions(live: bool = True) -> List[Dict[str, Any]]:
             SELECT ticker, as_of, verdict, conviction, entry_date, entry_px, fill_convention,
                    signal->>'thesis'
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+            WHERE agent_version=%s AND traded AND pit_excluded IS NULL AND fwd_return_4w IS NULL
             ORDER BY as_of, ticker
         """, [_version()])
         rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c, "entry_date": ed,
@@ -608,8 +641,9 @@ def open_positions(live: bool = True) -> List[Dict[str, Any]]:
         spy_last = float(got[0]) if got and got[0] else None
         spy_entries: Dict[Any, Any] = {}  # one SPY lookup per cohort, not per row
 
+        fills = broker_fills(cur)
         for r in rows:
-            _stamp_position(cur, r)
+            _stamp_position(cur, r, fills)
             ref = r["entry_date"] or r["as_of"]
             r["matures"] = ref + timedelta(days=28) if ref else None
             key = (r["as_of"], r["fill_convention"])
