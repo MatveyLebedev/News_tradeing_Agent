@@ -81,6 +81,17 @@ def table_name(ticker: str) -> str:
     return "historical_data_" + ticker.lower().replace("-", "_").replace(".", "_")
 
 
+def alpaca_symbol(ticker: str) -> str:
+    """This repo's ticker (Yahoo convention) -> Alpaca's.
+
+    Share classes are the whole difference: Yahoo writes BRK-B, Alpaca wants BRK.B. Not
+    cosmetic — ONE unknown symbol makes the multi-symbol request return
+    `400 invalid symbol` for the entire batch, so a single stale ticker silently costs all
+    121 of them (measured: a run for 2026-06-24 wrote nothing at all because of BRK-B).
+    """
+    return ticker.upper().replace("-", ".")
+
+
 def ensure_table(cur, ticker: str) -> None:
     t = table_name(ticker)
     cur.execute(f"""
@@ -122,16 +133,20 @@ def backfill(conn, symbols, start, end, extended=False):
     conn.commit()
 
     counts = {s: 0 for s in symbols}
+    # Request under Alpaca's names, write under ours: the response is keyed by whatever was
+    # asked for, and the table name derives from the repo ticker.
+    to_repo = {alpaca_symbol(s): s for s in symbols}
     token, pages = None, 0
     while True:
         try:
-            bars, token = fetch_page(symbols, start, end, headers, token)
+            bars, token = fetch_page(list(to_repo), start, end, headers, token)
         except urllib.error.HTTPError as e:
             print(f"  HTTP {e.code}: {e.read().decode(errors='replace')[:200]}")
             break
         pages += 1
         with conn.cursor() as cur:
-            for sym, rows in bars.items():
+            for wire_sym, rows in bars.items():
+                sym = to_repo.get(wire_sym, wire_sym)
                 vals = []
                 for b in rows:
                     ts = to_et(b["t"]).replace(tzinfo=None)

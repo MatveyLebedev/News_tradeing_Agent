@@ -57,3 +57,17 @@ def test_utc_bars_land_in_eastern():
 
 def test_the_session_close_converts_too():
     assert to_et("2026-08-07T19:59:00Z").strftime("%H:%M") == "15:59"
+
+
+# --- symbol translation -----------------------------------------------------------------
+@pytest.mark.parametrize("repo,wire", [("BRK-B", "BRK.B"), ("AAPL", "AAPL"), ("XYZ", "XYZ")])
+def test_share_classes_use_alpacas_spelling(repo, wire):
+    """Yahoo writes BRK-B, Alpaca wants BRK.B — and ONE unknown symbol makes the whole
+    multi-symbol request 400, so a single stale ticker costs all 121."""
+    from bloomberg_news_fetcher.alpaca_backfill import alpaca_symbol
+    assert alpaca_symbol(repo) == wire
+
+
+def test_the_wire_name_still_maps_back_to_our_table():
+    from bloomberg_news_fetcher.alpaca_backfill import alpaca_symbol
+    assert table_name("BRK-B") == table_name(alpaca_symbol("BRK-B")) == "historical_data_brk_b"
