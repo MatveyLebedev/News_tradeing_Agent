@@ -102,6 +102,32 @@ stage B (unguarded block) may still be re-examined on post-07-17 forward-covered
 cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ## Queued / future
+- **`confirms_only` — directional trades require a confirmed cross-check (pre-registered
+  2026-08-09, NOT yet run; full plan `docs/AB_PLAN_matrix_cell.md`).** Mechanism, ONE
+  formulation: a LONG/SHORT requires `fundamentals verdict = confirms`; `ignores`, `unknown`
+  and `contradicts` are not confirmations and license no direction. Derived from
+  `SYNTHESIS_MATRIX_RULES`, not from a window — the event study only located where the code
+  departs from the matrix's own text: `LONG·ignores` (n=16), `SHORT·ignores` (n=6),
+  `SHORT·contradicts` (n=4) all traded and all lost, plus 25 traded rows with
+  `verdict=unknown` and no veto fired (`_has_usable_fundamentals` checks that income data
+  exists, not that a verdict landed). Deterministic veto in `risk_gate_node`, flag
+  `LT_REQUIRE_CONFIRMS` default OFF, prompts byte-identical, replays offline from
+  `gate_trace` at $0. Measured bite before registration: 226 of 560 traded decisions (40%)
+  across the ten trace-stamped books with ≥20 traded rows — **203 of 363 LONGs (56%) but only 23 of 197 SHORTs
+  (12%)**, i.e. a long-book filter. Disclosure (rule 1): all cell outcomes were inspected
+  while formulating, so no mined window can accept it; the narrow `confirms`-only form was
+  chosen over a wider `confirms|contradicts` variant precisely to avoid buying a per-side
+  carve-out with hindsight, and the cost — closing the matrix's overreaction cell, which
+  measured +8.20% on mined windows — is accepted knowingly, that number being post-hoc on a
+  burned grid and inadmissible in either direction. Stage 1 is verification only (exactness,
+  no side-effects, ≥40% of directional trades retained); a fall in stored-book mean is the
+  EXPECTED consequence and is not a rejection. Acceptance needs cohorts with as_of >
+  2026-08-09 — there is no usable historical unburned window (news dense only from 2026-03;
+  all 32 swept dates run 2026-03-16..2026-07-27). Power: ~2 removed / ~3 kept per weekly
+  30-name cohort ⇒ 15–20 fresh cohorts (4–5 months) for a ±1pp read. Risk registered up
+  front: the veto is deterministic but keys on an LLM label measured to be config-unstable
+  (63 of 567 shift-bearing (ticker, as_of) pairs disagree across configs). Must NOT be run in
+  the same arm as `sel_null` — both change what becomes a trade.
 - **`wf_30x_strong` — strong-model split A/B (pre-registered 2026-07-18, NOT yet run).**
   Mechanism: upgrade the model on exactly the three judgment-heavy advisory calls —
   synthesis (`LongTermSignal`), fundamentals verdict (`FundamentalsTrend`), deep-analysis
