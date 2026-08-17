@@ -65,23 +65,48 @@ must not quietly change convention.
 The frozen rule itself is unchanged: fill at the open of the first minute bar strictly after
 the decision. What changed is that a closed market is no longer called a session.
 
-## 3. Preconditions that are NOT yet met
+## 3. Preconditions — met 2026-08-12, and the schedule moved
 
-**The live path cannot grade an in-session row today.** Both legs must share a convention —
-a stock filled at 12:02 against a benchmark filled at 09:30 measures the two over different
-windows and books the gap as skill. So:
+**The live schedule is now `monday 12:00 ET`** (`LT_BATCH_WEEKDAY=monday`,
+`LT_BATCH_TIME=12:00` in `/root/trade_agent/.env`). First Monday cohort: **2026-08-17**.
+Until then the last Sunday-06:00 cohort (`as_of 2026-08-09`) remains the newest, and every
+cohort written before the switch keeps `open_t1` — the grader reads each row's own clock,
+so nothing already in the table is reinterpreted.
 
-1. **SPY has no minute table.** 0 of 12 ETFs do. The fix exists in
-   `bloomberg_news_fetcher/price_fetcher.py` (`BENCHMARK_TICKERS`) and
-   `auto_news_fetcher.py` (the call site passed `TOP_50_TICKERS`, so ETFs were never
-   requested) — **not deployed**. Until it ships, in-session rows stay PENDING and
-   `grade_results` prints how many.
-2. **The nightly repair sweep writes nothing.** `auto_price_fetcher.py` targeted a `date`
-   column the minute tables do not have. Fixed in the repo, **not deployed**. Yahoo serves
-   ~30 days of minute history, so a hole not repaired inside that window is permanent.
+Both legs must share a convention: a stock filled at 12:02 against a benchmark filled at
+09:30 measures the two over different windows and books the gap as skill. That is what the
+two blockers below were about.
+
+1. ~~**SPY has no minute table.**~~ **Closed 2026-08-12.** The `BENCHMARK_TICKERS` fix
+   shipped in `stock-fetcher:2026-08-11`; the fetcher now reports `132/132 tickers`
+   (120 companies + 12 ETFs) and SPY/XLK/XLRE carry live current-session bars. The
+   April–June history that Yahoo could never serve was backfilled from Alpaca
+   (`bloomberg_news_fetcher/alpaca_backfill.py`). Measured effect on the first grading run
+   after the fix: `pending_data` went 9 → 0.
+2. **The nightly repair sweep still writes nothing.** `auto_price_fetcher.py` is not even
+   copied into the fetcher image (`Dockerfile.news` lists its `COPY` sources by name), so
+   the hole-repair path is absent in production. The 5-minute live fetch makes holes rarer
+   but does not remove the need: Yahoo serves ~30 days of minute history, so a hole not
+   repaired inside that window is permanent. **This one is still open.**
 
 Stock minute bars themselves are healthy: 120 of 121 tickers current, full 391-bar sessions
-(`historical_data_sq` is empty).
+(`historical_data_sq` is empty — Block renamed SQ→XYZ, and XYZ is backfilled).
+
+### 3.1 What the switch does and does not change
+
+* **Only new cohorts.** `resolve_entry` picks the convention from each row's own
+  `run_timestamp`, so 2026-08-17 onward gets `mid_1m` and everything earlier keeps
+  `open_t1`. Mixed conventions across cohorts are expected and must be split when analysing.
+* **`session_guard` becomes live.** Out of session it was inert. From a 12:00 start it stops
+  the batch rather than let it cross 16:00, because one cohort holding two conventions is
+  corrupt data wearing the shape of good data. Budget: `PER_TICKER_MINUTES = 2.0` × 64 =
+  ~128 min, projected finish ~14:08, against measured runs of 93–101 min. An incomplete
+  cohort is the intended failure mode.
+* **Freshness preflight still passes.** Thresholds are 2 weekdays on `prices`/`prices_spy`;
+  at Monday noon the newest daily bar is Friday's close — one weekday behind.
+* **The evidence did not move.** §4.1 still stands: two of three pre-registered conditions,
+  not three. This migration makes the live path *measurable under the frozen convention*;
+  it is not a claim that the convention earns more.
 
 ## 4. What the evidence does and does not say
 

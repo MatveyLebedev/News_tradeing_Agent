@@ -18,7 +18,7 @@ Reproducible: enable the B0 LLM cache and run with reflection off.
 import argparse
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time
 from pathlib import Path
 
 import psycopg2
@@ -259,6 +259,23 @@ def _write_rows(cfg, backtest_id, prov, ticker, as_of, horizons, final):
 
 
 # --------------------------------------------------------------------------- grade
+def _decision_moment(as_of, cohort_time):
+    """The cohort's wall-clock ET decision moment, or None when it was not stamped.
+
+    `as_of` is a DATE, so a sweep's time of day survives only in
+    `provenance.cohort_time_et` ("12:00"). Books written before that stamp existed carry
+    None and must keep grading on the daily conventions — returning None here is what
+    makes this change a no-op for every row already in the table.
+    """
+    if not cohort_time:
+        return None
+    try:
+        hh, mm = str(cohort_time).split(":")[:2]
+        return datetime.combine(as_of, time(int(hh), int(mm)))
+    except (ValueError, TypeError):
+        return None  # unparseable stamp: fall back to the daily convention, never guess
+
+
 def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_book=False):
     """Fill realized outcome + regime for matured rows — BOTH books: hold-to-horizon
     (fwd_return/excess, back-compat) and stopped (Phase 5.5 exit discipline). Rows graded
@@ -268,19 +285,40 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
     fill="d0" fills PRE-OPEN cohorts at the as_of day's own open (open_d0 — legal only
     when the run used the PIT feature cutoff, i.e. any post-2026-07-19 sweep).
     dual_book additionally fills the diagnostic next-bar book (fwd/benchmark/excess_t2)
-    — the paired day-1-value study; hold-only by design (no stopped leg)."""
+    — the paired day-1-value study; hold-only by design (no stopped leg).
+
+    `mid_1m` needs no flag. A cohort stamped IN SESSION (`provenance.cohort_time_et`, e.g.
+    the Monday-midday book at 12:00) is filled on MINUTE bars — the open of the first bar
+    starting strictly after the decision — because both daily conventions misprice it:
+    open_d0 buys hours BEFORE the decision existed, open_t1 buys ~21h after. This is why
+    `PREREG_MONDAY_MIDDAY_HOLDING` made `--no-grade` mandatory for that book; it no longer
+    is. The convention is chosen per ROW from its own clock, so one grader handles a Sunday
+    06:00 book and a Monday 12:00 book, and rows without the stamp are untouched.
+
+    Two refusals rather than a silent fallback, both from `resolve_entry`:
+      * the market traded but this ticker never printed → the row stays PENDING (a data
+        hole or a halt is not a reason to change convention);
+      * the benchmark cannot be priced intraday → skip, since pricing one leg on minute
+        bars and the other on a daily open measures two different windows."""
     from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_D0,
-                                           entry_bar, stopped_returns, t1_return)
+                                           FILL_CONVENTION_MID, entry_bar, in_session,
+                                           resolve_entry, stopped_returns, t1_return)
     from longterm_agent.beta import beta_adjusted_excess, estimate_beta
     from longterm_agent.tools.regime_tool import regime_context_from_conn
     d0 = fill == "d0"
-    convention = FILL_CONVENTION_D0 if d0 else FILL_CONVENTION
+    daily_convention = FILL_CONVENTION_D0 if d0 else FILL_CONVENTION
     _ensure_table(cfg)
     today = datetime.strptime(asof_today, "%Y-%m-%d").date() if asof_today else date.today()
     conn = _conn(cfg)
     cur = conn.cursor()
+    # `cohort_time_et` is the ONLY record of a cohort's clock — `as_of` is a DATE. An
+    # in-session stamp (the Monday-midday book) fills on minute bars, and neither daily
+    # convention can price it, so the convention is decided per row from that clock rather
+    # than from `fill`. Rows without the stamp, or stamped outside the session, take the
+    # daily path unchanged — every book already in the table grades exactly as before.
     cur.execute("""SELECT id, ticker, as_of, horizon_days, direction, outcome_filled_at,
-                          regime_context IS NULL, beta IS NULL
+                          regime_context IS NULL, beta IS NULL,
+                          provenance->>'cohort_time_et'
                    FROM backtest_runs
                    WHERE backtest_id=%s AND (outcome_filled_at IS NULL
                           OR (exit_reason IS NULL AND traded AND direction IN ('LONG','SHORT'))
@@ -289,7 +327,8 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
                    ORDER BY as_of""", [backtest_id])
     rows = cur.fetchall()
     graded = backfilled = stamped = betas = 0
-    for rid, ticker, as_of, horizon, direction, already, no_regime, no_beta in rows:
+    for (rid, ticker, as_of, horizon, direction, already, no_regime, no_beta,
+         cohort_time) in rows:
         # Phase 14 — regime stamp is a property of as_of (not of maturity): fill it for any
         # row missing one, incl. idempotent backfill of rows graded before the stamp existed.
         # Left NULL while macro_series is empty so a later pass can still fill it.
@@ -299,20 +338,36 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
                 cur.execute("UPDATE backtest_runs SET regime_context=%s WHERE id=%s",
                             [Json(ctx), rid])
                 stamped += 1
-        eb = entry_bar(cur, ticker, as_of, include_asof_day=d0)
+        decision_et = _decision_moment(as_of, cohort_time)
+        entry = bench_entry = None
+        convention = daily_convention
+        if decision_et is not None and in_session(decision_et):
+            res = resolve_entry(cur, ticker, as_of, decision_et)
+            if res is None:
+                continue  # traded that day but this ticker never printed — stays PENDING
+            if res[0] == FILL_CONVENTION_MID:
+                bres = resolve_entry(cur, benchmark, as_of, decision_et)
+                if bres is None or bres[0] != FILL_CONVENTION_MID:
+                    continue  # never price the stock intraday and the benchmark daily
+                convention, entry = res[0], (res[1], res[2])
+                bench_entry = (bres[1], bres[2])
+            # res[0] == open_t1 means the market was shut that day (a rolled holiday):
+            # there was no in-session decision to price, so the daily path below is right.
+        eb = entry or entry_bar(cur, ticker, as_of, include_asof_day=d0)
         if eb is None:
             continue  # entry bar not in stock_prices_daily yet; retry next run
         if eb[0] + timedelta(days=horizon) > today:
-            continue  # horizon not matured yet (anchored at the open-entry bar)
-        tr = t1_return(cur, ticker, as_of, horizon, include_asof_day=d0)
-        br = t1_return(cur, benchmark, as_of, horizon, include_asof_day=d0)
+            continue  # horizon not matured yet (anchored at the entry bar)
+        tr = t1_return(cur, ticker, as_of, horizon, include_asof_day=d0, entry=entry)
+        br = t1_return(cur, benchmark, as_of, horizon, include_asof_day=d0,
+                       entry=bench_entry)
         if tr is None:
             continue  # missing prices; retry next run
         fwd = tr["ret"]
         bench = br["ret"] if br else None
         # diagnostic next-bar book (dual_book): same decision, entry one bar later —
         # the paired delta prices day-1 of the move
-        if dual_book:
+        if dual_book and entry is None:  # nth=2 is a DAILY-bar idea; a mid fill has no "next open"
             t2 = t1_return(cur, ticker, as_of, horizon, nth=2, include_asof_day=d0)
             b2 = t1_return(cur, benchmark, as_of, horizon, nth=2, include_asof_day=d0)
             if t2 is not None:
@@ -339,7 +394,8 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
             stopped = stopped_returns(cur, ticker, as_of, direction, horizon,
                                       benchmark=benchmark, stop_loss=cfg.STOP_LOSS_PCT,
                                       take_profit=cfg.TAKE_PROFIT_PCT,
-                                      include_asof_day=d0)
+                                      include_asof_day=d0, entry=entry,
+                                      bench_entry=bench_entry)
         if stopped:
             ex_st = trade_excess(direction, stopped["fwd"], stopped["bench"])
             cur.execute("""UPDATE backtest_runs SET fwd_return_stopped=%s,
