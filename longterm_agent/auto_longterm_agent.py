@@ -18,12 +18,14 @@ import sys
 import time
 import argparse
 import traceback
+from contextlib import contextmanager
 from datetime import datetime
 
 import pytz
 import schedule
 
 
+from core.db import get_conn
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent import oplog
 from longterm_agent.notifier import TelegramNotifier
@@ -81,6 +83,20 @@ class Ops:
         self.llm_map = self.cfg.make_llm(model=self.cfg.MAP_MODEL, max_tokens=2048)
         self.llm_reduce = self.cfg.make_llm(model=self.cfg.LLM_MODEL, max_tokens=8000)
 
+    @contextmanager
+    def _cursor(self):
+        """One fresh, committed cursor per job step.
+
+        Deliberately NOT `self.db`'s pool: this process idles for days between jobs, so a
+        pooled connection is dead long before the next job runs (the reason core.db adds
+        keepalives + retry). Worse, psycopg2's pool rolls back anything handed back mid
+        transaction, so pooled broker writes would vanish without ever raising.
+        """
+        with get_conn(self.cfg.get_db_config()) as conn:
+            with conn.cursor() as cur:
+                yield cur
+            conn.commit()
+
     # --- jobs --------------------------------------------------------------
     def weekly_batch(self):
         as_of = datetime.now(ET).replace(tzinfo=None)
@@ -128,7 +144,7 @@ class Ops:
         # by hand (never re-roll) — the alert is what makes that happen.
         try:
             from longterm_agent import backtest_metrics as M
-            with self.db.get_cursor() as cur:
+            with self._cursor() as cur:
                 cur.execute("""SELECT signal FROM backtest_runs
                                WHERE backtest_id='monday_t1_fwd' AND horizon_days=28
                                  AND as_of::date=%s""", [today])
@@ -169,7 +185,7 @@ class Ops:
         tag = "DRY RUN" if dry else "LIVE"
         try:
             from longterm_agent.broker import execution as ex, hedge, ledger
-            with self.db.get_cursor() as cur:
+            with self._cursor() as cur:
                 ledger.ensure_schema(cur)
                 rows = ledger.entry_candidates(cur, self.cfg.DETECTION_VERSION, as_of.date(),
                                                ex.NOTIONAL_PER_POSITION,
@@ -217,9 +233,13 @@ class Ops:
         dry = self.cfg.BROKER_DRY_RUN
         tag = "DRY RUN" if dry else "LIVE"
         try:
-            from longterm_agent.broker import exits
+            from longterm_agent.broker import exits, ledger
             now = datetime.now(ET)
-            with self.db.get_cursor() as cur:
+            with self._cursor() as cur:
+                # Same self-ensuring schema as entries and reconcile: this job can be the
+                # first broker step to touch the DB (entries runs weekly, and reconcile
+                # ahead of it may have bailed), and `paper_orders` would not exist yet.
+                ledger.ensure_schema(cur)
                 rows = exits.closable(cur, self.cfg.DETECTION_VERSION, now.date())
                 if not rows:
                     return
@@ -245,7 +265,7 @@ class Ops:
             return
         try:
             from longterm_agent.broker import reconcile
-            with self.db.get_cursor() as cur:
+            with self._cursor() as cur:
                 out = reconcile.run(cur, notifier=self.notifier,
                                     agent_version=self.cfg.DETECTION_VERSION,
                                     client=client)

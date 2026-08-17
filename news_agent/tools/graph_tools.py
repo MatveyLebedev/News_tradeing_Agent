@@ -130,6 +130,7 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
                 input=[query],
                 model=EMBEDDING_MODEL,
                 dimensions=1536,
+                encoding_format="float",   # see bloomberg_news_fetcher/embeddings.py
             )
             query_vec = resp.data[0].embedding
         except Exception:
@@ -308,6 +309,7 @@ def create_graph_tools(neo4j_manager, db_manager, timestamp):
                 input=[search_query],
                 model=EMBEDDING_MODEL,
                 dimensions=1536,
+                encoding_format="float",   # see bloomberg_news_fetcher/embeddings.py
             )
             query_vec = resp.data[0].embedding
         except Exception:

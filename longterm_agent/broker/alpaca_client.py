@@ -83,7 +83,15 @@ class AlpacaPaper:
     def _request(self, method: str, path: str, **kw) -> Any:
         self._check_config()          # re-checked per call: host is mutable state
         url = f"{self.host}/v2/{path.lstrip('/')}"
-        r = requests.request(method, url, headers=self._headers, timeout=TIMEOUT_S, **kw)
+        # A dedicated variable, deliberately NOT the standard HTTPS_PROXY: that one is read
+        # by every requests/urllib call in the process, so setting it would silently route
+        # OpenRouter, Telegram and the price feeds through the same tunnel. Only the broker
+        # leg needs it — measured 2026-08-12, the server reaches OpenRouter and Telegram
+        # fine while Alpaca is dropped at TCP level from its hosting ASN.
+        proxy = os.getenv("ALPACA_HTTPS_PROXY", "").strip()
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        r = requests.request(method, url, headers=self._headers, timeout=TIMEOUT_S,
+                             proxies=proxies, **kw)
         if r.status_code >= 400:
             raise BrokerError(f"{method} {path} -> {r.status_code}: {r.text[:300]}")
         return r.json() if r.text else None

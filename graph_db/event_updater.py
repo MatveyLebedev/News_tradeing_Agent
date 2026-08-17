@@ -155,6 +155,7 @@ def _embed_events(events: list[ExtractedEvent]) -> list[list[float] | None]:
             input=texts,
             model=EMBEDDING_MODEL,
             dimensions=1536,
+            encoding_format="float",   # see bloomberg_news_fetcher/embeddings.py
         )
         return [item.embedding for item in resp.data]
     except Exception as exc:

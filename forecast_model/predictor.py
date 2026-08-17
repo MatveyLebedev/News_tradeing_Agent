@@ -64,6 +64,7 @@ class NewsForecastPredictor:
             input=[text[:20000]],
             model=EMBEDDING_MODEL,
             dimensions=EMBEDDING_DIMS,
+            encoding_format="float",   # see bloomberg_news_fetcher/embeddings.py
         )
         return resp.data[0].embedding
 

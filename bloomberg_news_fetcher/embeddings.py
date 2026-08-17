@@ -57,6 +57,12 @@ class EmbeddingGenerator:
                     input=inputs,
                     model=self.model_name,
                     dimensions=self.output_dimensionality,
+                    # Explicit, because the SDK's default is not stable: openai 2.53.0
+                    # started sending encoding_format="base64", which Google AI Studio
+                    # rejects with a 400. requirements pin `openai>=1.0.0`, so a plain
+                    # rebuild changed behaviour with no code change — measured 2026-08-11,
+                    # 2.45.0 worked and 2.53.0 did not.
+                    encoding_format="float",
                 )
                 if resp.data:
                     return resp

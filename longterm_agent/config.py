@@ -80,7 +80,22 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   found by hand on 2026-07-26 and its six traded rows carry `pit_excluded`.
 #   The paper-broker package ships INERT: LT_BROKER_ENABLED defaults false, and when on it
 #   is dry-run by default. Nothing in it can write to longterm_agent_results.
-PIPELINE_VERSION = "0.10.0"
+# 0.10.1 (2026-08-17): a PATCH — nothing about the decision path moves, so runs before and
+#   after ARE like-for-like. Three fixes, all found in production:
+#   * The scheduler called `self.db.get_cursor()`, which `DBManager` does not have, so every
+#     broker job raised AttributeError on its first line — measured 2026-08-17 13:26 ET on
+#     all three (`broker_entries`, `broker_exits`, `broker_reconcile`). Replaced with a
+#     `_cursor()` helper opening a fresh `core.db` connection: the pool is wrong here because
+#     this process idles for days between jobs, and psycopg2 rolls back anything handed back
+#     to the pool mid-transaction, which would have lost broker writes silently.
+#   * `get_novelty_score` (exposed to the deep-analysis node) asked for embeddings without
+#     `encoding_format`, and openai>=2.53 defaults that to base64, which Google AI Studio
+#     rejects. It has no retry and returns a neutral 0.5 on failure, so ~half of all calls
+#     fed the agent a fabricated novelty reading. Measured: 5 failures in 10 calls.
+#   * `broker_exits` now ensures the ledger schema; it can be the first broker step to touch
+#     the DB, and `paper_orders` would not exist yet.
+#   Also adds `ALPACA_HTTPS_PROXY`, read ONLY by the broker client — inert while unset.
+PIPELINE_VERSION = "0.10.1"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
