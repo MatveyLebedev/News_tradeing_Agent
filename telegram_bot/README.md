@@ -27,27 +27,36 @@ flowchart TD
 
 ## Startup (Docker, run from project root)
 
+> ⚠ **This image is the one that leaked.** The published
+> `matveylebedev891/telegram-bot:latest` contained a real `/app/.env` and was public for
+> four months — see [docs/SECURITY_INCIDENT_2026-08-11.md](../docs/SECURITY_INCIDENT_2026-08-11.md).
+> There is no `docker push` step any more, and the image name is deliberately unqualified
+> so there is nowhere to push it to. Verify `.dockerignore` excludes `.env` before building.
+
+Locally:
 ```bash
-# Build
-docker build --platform linux/amd64 -t matveylebedev891/telegram-bot:latest -f telegram_bot/Dockerfile .
+# Build — unqualified name, date tag
+docker build --platform linux/amd64 -t telegram-bot:$(date +%Y-%m-%d) -f telegram_bot/Dockerfile .
 
-docker push matveylebedev891/telegram-bot:latest
+# Ship over SSH (refuses to send an image containing .env or *.bak)
+DEPLOY_HOST=root@<SERVER_IP> deploy/ship_image.sh telegram-bot:$(date +%Y-%m-%d)
+```
 
+On the server — secrets come from the env file, never as `-e` literals:
+```bash
+TAG=2026-08-11
 docker stop telegram-bot 2>/dev/null; docker rm telegram-bot 2>/dev/null
-
-
-# Run
 docker run -d \
     --name telegram-bot \
     --restart unless-stopped \
-    --env-file .env \
+    --env-file /root/trade_agent/.env \
     -e TZ=America/New_York \
-    -e TELEGRAM_ALLOWED_USER_IDS=YOUR_TELEGRAM_USER_ID,YOUR_TELEGRAM_USER_ID \
-    -e OPENROUTER_API_KEY= \
-    -e TELEGRAM_BOT_TOKEN= \
-    -e LANGCHAIN_API_KEY= \
-    matveylebedev891/telegram-bot:latest
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+    telegram-bot:$TAG
 ```
+
+`TELEGRAM_ALLOWED_USER_IDS` lives in the env file too — it was previously inlined here,
+which is how a copy-pasted run command drifts from the canonical file.
 
 ## Required `.env` variables
 

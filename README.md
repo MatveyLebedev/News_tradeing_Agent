@@ -1,6 +1,9 @@
 # Stock Price Fetcher
 
-Automated daily fetcher for 1-minute stock price data. Runs at 10 PM ET (6 hours after market close) and saves to PostgreSQL.
+News and market-data fetcher, saving to PostgreSQL. Two clocks, not one: the main loop
+runs every `FETCH_INTERVAL_MIN` minutes (default 5) and writes news plus 1-minute bars,
+while the daily OHLCV top-up runs once at `DAILY_BARS_FETCH_TIME` (default 20:30 ET,
+post-close).
 
 ## Remote Access & Deployment
 
@@ -26,57 +29,95 @@ To access your remote server via SSH:
 ssh <deploy-user>@<SERVER_IP>
 ```
 
-### 2. Build and Push to Remote
-If you are developing locally and want to push your images to a registry (e.g., Docker Hub) to be pulled on the remote server:
+### 2. Build and Ship to the Server
+
+**Images are never pushed to a public registry.** Do not run `docker push` for this
+project — see [SECURITY_INCIDENT_2026-08-11.md](docs/SECURITY_INCIDENT_2026-08-11.md) for
+what that cost. `docker push` creates a new repository as **public by default**, with no
+prompt and no warning.
+
+Delivery goes over the SSH channel that already exists for ops:
+
 ```bash
-# 1. Login to your registry
-docker login
+# 1. Build. For the server (x86_64) always use --platform linux/amd64.
+docker build --platform linux/amd64 \
+  -t stock-fetcher:$(date +%Y-%m-%d) \
+  -f bloomberg_news_fetcher/Dockerfile.news .
 
-# 2. Build and tag the image
-# For remote servers (usually x86_64), use --platform linux/amd64
-docker build --platform linux/amd64 -t matveylebedev891/stock-fetcher:latest -f bloomberg_news_fetcher/Dockerfile.news .
+# 2. Sanity-check the contents. Dockerfile.news COPYs named files rather than `COPY . .`,
+#    so a newly added module is silently absent until something imports it.
+docker run --rm stock-fetcher:$(date +%Y-%m-%d) \
+  python -c "import price_fetcher as p; print(len(p.DEFAULT_TICKERS), 'tickers')"
 
-# 3. Push to registry
-docker push matveylebedev891/stock-fetcher:latest
+# 3. Ship. Refuses to send an image containing .env or *.bak, streams it to the server,
+#    and verifies the loaded image id matches the local one.
+DEPLOY_HOST=root@<SERVER_IP> deploy/ship_image.sh stock-fetcher:$(date +%Y-%m-%d)
 ```
+
+Note the tags are **local names only** (`stock-fetcher:…`, not `<user>/stock-fetcher:…`).
+An unqualified name cannot be pushed to Docker Hub by accident.
+
+Date-tag every build rather than reusing `:latest`. The server keeps previous tags, and
+that is the whole rollback story now that there is no registry to pull an old image from.
 
 ### 3. Start Application (Remote/Local)
 Navigate to the project directory and use Docker to start the services:
 
 
 #### Using Docker Run (Single Command)
-If you want to run the container without Compose:
+The container is named **`bloomberg_news_fetcher`**, not `stock-fetcher` — `stock-fetcher`
+is the *image*. Stopping the wrong name is a no-op that leaves the old container running
+while you believe you redeployed.
+
+Credentials come from `--env-file /root/trade_agent/.env`, which is the single source of
+truth on the server. Do NOT pass secrets as `-e` literals: they end up in shell history
+and in `docker inspect`, and a container bound to a private copy stops tracking edits to
+the canonical file. Only the four settings absent from that file are passed explicitly.
+
+Run these **on the server**, after `ship_image.sh` has put the image there. `TAG` is the
+date tag you built with; the previously running tag stays on the server as the rollback.
+
 ```bash
-# 1. Stop and remove existing container (if any)
-docker stop stock-fetcher 2>/dev/null; docker rm stock-fetcher 2>/dev/null
+TAG=2026-08-11        # the tag you just shipped
 
-# 2. Pull the image
-docker pull matveylebedev891/stock-fetcher:latest
+# 1. Note what is running now — this is what you roll back to
+docker inspect bloomberg_news_fetcher --format 'currently: {{.Config.Image}}'
 
-# 3. Run the container
+# 2. Confirm the SHIPPED image carries the change, before touching a working container
+docker run --rm stock-fetcher:$TAG \
+  python -c "import price_fetcher as p; print(len(p.DEFAULT_TICKERS), 'tickers')"
+
+# 3. Recreate
+docker stop bloomberg_news_fetcher; docker rm bloomberg_news_fetcher
 docker run -d \
-  --name stock-fetcher \
+  --name bloomberg_news_fetcher \
   --restart unless-stopped \
+  --env-file /root/trade_agent/.env \
   -e TZ=America/New_York \
   -e FETCH_INTERVAL_MIN=5 \
   -e FETCH_PRICES=true \
-  -e DB_HOST="<SERVER_IP>" \
-  -e DB_NAME="trade_agent" \
-  -e DB_USER="news" \
-  -e DB_PORT="5432" \
+  -e FETCH_FULL_TEXT=false \
+  -e VERBOSE=true \
   --log-driver json-file \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
-  -e VERBOSE=false \
-  -e FETCH_FULL_TEXT=false \
-  -e GRAPH_LLM_MODEL="google/gemini-3.1-flash-lite-preview" \
-  -e NEO4J_URI="bolt://<SERVER_IP>:7687" \
-  -e NEO4J_USER="neo4j" \
-  -e NEO4J_PASSWORD="pass" \
-  -e OPENROUTER_API_KEY="your_openrouter_key" \
-  -e DB_PASSWORD="your_db_password" \
-  matveylebedev891/stock-fetcher:latest
+  stock-fetcher:$TAG
+
+# 4. Verify — within one FETCH_INTERVAL_MIN the log must report the FULL universe
+#    (132 = 120 companies + 12 benchmark ETFs). A count of 120 means a stale image:
+#    ETFs joined the minute fetch on 2026-07-30 and are what SPY-netted intraday work
+#    depends on.
+docker logs bloomberg_news_fetcher --since 10m 2>&1 | grep "Price data rows inserted"
 ```
+
+Rollback, if step 4 disappoints — re-run step 3 with the tag from step 1:
+```bash
+docker stop bloomberg_news_fetcher; docker rm bloomberg_news_fetcher
+# …same docker run, with the previous stock-fetcher:<date> as the image
+```
+
+Prune old tags on the server occasionally (`docker image ls stock-fetcher`), but keep at
+least the previous one — with no registry, the server's local tags are the only rollback.
 
 ## Local Usage Summary
 
