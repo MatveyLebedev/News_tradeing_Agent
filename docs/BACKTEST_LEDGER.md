@@ -103,7 +103,10 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ## Queued / future
 - **`confirms_only` — directional trades require a confirmed cross-check (pre-registered
-  2026-08-09, NOT yet run; full plan `docs/AB_PLAN_matrix_cell.md`).** Mechanism, ONE
+  2026-08-09, NOT yet run; full plan `docs/AB_PLAN_matrix_cell.md`; the exploratory
+  analysis behind it, including two measurement errors it corrects, is written up in
+  `docs/EVENT_STUDY_2026-08-20.md` — that document is hypothesis-generating and cannot
+  accept anything).** Mechanism, ONE
   formulation: a LONG/SHORT requires `fundamentals verdict = confirms`; `ignores`, `unknown`
   and `contradicts` are not confirmations and license no direction. Derived from
   `SYNTHESIS_MATRIX_RULES`, not from a window — the event study only located where the code
