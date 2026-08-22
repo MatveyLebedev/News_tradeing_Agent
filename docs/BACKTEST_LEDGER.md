@@ -102,8 +102,29 @@ stage B (unguarded block) may still be re-examined on post-07-17 forward-covered
 cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ## Queued / future
-- **`confirms_only` — directional trades require a confirmed cross-check (pre-registered
-  2026-08-09, NOT yet run; full plan `docs/AB_PLAN_matrix_cell.md`; the exploratory
+- **`no_overreaction` — close the overreaction cell (pre-registered 2026-08-21, NOT yet run;
+  full plan `docs/AB_PLAN_overreaction_cell.md`).** ONE formulation: delete
+  `(negative shift, contradicts) → LONG` from `MATRIX_CELLS`, leaving `(positive, confirms)`
+  as the only long entry. Flag `LT_CLOSE_OVERREACTION`, default OFF. Motivation is
+  mechanism-level, not a delta: the cell exists to buy an overreaction after a name is beaten
+  down, and split by the 21-day pre-move it returns +13.83% (median +3.94) when the name came
+  in RISING and +2.74% (median **−1.88**, CI covering zero) when it came in falling — it fails
+  in exactly the half it was designed for. Evidence is two-sided and disclosed: closing it
+  measures +2.03/+3.07/+7.01pp on sweeps at 14/28/84d and lifts the median at all three, and
+  +1.70/+2.92pp on the live realised book — but **−2.43pp** on the live open book (the five
+  open positions in the cell average +5.77%) and **−2.25pp** on the heavily-mined sweep dates.
+  Sign flips between snapshots, which is why it is registered rather than adopted. Stage 1
+  replays on old books despite `shift_direction` being unstamped before `75ae71c` (a LONG with
+  `contradicts` implies a negative shift once the shipped matrix veto is applied — an
+  approximation, labelled as one; live says 7 of 7 carry a negative shift). Acceptance needs
+  as_of > 2026-08-21. A3 requires the kept long book's MEDIAN not to fall — the criterion that
+  separates this from LONG-only, which raises the mean and drops the median at every horizon
+  (−0.43/−1.05/−6.29pp). Power: the cell is 174 of 634 traded sweep decisions (27%) over 30
+  dates and 7 of 27 live, ~1.5 per weekly cohort ⇒ 15–20 fresh cohorts, four to five months.
+  Must NOT share an arm with `sel_null` or `adv_mom`.
+- **`confirms_only` — CLOSED 2026-08-21 without running, superseded (pre-registered
+  2026-08-09; conformance half shipped as code in `75ae71c`, strategy half restated as
+  `no_overreaction` above; full plan `docs/AB_PLAN_matrix_cell.md`; the exploratory
   analysis behind it, including two measurement errors it corrects, is written up in
   `docs/EVENT_STUDY_2026-08-20.md` — that document is hypothesis-generating and cannot
   accept anything).** Mechanism, ONE

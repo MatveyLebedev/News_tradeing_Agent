@@ -1,5 +1,25 @@
 # A/B plan — directional trades require a confirmed cross-check (`confirms_only`)
 
+> **CLOSED 2026-08-21 — do not run this plan.** It registered one mechanism that turned out
+> to be two, and each half went somewhere else:
+>
+> * **The conformance half shipped as code** in `75ae71c`: the gate now requires the
+>   (shift sign, verdict) cell to license the side taken. That was never an A/B — it stopped
+>   the gate trading combinations `SYNTHESIS_MATRIX_RULES` tells synthesis to avoid, and it
+>   moves the book by less than the noise on every surface (sweeps 4w +0.71pp, live 2w
+>   −0.44pp, live 4w 0.00pp, live open +0.04pp).
+> * **The strategy half moved to `AB_PLAN_overreaction_cell.md`**, restated as what it
+>   actually is: closing `(negative shift, contradicts) → contrarian LONG`, one cell the
+>   matrix explicitly licenses. Registering it as "verdict must be confirms" was wrong twice
+>   over — the verdict alone cannot express the matrix (every licensed cell depends on the
+>   shift's sign, which this document did not use), and the short side's only licensed cell
+>   is already `confirms`, so the filter never bit there and the plan claimed an effect that
+>   could not exist.
+>
+> The bite numbers below are therefore measured for the wrong rule and are kept only as a
+> record of what was registered. Nothing here ran.
+
+
 Pre-registered 2026-08-09, **before any run of this feature**, per anti-overfit rule 3.
 Companion to `AB_PLAN_selection_stage.md` (`sel_null`) and `AB_PLAN_adverse_momentum.md`
 (`adv_mom`); like both, it is a deterministic gate change that replays offline from
