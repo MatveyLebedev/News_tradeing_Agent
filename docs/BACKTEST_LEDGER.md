@@ -122,6 +122,28 @@ cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
   (−0.43/−1.05/−6.29pp). Power: the cell is 174 of 634 traded sweep decisions (27%) over 30
   dates and 7 of 27 live, ~1.5 per weekly cohort ⇒ 15–20 fresh cohorts, four to five months.
   Must NOT share an arm with `sel_null` or `adv_mom`.
+- **Map model sits on a preview channel and is unpinned (logged 2026-08-21, NOT scheduled).**
+  `GRAPH_LLM_MODEL` resolves to `google/gemini-3.1-flash-lite-preview`. The stable
+  `google/gemini-3.1-flash-lite` exists (OpenRouter, listed 2026-05-07, same 1M context) and
+  is ALREADY the default in `core/settings.py:75` — the preview id comes from `.env`, almost
+  certainly set before the stable variant shipped (preview 2026-03-03) and never revisited.
+  Why it matters beyond tidiness: the map step produces the per-week bucket sentiments that
+  `compute_shift_metrics` consumes, so `has_shifted`, `direction` and `shift_score` are
+  downstream of it. The detection label is deterministic GIVEN the summaries; the summaries
+  are not guaranteed stable on a preview channel. Measured 2026-08-21: three repeat calls on
+  five buckets gave a sentiment spread of **0.00**, so there is no evidence of drift today —
+  but that is a statement about today, and preview offers no contract about tomorrow.
+  **Not scheduled deliberately.** Switching is not a one-line env change: it is a
+  label-affecting model swap of the same class as metrics v1→v2, requiring a fresh
+  `LT_BUCKET_CACHE_VERSION` (the config says to bump it whenever the corpus definition, map
+  prompt or map model changes), a `DETECTION_VERSION` bump, and an old-vs-new label
+  comparison on a shared window. Doing it now would split the post-2026-08-21 cohorts that
+  `no_overreaction` needs for acceptance straight down the middle — the same way 27 books
+  were made unreproducible by an unstamped decision clock. Do it at the next deliberate
+  detection-version bump, as one step, not opportunistically. Related and independent: the
+  provider pin (`only: novita, allow_fallbacks: false`) is present on 7500 of 21112 stored
+  rows and absent on 13612, and applies to `llm_model` only — the map role has a single
+  backend and needs none.
 - **`confirms_only` — CLOSED 2026-08-21 without running, superseded (pre-registered
   2026-08-09; conformance half shipped as code in `75ae71c`, strategy half restated as
   `no_overreaction` above; full plan `docs/AB_PLAN_matrix_cell.md`; the exploratory
