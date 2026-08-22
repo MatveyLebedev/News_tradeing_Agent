@@ -34,8 +34,10 @@ def test_guard_filters_bank_case(db, cfg):
 
 
 def test_usable_fundamentals_with_shift_passes(db, cfg):
-    # real income metrics present AND a shift present → neither guard caps; high conviction passes
-    fund = {"has_statements": True, "revenue_yoy": 0.5,
+    # real income metrics present AND a shift present → neither guard caps; high conviction passes.
+    # `verdict` is explicit because the state must also be a licensed matrix cell (positive
+    # shift + confirms → LONG); without it the matrix-cell veto caps, which is a different guard.
+    fund = {"has_statements": True, "revenue_yoy": 0.5, "trend": {"verdict": "confirms"},
             "margin_series": [{"gross_margin": 0.6, "operating_margin": 0.4, "net_margin": 0.3}]}
     out = risk_gate_node(_state(0.8, fund), db, cfg)
     assert not any("no usable income fundamentals" in f for f in out["risk_flags"])

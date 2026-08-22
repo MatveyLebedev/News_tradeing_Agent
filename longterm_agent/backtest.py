@@ -684,9 +684,11 @@ def main():
                 cohorts = kept
             if args.roll_holidays:
                 cohorts = _roll_cohorts(cfg, cohorts)
-            prov_extra = {}
-            if args.at:
-                prov_extra["cohort_time_et"] = args.at
+            # Stamped unconditionally: no `--at` means midnight, which is a decision clock
+            # like any other, not an absence of one. Leaving it unstamped is why 27 of the 32
+            # stored books cannot say what time of day they decided — and the bucket grid,
+            # the cache namespace and any intraday fill all hang off that.
+            prov_extra = {"cohort_time_et": args.at or "00:00"}
             if args.roll_holidays:
                 prov_extra["cohort_roll"] = "next_session"
             run_cohorts(cfg, args.tickers, cohorts, args.horizons, args.backtest_id,

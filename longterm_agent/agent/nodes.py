@@ -904,6 +904,30 @@ SYNTHESIS_MATRIX_RULES = (
 )
 
 
+# The same rules as an eligibility table, for the risk gate. A cell is (shift sign, verdict)
+# and it licenses ONE side; anything absent licenses nothing. Transcribed line by line from
+# SYNTHESIS_MATRIX_RULES above — there is no free parameter here, and a change to the rules
+# text must be mirrored here or `test_matrix_cell` fails.
+#
+#   positive + confirms     → "high-conviction LONG"
+#   negative + confirms     → "high-conviction SHORT"
+#   negative + contradicts  → "overreaction: contrarian LONG or NEUTRAL"
+#   positive + contradicts  → "hype risk: low conviction / avoid"      → no side
+#   any      + ignores      → fundamentals unrelated to the shift      → no cell
+#   any      + unknown/None → the cross-check never landed             → no cell
+#   None shift direction    → the decision places nowhere in the matrix → no cell
+MATRIX_CELLS = {
+    ("positive", "confirms"): frozenset({"LONG"}),
+    ("negative", "confirms"): frozenset({"SHORT"}),
+    ("negative", "contradicts"): frozenset({"LONG"}),
+}
+
+
+def matrix_licenses(shift_direction, verdict, direction) -> bool:
+    """Does the matrix license `direction` for this (shift sign, verdict) pair?"""
+    return direction in MATRIX_CELLS.get((shift_direction, verdict), frozenset())
+
+
 def synthesis_node(state, llm, config) -> Dict[str, Any]:
     print("\n=== Synthesis ===")
     profile = state.get("background_profile", {})
@@ -1090,7 +1114,14 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     deep_nudge = float((state.get("enriched_analysis") or {}).get("conviction_adjustment") or 0.0)
     # table_inputs are stamped in BOTH modes on purpose: they are what a `gate=table` replay
     # needs, and they are unrecoverable from a stored row otherwise.
-    trace["table_inputs"] = {"shift_score": shift.get("shift_score"), "verdict": fund_verdict}
+    # `shift_direction` is stamped because it is the one input a stored row could not
+    # reconstruct: it is a function of the corpus AS OF the decision, and the corpus is not
+    # reproducible after the fact (the knowledge graph keeps growing and news_corpus_tool
+    # bounds nothing by ingestion time). Without it the matrix cell of a past decision is
+    # unrecoverable — measured 2026-08-21, a full regeneration reproduced the stored
+    # shift_score on 13 of 40 pairs.
+    trace["table_inputs"] = {"shift_score": shift.get("shift_score"), "verdict": fund_verdict,
+                             "shift_direction": shift.get("direction")}
     trace["deep_nudge"] = deep_nudge
     if gate_mode == "table":
         base = _table_conviction(config.CONVICTION_TABLE, shift.get("shift_score"), fund_verdict)
@@ -1144,6 +1175,20 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
             flags.append("no background shift — conviction capped below threshold (not actionable)")
         trace["vetoes"].append("no_shift")
         sig["conviction"] = round(max(0.0, capped), 2)
+
+    # MATRIX-CELL GATE: the side taken must be the one its cell licenses. Conformance, not a
+    # bet — the gate was trading cells SYNTHESIS_MATRIX_RULES tells synthesis to avoid, and
+    # the verdict alone cannot express the matrix because every licensed cell depends on the
+    # shift's sign. Deterministic, so a `gate=table` replay reproduces it exactly.
+    if getattr(config, "REQUIRE_MATRIX_CELL", False) and direction in ("LONG", "SHORT"):
+        if not matrix_licenses(shift.get("direction"), fund_verdict, direction):
+            capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
+            if capped < sig.get("conviction", 0.0):
+                flags.append(f"no matrix cell for {direction} at shift="
+                             f"{shift.get('direction')} / verdict={fund_verdict} "
+                             f"— conviction capped below threshold")
+            trace["vetoes"].append("no_matrix_cell")
+            sig["conviction"] = round(max(0.0, capped), 2)
 
     # priced-in: if the stock already moved hard in the signal's direction, cut conviction
     if priced.get("available") and direction in ("LONG", "SHORT"):

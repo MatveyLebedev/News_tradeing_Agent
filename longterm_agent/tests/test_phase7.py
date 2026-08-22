@@ -13,14 +13,28 @@ GOOD_FUND = {"has_statements": True, "revenue_yoy": 0.5,
              "trend": {"verdict": "confirms"}}
 
 
+def _licensing_shift(direction, verdict):
+    """The shift sign that makes (direction, verdict) a LICENSED matrix cell.
+
+    These tests are about the conviction table and the counter-trend penalty, so the state
+    they build has to clear the matrix-cell veto — otherwise every SHORT would be capped by
+    a guard the test is not exercising. Verdicts with no cell at any sign (unknown/ignores)
+    fall through to "negative" and stay vetoed, which is correct for them.
+    """
+    if verdict == "confirms":
+        return "positive" if direction == "LONG" else "negative"
+    return "negative"          # contradicts licenses LONG only
+
+
 def _state(conviction=0.8, direction="LONG", shift_score=0.8, verdict="confirms",
-           tech_ret=None, nudge=None):
+           tech_ret=None, nudge=None, shift_dir=None):
     fund = dict(GOOD_FUND)
     fund["trend"] = {"verdict": verdict}
     st = {"ticker": "TESTX", "as_of": datetime(2026, 6, 15), "article_count": 300,
           "signal": {"direction": direction, "conviction": conviction},
           "fundamentals": fund,
-          "background_shift": {"has_shifted": True, "direction": "positive",
+          "background_shift": {"has_shifted": True,
+                               "direction": shift_dir or _licensing_shift(direction, verdict),
                                "shift_score": shift_score}}
     if tech_ret is not None:
         st["technical_longterm"] = {"trend": "uptrend", "return_window_pct": tech_ret}

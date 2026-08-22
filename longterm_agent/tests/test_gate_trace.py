@@ -28,7 +28,10 @@ def _state(**over):
     st = {
         "ticker": "NVDA", "as_of": AS_OF, "article_count": 999,
         "signal": {"direction": "LONG", "conviction": 0.80},
-        "background_shift": {"has_shifted": True, "shift_score": 0.75},
+        # `direction` carries the shift SIGN: with verdict=confirms it is what makes a LONG
+        # a licensed matrix cell, so these tests exercise the trace rather than tripping
+        # the matrix-cell veto. Tests that flip the signal side override it.
+        "background_shift": {"has_shifted": True, "shift_score": 0.75, "direction": "positive"},
         # shape per _has_usable_fundamentals: income-side data, not just balance-sheet rows
         "fundamentals": {"trend": {"verdict": "confirms"}, "has_statements": True,
                          "revenue_yoy": 12.0, "margin_series": [{"net_margin": 0.3}]},
@@ -93,6 +96,8 @@ def test_penalties_are_recorded_with_their_amounts(stub, monkeypatch):
 def test_counter_trend_penalty_recorded(stub):
     # SHORT into a +80% trailing move → the 180d guard fires
     t = _run(_state(signal={"direction": "SHORT", "conviction": 0.80},
+                    background_shift={"has_shifted": True, "shift_score": 0.75,
+                                      "direction": "negative"},
                     technical_longterm={"return_window_pct": 80.0}))["gate_trace"]
     assert t["penalties"]["counter_trend"] == -LongTermAgentConfig.COUNTER_TREND_PENALTY
     assert t["trailing_return_pct"] == 80.0
@@ -103,7 +108,8 @@ def test_table_inputs_stamped_even_in_llm_mode(stub):
     """`gate=table` replays need these, and they are unrecoverable from a stored row."""
     t = _run(_state())["gate_trace"]
     assert t["gate_mode"] == "llm"
-    assert t["table_inputs"] == {"shift_score": 0.75, "verdict": "confirms"}
+    assert t["table_inputs"] == {"shift_score": 0.75, "verdict": "confirms",
+                                "shift_direction": "positive"}
     assert "deep_nudge" in t
 
 
@@ -111,6 +117,8 @@ def test_adverse_momentum_input_is_available_for_the_pending_ab(stub, monkeypatc
     """`adv_mom`'s stage-1 replay needs the window move even when no penalty fired."""
     monkeypatch.setattr(nodes, "priced_in_check",
                         lambda *a, **k: {"available": True, "window_move_pct": 34.9})
-    t = _run(_state(signal={"direction": "SHORT", "conviction": 0.80}))["gate_trace"]
+    t = _run(_state(signal={"direction": "SHORT", "conviction": 0.80},
+                    background_shift={"has_shifted": True, "shift_score": 0.75,
+                                      "direction": "negative"}))["gate_trace"]
     assert t["window_move_pct"] == 34.9        # move AGAINST the short
     assert t["penalties"] == {}                # nothing fires today — that is the finding

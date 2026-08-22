@@ -154,6 +154,21 @@ class LongTermAgentConfig:
     # not-traded) — the directional lean + thesis stay for information.
     REQUIRE_SHIFT_TO_TRADE = os.getenv("LT_REQUIRE_SHIFT", "true").lower() == "true"
 
+    # --- Matrix-cell eligibility (docs/AB_PLAN_matrix_cell.md) ---
+    # A LONG/SHORT requires the (shift sign, verdict) pair to license THAT side. The three
+    # licensed cells are transcribed from SYNTHESIS_MATRIX_RULES and live in
+    # agent/nodes.py::MATRIX_CELLS — there is no threshold here to tune.
+    #
+    # Defaults TRUE, unlike a feature flag, because this is conformance rather than a bet:
+    # the gate was trading cells the agent's own synthesis prompt tells it to avoid
+    # (`ignores` has no cell at any shift sign; `contradicts` licenses contrarian LONG or
+    # NEUTRAL, never SHORT; a missing verdict or missing shift direction places the decision
+    # nowhere). Measured impact is inside the noise on every surface available — sweeps 4w
+    # +0.71pp, live 2w -0.44pp, live 4w 0.00pp, live open book +0.04pp — which is what a
+    # spec fix should look like. `REQUIRE_SHIFT_TO_TRADE` above defaults true for the same
+    # reason and is the closest precedent. Set false to restore the pre-fix behaviour.
+    REQUIRE_MATRIX_CELL = os.getenv("LT_REQUIRE_MATRIX_CELL", "true").lower() == "true"
+
     # --- Conviction gate (Phase 7) ---
     # What number the 0.55 threshold operates on:
     #   "llm"   — the synthesis model's self-reported conviction (current behavior).
@@ -397,6 +412,10 @@ class LongTermAgentConfig:
                 "deep_analysis": cls.DEEP_ANALYSIS_ENABLED,
                 "deep_v2": cls.DEEP_V2,
                 "fewshot_analogs": cls.FEWSHOT_ANALOGS,
+                "require_matrix_cell": cls.REQUIRE_MATRIX_CELL,
+                # Keys bucket_summary_cache. Was never stamped, which is why 27 of 32 stored
+                # books cannot be told apart on which summaries they read.
+                "bucket_cache_version": cls.BUCKET_CACHE_VERSION,
             },
         }
 
