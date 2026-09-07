@@ -118,3 +118,46 @@ def test_flag_off_is_an_exact_no_op(db, cfg, monkeypatch):
     assert "no_matrix_cell" in on["gate_trace"]["vetoes"]
     # the stamp is unconditional: a replay needs it in both arms
     assert off["gate_trace"]["table_inputs"]["shift_direction"] == "negative"
+
+
+# --- the long-confirms-only book (live strategy, 2026-08-24) --------------------------
+@pytest.mark.parametrize("shift_dir,verdict,side,full,narrow", [
+    ("positive", "confirms", "LONG", True, True),      # the only cell that survives
+    ("negative", "confirms", "SHORT", True, False),    # short leg closed
+    ("negative", "contradicts", "LONG", True, False),  # overreaction cell closed
+    ("negative", "ignores", "SHORT", False, False),
+])
+def test_long_confirms_only_narrows_the_table(shift_dir, verdict, side, full, narrow):
+    assert matrix_licenses(shift_dir, verdict, side) is full
+    assert matrix_licenses(shift_dir, verdict, side, long_confirms_only=True) is narrow
+
+
+def test_long_confirms_only_is_a_subset_of_the_matrix():
+    """The book may narrow the matrix; it must never license something the matrix does not."""
+    from longterm_agent.agent.nodes import LONG_CONFIRMS_CELLS
+    for cell, sides in LONG_CONFIRMS_CELLS.items():
+        assert sides <= MATRIX_CELLS[cell]
+
+
+@pytest.mark.parametrize("shift_dir,verdict,side", [
+    ("negative", "confirms", "SHORT"),
+    ("negative", "contradicts", "LONG"),
+])
+def test_gate_vetoes_cells_the_book_closed(db, cfg, monkeypatch, shift_dir, verdict, side):
+    monkeypatch.setattr(cfg, "LONG_CONFIRMS_ONLY", True)
+    out = risk_gate_node(_state(side, verdict, shift_dir), db, cfg)
+    assert _vetoed(out)
+    assert out["filtered_signal"] is None
+    assert any("long-confirms" in f for f in out["risk_flags"])
+
+
+def test_gate_keeps_the_surviving_cell(db, cfg, monkeypatch):
+    monkeypatch.setattr(cfg, "LONG_CONFIRMS_ONLY", True)
+    out = risk_gate_node(_state("LONG", "confirms", "positive"), db, cfg)
+    assert not _vetoed(out)
+    assert out["signal"]["conviction"] >= cfg.LONGTERM_CONFIDENCE_THRESHOLD
+
+
+def test_book_flag_defaults_off(cfg):
+    """Rule 4: a strategy bet ships OFF and is enabled per-environment, not in code."""
+    assert cfg.LONG_CONFIRMS_ONLY is False

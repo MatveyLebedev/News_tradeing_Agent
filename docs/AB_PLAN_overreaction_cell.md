@@ -1,5 +1,23 @@
 # A/B plan — close the overreaction cell (`no_overreaction`)
 
+> **BLOCKED ON THE LIVE PATH, 2026-09-07 — awaiting a decision on its status.** The live book
+> narrowed to `(positive shift, confirms) → LONG` on expert advice (decision dated
+> 2026-08-24, shipped in `0.11.0` behind `LT_LONG_CONFIRMS_ONLY`). That book already closes
+> the cell this plan asks about, and closes the short leg besides — so the live path can
+> never accumulate the OFF arm this registration needs, and stage 2 as written cannot run
+> there. Two coherent resolutions, and it needs one:
+>
+> * **Withdraw it.** The question is settled by decision rather than by evidence; say so and
+>   close the entry, so nobody later reads an unrun registration as an open question.
+> * **Keep it, sweeps-only.** `LT_LONG_CONFIRMS_ONLY` defaults false, so the full matrix is
+>   still what backtests run and the arm stays measurable offline — but acceptance then rests
+>   on sweeps alone, which under the burned-grid rule can reject and never accept. That is a
+>   registration that cannot be accepted, and calling it anything else would be pretending.
+>
+> Leaving both the registration and the live book in force is the one option that is not
+> coherent. Everything below is unchanged and unrun.
+
+
 Pre-registered 2026-08-21, **before any run of this feature**, per anti-overfit rule 3.
 Supersedes the strategy half of `AB_PLAN_matrix_cell.md`, whose conformance half shipped as
 code in `75ae71c` and is no longer an experiment.

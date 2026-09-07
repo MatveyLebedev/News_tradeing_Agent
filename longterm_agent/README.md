@@ -35,7 +35,8 @@ Companion to the intraday `news_agent` (one-headline → intraday signal). This 
 | 6 | `reflection` | yes | Quality check; may loop back to shift/fundamentals (≤ `MAX_REFLECTION_ITERATIONS`). |
 | 7 | `risk_gate` | no | Priced-in check, earnings-event risk, **data-sufficiency guard**, conviction threshold → `filtered_signal`. |
 
-**The synthesis matrix** (the core logic):
+**The synthesis matrix** (the core logic) — full reference, including what the risk gate
+enforces on top of it and where the two disagree: [DECISION_MATRIX.md](DECISION_MATRIX.md):
 
 | | Fundamentals improving | Fundamentals deteriorating |
 |---|---|---|

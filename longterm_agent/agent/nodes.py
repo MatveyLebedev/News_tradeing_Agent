@@ -923,9 +923,21 @@ MATRIX_CELLS = {
 }
 
 
-def matrix_licenses(shift_direction, verdict, direction) -> bool:
-    """Does the matrix license `direction` for this (shift sign, verdict) pair?"""
-    return direction in MATRIX_CELLS.get((shift_direction, verdict), frozenset())
+# The live book adopted 2026-08-24 keeps only the first cell: no short leg, and the
+# overreaction cell closed. Held separately from MATRIX_CELLS because it is a strategy
+# choice, not the matrix — the matrix still licenses all three.
+LONG_CONFIRMS_CELLS = {("positive", "confirms"): frozenset({"LONG"})}
+
+
+def matrix_licenses(shift_direction, verdict, direction, long_confirms_only=False) -> bool:
+    """Does the matrix license `direction` for this (shift sign, verdict) pair?
+
+    `long_confirms_only` narrows the table to the single high-conviction long cell. That is
+    a book decision layered on top of the matrix, not a reading of it, which is why it is a
+    separate argument rather than a different transcription of the rules.
+    """
+    cells = LONG_CONFIRMS_CELLS if long_confirms_only else MATRIX_CELLS
+    return direction in cells.get((shift_direction, verdict), frozenset())
 
 
 def synthesis_node(state, llm, config) -> Dict[str, Any]:
@@ -1181,11 +1193,12 @@ def risk_gate_node(state, db_manager, config) -> Dict[str, Any]:
     # the verdict alone cannot express the matrix because every licensed cell depends on the
     # shift's sign. Deterministic, so a `gate=table` replay reproduces it exactly.
     if getattr(config, "REQUIRE_MATRIX_CELL", False) and direction in ("LONG", "SHORT"):
-        if not matrix_licenses(shift.get("direction"), fund_verdict, direction):
+        lco = getattr(config, "LONG_CONFIRMS_ONLY", False)
+        if not matrix_licenses(shift.get("direction"), fund_verdict, direction, lco):
             capped = min(sig.get("conviction", 0.0), config.LONGTERM_CONFIDENCE_THRESHOLD - 0.05)
             if capped < sig.get("conviction", 0.0):
-                flags.append(f"no matrix cell for {direction} at shift="
-                             f"{shift.get('direction')} / verdict={fund_verdict} "
+                flags.append(f"no {'long-confirms' if lco else 'matrix'} cell for {direction} "
+                             f"at shift={shift.get('direction')} / verdict={fund_verdict} "
                              f"— conviction capped below threshold")
             trace["vetoes"].append("no_matrix_cell")
             sig["conviction"] = round(max(0.0, capped), 2)

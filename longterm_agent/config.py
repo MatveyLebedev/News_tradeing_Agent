@@ -95,7 +95,11 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   * `broker_exits` now ensures the ledger schema; it can be the first broker step to touch
 #     the DB, and `paper_orders` would not exist yet.
 #   Also adds `ALPACA_HTTPS_PROXY`, read ONLY by the broker client — inert while unset.
-PIPELINE_VERSION = "0.10.1"
+# 0.11.0 — the live book narrows to `(positive shift, confirms) -> LONG` (decision
+#   2026-08-24, on expert advice). Behaviour change on the live path only: the flag
+#   `LT_LONG_CONFIRMS_ONLY` defaults false, so backtests and research keep the incumbent
+#   book and the arm this supersedes stays measurable offline.
+PIPELINE_VERSION = "0.11.0"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -168,6 +172,24 @@ class LongTermAgentConfig:
     # spec fix should look like. `REQUIRE_SHIFT_TO_TRADE` above defaults true for the same
     # reason and is the closest precedent. Set false to restore the pre-fix behaviour.
     REQUIRE_MATRIX_CELL = os.getenv("LT_REQUIRE_MATRIX_CELL", "true").lower() == "true"
+
+    # --- Long-confirms-only book (live strategy decision, 2026-08-24) ---
+    # Restricts MATRIX_CELLS to `(positive, confirms) -> LONG`: no short leg, and the
+    # overreaction cell `(negative, contradicts) -> LONG` closed too.
+    #
+    # Defaults FALSE and is enabled per-environment, NOT in code, because unlike
+    # REQUIRE_MATRIX_CELL above this is a strategy bet rather than conformance — it deletes
+    # cells SYNTHESIS_MATRIX_RULES explicitly licenses. Keeping the default off means
+    # backtests and research keep the incumbent book unless they opt in, so the arm this
+    # change supersedes stays measurable offline. Which mode a run used is stamped in
+    # provenance, so a stored row always says which book it belongs to.
+    #
+    # Measured before adoption (docs/EVENT_STUDY_2026-08-20.md, exploratory): on sweeps it
+    # is the highest-mean arm and on the least-mined dates the highest-median one, but it
+    # keeps 26% of trades, halves the name count, drops the hedge (book beta 0.84 -> 1.23)
+    # and concentrates the tail (top-5 share of P&L 36% -> 58%). Adopted on expert advice
+    # against those measurements, not because they were resolved.
+    LONG_CONFIRMS_ONLY = os.getenv("LT_LONG_CONFIRMS_ONLY", "false").lower() == "true"
 
     # --- Conviction gate (Phase 7) ---
     # What number the 0.55 threshold operates on:
@@ -413,6 +435,7 @@ class LongTermAgentConfig:
                 "deep_v2": cls.DEEP_V2,
                 "fewshot_analogs": cls.FEWSHOT_ANALOGS,
                 "require_matrix_cell": cls.REQUIRE_MATRIX_CELL,
+                "long_confirms_only": cls.LONG_CONFIRMS_ONLY,
                 # Keys bucket_summary_cache. Was never stamped, which is why 27 of 32 stored
                 # books cannot be told apart on which summaries they read.
                 "bucket_cache_version": cls.BUCKET_CACHE_VERSION,
