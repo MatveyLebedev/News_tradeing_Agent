@@ -65,3 +65,18 @@ temp_code.py
 .pytest_cache/
 # Phase 11 training exports (regenerable from DB)
 longterm_agent/exports/
+
+# Research-harness output: charts and per-trade CSVs written next to the module that made
+# them. Regenerable from the DB by re-running the harness, never an input to anything, and
+# a sweep drops a dozen at a time — 32 of them had accumulated untracked by 2026-09-07.
+# Scoped by harness prefix so the tracked schema diagrams (pipeline_schema, data_model_schema,
+# add_tools_vs_deep_agents) are not caught.
+longterm_agent/holding_curve_lt_*.png
+longterm_agent/holding_curve_lt_*.csv
+# event_study.py --outdir defaults to the cwd, so running it from the repo root lands here
+es_direction.png
+es_verdict.png
+es_cell.png
+es_premove.png
+es_variants.png
+es_spy.png
