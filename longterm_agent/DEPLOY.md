@@ -95,6 +95,14 @@ psql "$DATABASE_URL" -f longterm_agent/create_bucket_cache_table.sql
 
 ## 4. Build & run
 
+> **Production does not run this way.** §4 describes the local/compose flow, which is what you
+> want on a laptop. The server has **no compose file for this agent** — both containers were
+> started with plain `docker run` and carry no compose labels, so the run command exists
+> nowhere except inside the containers themselves. §4a is the procedure that actually applies
+> there; it was reconstructed from `docker inspect` on 2026-09-07 and is written down so the
+> next person does not have to reconstruct it again.
+
+
 ```bash
 # build the image (context = repo root)
 docker compose build longterm-agent
@@ -109,6 +117,53 @@ docker compose logs -f longterm-stats-bot
 
 On start the scheduler logs the cadence and (if Telegram is configured) sends
 `🟢 Long-term agent scheduler started`. The bot replies to `/stats`.
+
+## 4a. Production: ship an image and recreate (no registry, no compose)
+
+Delivery is `deploy/ship_image.sh` over SSH — never `docker push`, see the header of that
+script and `../docs/` for why. Shipping puts the image on the server; it does **not** restart
+anything, so a deploy is two steps and skipping the second silently leaves the old build
+running (that happened on 2026-09-07).
+
+```bash
+# 1. build + ship (the script scans the image for baked .env/.bak before it leaves the machine)
+docker build --platform linux/amd64 -t longterm-agent:<PIPELINE_VERSION> -f longterm_agent/Dockerfile .
+DEPLOY_HOST=root@<host> deploy/ship_image.sh longterm-agent:<PIPELINE_VERSION>
+
+# 2. recreate both containers on the new tag, keeping the old ones as a rollback point
+ssh root@<host> '
+  for n in longterm_agent longterm_stats_bot; do
+    case $n in
+      longterm_agent)     MOD=longterm_agent.auto_longterm_agent ;;
+      longterm_stats_bot) MOD=longterm_agent.stats_bot ;;
+    esac
+    docker rename $n ${n}_old && docker stop ${n}_old
+    docker run -d --name $n --restart unless-stopped --network bridge \
+      --env-file /root/trade_agent/.env \
+      --log-opt max-size=10m --log-opt max-file=3 \
+      longterm-agent:<PIPELINE_VERSION> python -u -m $MOD
+  done'
+```
+
+Verify against the **running container**, not the working tree — that is the only check that
+catches "shipped but never recreated":
+
+```bash
+ssh root@<host> 'docker exec longterm_agent python -c "
+from longterm_agent.config import LongTermAgentConfig as c
+print(c.PIPELINE_VERSION, c.LONG_CONFIRMS_ONLY, c.REQUIRE_MATRIX_CELL)"'
+```
+
+Then `docker rm` the `*_old` containers once the new ones have logged their scheduler line.
+
+**Environment.** All app config comes from `/root/trade_agent/.env` (mode 600) via
+`--env-file`; there is no other source, verified by diffing the container's variable names
+against the file. Behaviour flags that differ from code defaults must be set there —
+`LT_LONG_CONFIRMS_ONLY=true` is the live book, and without it the image runs the full matrix.
+
+**Do not leave `.env.bak*` behind.** Three such files sat in that directory until 2026-09-07,
+two months old, **mode 644** — world-readable copies of the same credentials whose sibling
+leaked in the Docker Hub incident. Back up outside the deploy directory or not at all.
 
 ### Smoke-test before waiting a week
 ```bash

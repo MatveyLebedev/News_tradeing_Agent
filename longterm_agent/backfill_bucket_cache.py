@@ -55,6 +55,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,6 +65,9 @@ if _REPO_ROOT not in sys.path:
 from core.db import connect  # noqa: E402
 
 BUCKET_DAYS = 7
+# A private namespace must carry this prefix: production keys are versions like "0.1.0",
+# so the rule makes them unreachable while letting an interrupted backfill resume its own.
+PRIVATE_PREFIX = "backfill-"
 
 
 def protected_namespaces(cur):
@@ -123,8 +127,15 @@ def existing(cur, namespace):
     return {(t, w) for t, w in cur.fetchall()}
 
 
-def generate(slots, namespace, limit):
-    """One corpus collection per TICKER (not per pair), then map the missing weeks."""
+def generate(slots, namespace, limit, workers):
+    """One corpus collection per TICKER (not per pair), then map the missing weeks.
+
+    Corpus collection stays sequential — `Neo4jManager` is shared and its thread safety is
+    not established here, and it is one call per ticker rather than per week anyway. The map
+    calls inside a ticker are pooled: they are independent, and `bucket_cache._conn` opens a
+    fresh psycopg2 connection per write instead of drawing on the shared pool, so concurrent
+    writes cannot starve it.
+    """
     from news_agent.database.db_manager import DBManager
     from graph_db.neo4j_manager import Neo4jManager
     from longterm_agent.config import LongTermAgentConfig as cfg
@@ -148,39 +159,57 @@ def generate(slots, namespace, limit):
     neo = Neo4jManager()
     llm_map = cfg.make_llm(model=cfg.MAP_MODEL, max_tokens=2048)
     written = empty = failed = 0
+    corpus_s = map_s = 0.0
     t0 = time.time()
     total = sum(len(v) for v in by_ticker.values())
     for n, (ticker, weeks) in enumerate(sorted(by_ticker.items()), 1):
         lo, hi = min(weeks), max(weeks)
         as_of = hi + timedelta(days=BUCKET_DAYS)
         lookback = (as_of - lo).days + 1
+        tc = time.time()
         try:
             corpus = get_company_news_corpus(ticker, as_of, lookback, db, neo,
                                              min_confidence=cfg.AFFECTS_MIN_CONFIDENCE,
                                              embed_enabled=False)
         except Exception as e:
-            print(f"  ⚠ {ticker}: corpus failed ({e}) — {len(weeks)} weeks skipped")
+            print(f"  ⚠ {ticker}: corpus failed ({e}) — {len(weeks)} weeks skipped", flush=True)
             failed += len(weeks)
             continue
+        corpus_s += time.time() - tc
         arts = corpus["articles"]
         by_id = {a["id"]: a for a in arts}
+        jobs = []
         for w0 in weeks:
             w1 = w0 + timedelta(days=BUCKET_DAYS)
             in_week = [a for a in arts if w0 <= a["published"] < w1]
             if not in_week:  # invariant 2
                 empty += 1
                 continue
-            bucket = {"index": 0, "start": w0, "end": w1,
-                      "article_ids": [a["id"] for a in in_week], "count": len(in_week),
-                      "affects_sentiments": [a["affects_sentiment"] for a in in_week
-                                             if a.get("affects_sentiment")]}
+            jobs.append((w0, {"index": 0, "start": w0, "end": w1,
+                              "article_ids": [a["id"] for a in in_week], "count": len(in_week),
+                              "affects_sentiments": [a["affects_sentiment"] for a in in_week
+                                                     if a.get("affects_sentiment")]}))
+
+        def _one(job):
+            w0, bucket = job
             bucket_cache.put_cached(db, ticker, w0.date(), namespace,
                                     _map_bucket(llm_map, bucket, by_id))
-            written += 1
+
+        tm = time.time()
+        if jobs:
+            if workers > 1:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(_one, jobs))
+            else:
+                for job in jobs:
+                    _one(job)
+        map_s += time.time() - tm
+        written += len(jobs)
         print(f"  [{n}/{len(by_ticker)}] {ticker}: {len(weeks)} weeks "
-              f"| written {written}/{total}, empty {empty} | {time.time() - t0:.0f}s")
+              f"| written {written}/{total}, empty {empty} | {time.time() - t0:.0f}s", flush=True)
+    el = time.time() - t0
     print(f"\n  written {written} | empty (correctly not cached) {empty} | failed {failed}")
-    print(f"  wall clock {time.time() - t0:.0f}s")
+    print(f"  wall clock {el:.0f}s  (corpus {corpus_s:.0f}s, map {map_s:.0f}s, workers={workers})")
 
 
 def main():
@@ -190,9 +219,13 @@ def main():
                     help="decision time of day the selected books ran on — no default, see the "
                          "module docstring; rows whose recorded cohort_time_et disagrees are refused")
     ap.add_argument("--books", nargs="+", help="restrict to these backtest_ids")
-    ap.add_argument("--namespace", help="private cache namespace to write into (required with --apply)")
+    ap.add_argument("--namespace",
+                    help=f"private cache namespace to write into; must start with {PRIVATE_PREFIX!r} "
+                         "(required with --apply)")
     ap.add_argument("--apply", action="store_true", help="write; omit for a dry run")
     ap.add_argument("--limit", type=int, default=0, help="cap weeks generated (timed sample)")
+    ap.add_argument("--workers", type=int, default=6,
+                    help="parallel map calls within a ticker (corpus stays sequential)")
     args = ap.parse_args()
     try:
         datetime.strptime(args.clock, "%H:%M")
@@ -205,12 +238,14 @@ def main():
     if args.apply:
         if not args.namespace:
             raise SystemExit("--apply requires --namespace (a private one)")
-        if args.namespace in protected:
+        if not args.namespace.startswith(PRIVATE_PREFIX):
             raise SystemExit(
-                f"REFUSING to write into {args.namespace!r}: the agent reads that namespace.\n"
-                f"  protected: {sorted(protected)}\n"
+                f"REFUSING {args.namespace!r}: a private namespace must start with "
+                f"{PRIVATE_PREFIX!r}.\n"
+                f"  namespaces the agent reads: {sorted(protected)}\n"
                 "  Bucket boundaries carry the decision clock, so a summary written under the "
-                "wrong one is silently mismatched news. Use a private namespace.")
+                "wrong one is silently mismatched news. The prefix rule makes a production "
+                "namespace unreachable by construction, and lets this tool resume its own.")
 
     pairs, refused, unknown = select_pairs(cur, args.clock, args.books)
     slots = needed_slots(pairs, args.clock)
@@ -233,7 +268,7 @@ def main():
     if not args.apply:
         print("\n-- dry run; add --namespace <private> --apply to write --")
         return
-    generate(set(todo), args.namespace, args.limit)
+    generate(set(todo), args.namespace, args.limit, max(1, args.workers))
 
 
 if __name__ == "__main__":
