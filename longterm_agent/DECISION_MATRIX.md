@@ -141,10 +141,10 @@ book any stored row belongs to.
 ## 7. The cell that was under question
 
 `negative + contradicts → LONG` was registered for possible closure as `no_overreaction`
-(`../docs/AB_PLAN_overreaction_cell.md`). **That registration is now blocked on the live
-path** — the §6 book closes the cell outright, so the comparison arm can no longer
-accumulate there. Its status is undecided; the plan's header sets out the two coherent
-resolutions.
+(`../docs/AB_PLAN_overreaction_cell.md`). The §6 book closes the cell outright, so it can no
+longer be enabled live on acceptance and live corroboration stops accruing — but the
+registration **stays open and runnable**: its stage 2 is a sweep, and the book flag defaults
+false, so backtests still produce both arms.
 
 The motivation is mechanism-level: the cell exists to buy an overreaction *after a name has
 been beaten down*, and split by the 21-day pre-move it returns +13.83% (median +3.94) when

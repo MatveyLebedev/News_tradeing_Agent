@@ -102,11 +102,13 @@ stage B (unguarded block) may still be re-examined on post-07-17 forward-covered
 cohorts per #12's criteria; stage B.2 (guard sentence) is dead.
 
 ## Queued / future
-- **`no_overreaction` — BLOCKED ON THE LIVE PATH 2026-09-07, status undecided** (the live book
-  narrowed to `(positive, confirms) → LONG` on expert advice, `0.11.0`, so the OFF arm can no
-  longer accumulate live; withdraw it or keep it sweeps-only, where it can reject but never
-  accept — see the header of `docs/AB_PLAN_overreaction_cell.md`). Original entry
-  (pre-registered 2026-08-21, NOT yet run;
+- **`no_overreaction` — OPEN and runnable; stage 3 blocked 2026-09-07.** The live book
+  narrowed to `(positive, confirms) → LONG` (`0.11.0`), closing the cell this asks about — so
+  "enable live on acceptance" cannot happen without reopening the book, and live corroboration
+  stops accruing. Stages 1 and 2 are unaffected: stage 2 is a sweep with the challenger arm
+  obtained by replay, and `LT_LONG_CONFIRMS_ONLY` defaults false so backtests still run the
+  full matrix. A note here on 2026-09-07 claimed the whole registration was blocked; that
+  over-corrected and is retracted. Original entry (pre-registered 2026-08-21, NOT yet run;
   full plan `docs/AB_PLAN_overreaction_cell.md`).** ONE formulation: delete
   `(negative shift, contradicts) → LONG` from `MATRIX_CELLS`, leaving `(positive, confirms)`
   as the only long entry. Flag `LT_CLOSE_OVERREACTION`, default OFF. Motivation is

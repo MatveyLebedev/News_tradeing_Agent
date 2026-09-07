@@ -1,22 +1,24 @@
 # A/B plan — close the overreaction cell (`no_overreaction`)
 
-> **BLOCKED ON THE LIVE PATH, 2026-09-07 — awaiting a decision on its status.** The live book
-> narrowed to `(positive shift, confirms) → LONG` on expert advice (decision dated
-> 2026-08-24, shipped in `0.11.0` behind `LT_LONG_CONFIRMS_ONLY`). That book already closes
-> the cell this plan asks about, and closes the short leg besides — so the live path can
-> never accumulate the OFF arm this registration needs, and stage 2 as written cannot run
-> there. Two coherent resolutions, and it needs one:
+> **STAGE 3 ONLY IS BLOCKED, 2026-09-07 — the plan otherwise stands.** The live book narrowed
+> to `(positive shift, confirms) → LONG` on expert advice (decision dated 2026-08-24, shipped
+> in `0.11.0` behind `LT_LONG_CONFIRMS_ONLY`), which closes the cell this plan asks about.
 >
-> * **Withdraw it.** The question is settled by decision rather than by evidence; say so and
->   close the entry, so nobody later reads an unrun registration as an open question.
-> * **Keep it, sweeps-only.** `LT_LONG_CONFIRMS_ONLY` defaults false, so the full matrix is
->   still what backtests run and the arm stays measurable offline — but acceptance then rests
->   on sweeps alone, which under the burned-grid rule can reject and never accept. That is a
->   registration that cannot be accepted, and calling it anything else would be pretending.
+> An earlier note here claimed the whole registration was blocked. That was wrong and is
+> corrected: **stages 1 and 2 never used the live path.** Stage 2 is a sweep — one run with
+> the full matrix, the challenger arm obtained by replay — and the flag defaults false, so
+> backtests still produce both arms. The power figures below are already stated in sweep
+> cohorts.
 >
-> Leaving both the registration and the live book in force is the one option that is not
-> coherent. Everything below is unchanged and unrun.
-
+> What is genuinely blocked is **stage 3**: "if stage 2 accepts, enable live". A cell the live
+> book has closed cannot be enabled live without reopening the book, which is a decision
+> outside this plan. Also lost is live corroboration — no new overreaction trades will appear
+> there, so the cross-check that stage 1 leans on (7 of 7 live overreaction trades carry a
+> negative shift) cannot be extended.
+>
+> The registration therefore **stays open and runnable**. If stage 2 accepts, the result is a
+> finding that the live book already acts on; if it rejects, the book was right for a reason
+> nobody had measured. Either way it is worth knowing, and it costs a replay.
 
 Pre-registered 2026-08-21, **before any run of this feature**, per anti-overfit rule 3.
 Supersedes the strategy half of `AB_PLAN_matrix_cell.md`, whose conformance half shipped as
