@@ -1,4 +1,4 @@
-"""Build the eval datasets from the live DB → evals/datasets/*.jsonl (versioned in git).
+"""Build the eval datasets from the live DB → evals/datasets/*.jsonl (gitignored — rebuild locally).
 
 Rebuild deliberately (datasets are frozen test fixtures, not live views):
     python -m evals.build_datasets [--tickers ...] [--lookback 150]

@@ -16,6 +16,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 # NOTE: bot.py calls load_dotenv("/app/.env"). That file is deliberately absent from the
-# image (it is what leaked publicly — docs/SECURITY_INCIDENT_2026-08-11.md); the call is a
+# image (it is what leaked publicly in the 2026-08-11 incident); the call is a
 # harmless no-op and the environment arrives via `--env-file` at run time.
 CMD ["python", "telegram_bot/bot.py"]

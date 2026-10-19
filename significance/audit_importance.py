@@ -13,7 +13,7 @@ from sklearn.metrics import average_precision_score as AP
 
 warnings.filterwarnings("ignore")
 rng = np.random.default_rng(0)
-D = Path("/Users/lebedevmatvey/test/significance/data")
+D = Path(__file__).resolve().parent / "data"
 from regex_featurizer import RegexFeaturizer
 REGEX = RegexFeaturizer().feature_names
 GP = ["g_affects_conf", "g_sentiment", "g_sent_net", "g_n_events", "g_from_single_evt", "g_min_evt_companies"]

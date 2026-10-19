@@ -24,7 +24,7 @@ import psycopg2
 
 from regex_featurizer import RegexFeaturizer
 
-ROOT = Path("/Users/lebedevmatvey/test")
+ROOT = Path(__file__).resolve().parents[1]
 D = ROOT / "significance" / "data"
 OUT = D / "features_tabular.parquet"
 TICKER_CACHE = D / "ticker_features.parquet"

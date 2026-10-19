@@ -26,7 +26,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
-ROOT = Path("/Users/lebedevmatvey/test")
+ROOT = Path(__file__).resolve().parents[1]
 LABELS = ROOT / "significance" / "data" / "labels.parquet"
 OUT_PAIR = ROOT / "significance" / "data" / "graph_pair_features.parquet"
 OUT_ART = ROOT / "significance" / "data" / "graph_article_features.parquet"

@@ -15,7 +15,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import psycopg2
 
-ROOT = Path("/Users/lebedevmatvey/test")
+ROOT = Path(__file__).resolve().parents[1]
 LABELS = ROOT / "significance" / "data" / "labels.parquet"
 OUT_TEXT = ROOT / "significance" / "data" / "news_text.parquet"
 OUT_EMB = ROOT / "significance" / "data" / "embeddings.npz"

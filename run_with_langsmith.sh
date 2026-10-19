@@ -18,7 +18,8 @@ conda activate trading-agent
 
 # Set LangSmith environment variables
 export LANGCHAIN_TRACING_V2=true
-export LANGCHAIN_API_KEY=REMOVED_LANGSMITH_KEY
+: "${LANGCHAIN_API_KEY:?set LANGCHAIN_API_KEY (e.g. in .env) before running}"
+export LANGCHAIN_API_KEY
 export LANGCHAIN_PROJECT=news-trading-agent
 export LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 

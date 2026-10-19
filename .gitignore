@@ -80,3 +80,11 @@ es_cell.png
 es_premove.png
 es_variants.png
 es_spy.png
+
+# Kept out of the public repository: news titles/summaries are third-party content, and the
+# incident write-up lists credentials whose rotation is still open. All regenerable or local.
+docs/SECURITY_INCIDENT_*.md
+significance/data/
+longterm_agent/reports/*.jsonl
+evals/datasets/*.jsonl
+profit_compute/holding_curve_agent_trades.csv

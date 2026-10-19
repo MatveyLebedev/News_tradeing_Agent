@@ -32,7 +32,7 @@ ssh <deploy-user>@<SERVER_IP>
 ### 2. Build and Ship to the Server
 
 **Images are never pushed to a public registry.** Do not run `docker push` for this
-project — see [SECURITY_INCIDENT_2026-08-11.md](docs/SECURITY_INCIDENT_2026-08-11.md) for
+project — see the 2026-08-11 security incident (write-up kept out of the public repo) for
 what that cost. `docker push` creates a new repository as **public by default**, with no
 prompt and no warning.
 

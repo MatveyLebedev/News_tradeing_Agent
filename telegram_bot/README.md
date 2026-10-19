@@ -29,7 +29,7 @@ flowchart TD
 
 > ⚠ **This image is the one that leaked.** The published
 > `matveylebedev891/telegram-bot:latest` contained a real `/app/.env` and was public for
-> four months — see [docs/SECURITY_INCIDENT_2026-08-11.md](../docs/SECURITY_INCIDENT_2026-08-11.md).
+> four months (2026-08-11 incident; the write-up is kept out of the public repo).
 > There is no `docker push` step any more, and the image name is deliberately unqualified
 > so there is nowhere to push it to. Verify `.dockerignore` excludes `.env` before building.
 

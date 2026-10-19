@@ -35,7 +35,7 @@ import psycopg2
 from neo4j import GraphDatabase
 
 # ----------------------------- config -----------------------------
-ROOT = Path("/Users/lebedevmatvey/test")
+ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "significance" / "data" / "labels.parquet"
 WINDOWS = [15, 30, 60]            # trading minutes (= bars)
 Z_K = 2.0                         # primary threshold: |move| >= Z_K * sigma

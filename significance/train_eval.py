@@ -21,7 +21,7 @@ from sklearn.metrics import average_precision_score, roc_auc_score, brier_score_
 
 warnings.filterwarnings("ignore")
 rng = np.random.default_rng(0)
-D = Path("/Users/lebedevmatvey/test/significance/data")
+D = Path(__file__).resolve().parent / "data"
 
 from regex_featurizer import RegexFeaturizer  # noqa: E402
 REGEX_COLS = RegexFeaturizer().feature_names
