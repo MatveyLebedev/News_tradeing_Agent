@@ -323,7 +323,7 @@ input[type=text]{width:100%;box-sizing:border-box;font:inherit;padding:6px;borde
 <input type="text" id="note" placeholder="note (optional)"></div>
 <p class="mut">Keys: 1 subject · 2 involved · 3 context · 4 not_in_text · q positive · w neutral · e negative · u unsure · ←/→ navigate · Enter next unlabeled. Guide: docs/GOLD_LABELING_GUIDE.md. Labels live in this browser (localStorage) — export the CSV when done.</p>
 </main><script>
-const ITEMS=__ITEMS__;const KEY="gold_labels_v1";
+const ITEMS=__ITEMS__;const KEY="__KEY__";
 let L={};try{L=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(L))}catch(e){}};
 const ROLES=[["subject","1"],["involved","2"],["context","3"],["not_in_text","4"]];
@@ -351,16 +351,20 @@ if(k==="u"){unsure.checked=!unsure.checked;unsure.onchange()}if(k==="ArrowLeft")
 document.getElementById("export").onclick=()=>{const q=s=>'"'+String(s??"").replace(/"/g,'""')+'"';
 const rows=[["item_id","news_id","ticker","role","sentiment","unsure","note"].join(",")];
 for(const it of ITEMS){const l=L[it.item_id]||{};rows.push([it.item_id,it.news_id,it.ticker,l.role||"",l.sentiment||"",l.unsure?"1":"",l.note||""].map(q).join(","))}
-const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([rows.join("\\n")],{type:"text/csv"}));a.download="gold_labels.csv";a.click()};
+const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([rows.join("\\n")],{type:"text/csv"}));a.download="__EXPORT__";a.click()};
 render();
 </script></body></html>"""
 
 
-def write_html(items, path):
+def write_html(items, path, storage_key="gold_labels_v1", export_name="gold_labels.csv"):
+    """Offline labeling page. Each page needs its own storage_key: two pages on the same
+    origin sharing one would read each other's labels."""
     slim = [{k: it[k] for k in ("item_id", "news_id", "published", "source", "title", "summary",
                                 "ticker", "names")} for it in items]
     data = json.dumps(slim, ensure_ascii=False).replace("</", "<\\/")
-    path.write_text(HTML.replace("__ITEMS__", data), encoding="utf-8")
+    html = (HTML.replace("__KEY__", storage_key).replace("__EXPORT__", export_name)
+            .replace("__ITEMS__", data))  # data last: article text must not be scanned for placeholders
+    path.write_text(html, encoding="utf-8")
 
 
 if __name__ == "__main__":
