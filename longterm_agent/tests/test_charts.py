@@ -308,3 +308,52 @@ def test_monday_fwd_env_pins_the_provider_without_touching_the_parent():
     assert env["LLM_PROVIDER"] == "novita" and env["LT_LLM_CACHE"] == "true"
     assert env["LT_METRICS_VERSION"] == "2"      # inherits the container's detection pick
     assert "LLM_PROVIDER" not in base            # parent env untouched
+
+
+REPLAY = ("replayed 2026-10-19 after the live run failed (OpenRouter 402 credits exhausted); "
+          "decided after as_of, daily fill prices it before the decision existed")
+
+
+def test_open_positions_list_replays_outside_the_book():
+    """A replayed week is shown — hidden, it read as a week never filled (asked twice) —
+    but its fill predates its decision, so it must stay out of every total."""
+    from longterm_agent.stats import format_open_positions_html
+    base = {"verdict": "LONG", "days_open": 5, "entry_px_used": 100.0, "last_px": 101.0,
+            "matures": "2026-11-16"}
+    rows = [{**base, "ticker": "UNH", "as_of": "2026-10-19", "position_return": 0.04,
+             "excess_now": 0.03},
+            {**base, "ticker": "KO", "as_of": "2026-10-05", "position_return": -0.20,
+             "excess_now": -0.22, "excluded": REPLAY}]
+    out = format_open_positions_html(rows)
+
+    assert "<b>Open positions</b> (1)" in out, "the head counts the book, not the replay"
+    book, outside = out.split("Outside the record")
+    assert "UNH" in book and "KO" not in book
+    assert "KO" in outside and "OpenRouter 402" in outside
+    assert "pos <code>+4.0%</code> · vs SPY <code>+3.0%</code>" in book.split("book</b>")[1]
+
+
+def test_a_book_of_only_replays_still_says_flat():
+    from longterm_agent.stats import format_open_positions_html
+    out = format_open_positions_html([{
+        "ticker": "KO", "verdict": "LONG", "as_of": "2026-10-05", "days_open": 19,
+        "position_return": 0.01, "excess_now": None, "matures": "2026-11-02",
+        "excluded": REPLAY}])
+    assert "(0)" in out and "flat" in out and "KO" in out
+    assert "equal-weight" not in out, "no book line when the book is empty"
+
+
+def test_chart_fades_replays_and_keeps_them_out_of_the_subtitle(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(charts, "_bars",
+                        lambda ax, labels, values, faded=None: seen.update(
+                            labels=labels, faded=faded))
+    monkeypatch.setattr(charts, "_title",
+                        lambda ax, title, subtitle=None: seen.update(subtitle=subtitle))
+    rows = [_pos("UNH", 0.04), _pos("JPM", 0.01), {**_pos("KO", 0.30), "excluded": REPLAY}]
+    assert charts.open_positions_chart(rows)
+
+    assert seen["faded"] == [True, False, False]      # sorted: KO's +30% is first
+    assert seen["labels"][0].endswith("· replay")
+    assert "book +2.5%" in seen["subtitle"], "the replay's +30% must not lift the book"
+    assert "not counted" in seen["subtitle"]

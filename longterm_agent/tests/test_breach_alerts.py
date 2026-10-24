@@ -150,3 +150,15 @@ def test_failing_breach_scan_does_not_discard_the_grading(monkeypatch):
     assert log.index("commit") < log.index("scan")   # grades are durable BEFORE alerting
     assert "oplog" in log                       # …and the scan failure is still recorded
     assert log[-1] == "close"
+
+
+def test_replayed_rows_never_raise_a_stop_breach():
+    """Nobody holds a pit_excluded replay, so 'exit per discipline' would be noise."""
+    class SpyCursor(FakeCursor):
+        def execute(self, sql, params=None):
+            self.sql = sql
+            super().execute(sql, params)
+
+    cur = SpyCursor()
+    grade_results.scan_open_breaches(cur, CFG, TODAY)
+    assert "pit_excluded IS NULL" in cur.sql

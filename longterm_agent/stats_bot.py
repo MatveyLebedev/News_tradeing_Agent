@@ -215,7 +215,9 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @authorized
 async def cmd_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await asyncio.to_thread(stats.open_positions)
+    # Replayed weeks ride along, marked and outside the totals — hidden, they read as weeks
+    # that were never filled.
+    rows = await asyncio.to_thread(stats.open_positions, include_excluded=True)
     await _reply_long(update, stats.format_open_positions_html(rows))
     # Same chart the weekly digest uses — the live book is the live book.
     try:

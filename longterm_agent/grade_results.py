@@ -145,11 +145,16 @@ def _post_shift_daily_means(neo, db_config, ticker, as_of, days):
 
 def scan_open_breaches(cur, cfg, today) -> int:
     """One-time Telegram alert for open trades whose position return breached the stop.
-    Best-effort: alerting must never block grading."""
+    Best-effort: alerting must never block grading.
+
+    pit_excluded rows are skipped: nobody holds a replayed position, so "exit per
+    discipline" on one is an instruction with nothing to act on. They still grade.
+    """
     cur.execute("""
         SELECT id, ticker, as_of, verdict, run_timestamp FROM longterm_agent_results
         WHERE agent_version=%s AND traded AND verdict IN ('LONG','SHORT')
           AND outcome_filled_at IS NULL AND exit_alert_at IS NULL
+          AND pit_excluded IS NULL
     """, [cfg.AGENT_VERSION])
     open_rows = cur.fetchall()
     if not open_rows:

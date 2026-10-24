@@ -611,7 +611,7 @@ def format_health(h: Dict[str, Any]) -> str:
 
 
 # --- /open: the live book right now ------------------------------------------------------
-def open_positions(live: bool = True) -> List[Dict[str, Any]]:
+def open_positions(live: bool = True, include_excluded: bool = False) -> List[Dict[str, Any]]:
     """Every ungraded trade of the current version, stamped with unrealized P&L.
 
     Unlike /week this has no window — a position is live until it grades, however long
@@ -619,21 +619,27 @@ def open_positions(live: bool = True) -> List[Dict[str, Any]]:
     SPY entry-bar open under the row's fill convention, both to the latest close), so
     the number a position shows while open is directly comparable to the one it will
     close with.
+
+    include_excluded=True also returns ungraded `pit_excluded` trades, each carrying its
+    reason in `excluded`. Those are the weeks replayed after an outage (2026-10-19): the
+    operator asked twice where they went, because hiding them looked like they were never
+    filled. Every caller that aggregates must drop them — they are shown, never counted.
     """
     from longterm_agent import exit_rules
     conn = _conn()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT ticker, as_of, verdict, conviction, entry_date, entry_px, fill_convention,
-                   signal->>'thesis'
+                   signal->>'thesis', pit_excluded
             FROM longterm_agent_results
-            WHERE agent_version=%s AND traded AND pit_excluded IS NULL AND fwd_return_4w IS NULL
+            WHERE agent_version=%s AND traded AND fwd_return_4w IS NULL
+              AND (pit_excluded IS NULL OR %s)
             ORDER BY as_of, ticker
-        """, [_version()])
+        """, [_version(), include_excluded])
         rows = [{"ticker": t, "as_of": a, "verdict": v, "conviction": c, "entry_date": ed,
                  "entry_px": float(px) if px is not None else None, "fill_convention": fc,
-                 "thesis": th}
-                for t, a, v, c, ed, px, fc, th in cur.fetchall()]
+                 "thesis": th, "excluded": ex}
+                for t, a, v, c, ed, px, fc, th, ex in cur.fetchall()]
 
         cur.execute("""SELECT close FROM stock_prices_daily
                        WHERE ticker='SPY' ORDER BY date DESC LIMIT 1""")
@@ -767,14 +773,22 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
     Every number here is provisional and the footer says so explicitly — an unrealized
     mean over a handful of open positions has already been misread as a result once in
     this project.
+
+    Rows carrying `excluded` (pit_excluded) are listed after the book's totals, under their
+    reason, and never enter them.
     """
     p = _fmt_pct
     esc = lambda s: (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-    head = f"💼 <b>Open positions</b> ({len(rows)}) · <code>v{esc(_version())}</code>"
+    book = [r for r in rows if not r.get("excluded")]
+    outside = [r for r in rows if r.get("excluded")]
+    head = f"💼 <b>Open positions</b> ({len(book)}) · <code>v{esc(_version())}</code>"
     if not rows:
         return head + "\n<i>none — the book is flat.</i>"
     out = [head]
-    for r in rows:
+    if not book:
+        out.append("<i>none — the book is flat.</i>")
+
+    def position(r):
         day = r["days_open"] if r.get("days_open") is not None else "—"
         out.append(f"\n<b>{esc(r['ticker'])}</b> {esc(r['verdict'])} · day <code>{day}</code>"
                    f" · pos <code>{p(r['position_return'])}</code>"
@@ -786,7 +800,10 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
         # The agent's own words, not a paraphrase — /ticker SYM has the full version.
         if r.get("thesis"):
             out.append(f"  <i>{esc(r['thesis'][:180])}</i>")
-    tot = book_totals(rows)
+
+    for r in book:
+        position(r)
+    tot = book_totals(book)
     if tot["n_priced"]:
         # Equal-weight, so this IS the book's return and not merely an average of rows.
         line = (f"\n→ <b>book</b> ({tot['n_priced']} open, equal-weight): "
@@ -802,6 +819,15 @@ def format_open_positions_html(rows: List[Dict[str, Any]]) -> str:
             if leg["n"]:
                 split.append(f"{side}s <code>{p(leg['pos'])}</code> ({leg['n']})")
         out.append("  " + " · ".join(split))
+    if outside:
+        out.append(f"\n🔁 <b>Outside the record</b> ({len(outside)}) · shown, never counted "
+                   "in the book or /stats")
+        reason = None
+        for r in outside:  # ordered by as_of, so rows sharing a reason sit together
+            if r["excluded"] != reason:
+                reason = r["excluded"]
+                out.append(f"<i>{esc(reason)}</i>")
+            position(r)
     n_live = sum(1 for r in rows if r.get("live"))
     if n_live:
         src = f"prices: live quotes (~15 min delay)"

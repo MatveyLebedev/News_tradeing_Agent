@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 import matplotlib
 matplotlib.use("Agg")  # headless container — must precede pyplot
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import to_rgba  # noqa: E402
 
 # --- reference palette, dark surface (references/palette.md) ---------------------------
 SURFACE = "#1a1a19"
@@ -31,6 +32,7 @@ TEXT_SECONDARY = "#c3c2b7"
 GRID = "#383835"        # diverging neutral midpoint, doubles as the hairline grid
 POSITIVE = "#3987e5"    # diverging pole — blue
 NEGATIVE = "#e66767"    # diverging pole — red
+FADED_ALPHA = 0.4       # rows shown but not counted (pit_excluded replays)
 
 MIN_BARS = 2            # below this a bar chart is a stat tile (see anti-patterns)
 MIN_DISTRIBUTION = 3    # below this a spread of outcomes is not a distribution
@@ -59,22 +61,31 @@ def _render(fig) -> bytes:
     return buf.getvalue()
 
 
-def _bars(ax, labels, values):
-    """Horizontal diverging bars, values labelled OUTSIDE the bar end so nothing clips."""
+def _bars(ax, labels, values, faded=None):
+    """Horizontal diverging bars, values labelled OUTSIDE the bar end so nothing clips.
+
+    `faded[i]` draws row i at reduced opacity with secondary text: present, but not part
+    of what the chart totals. The label must say why too — opacity alone carries nothing.
+    """
+    faded = faded or [False] * len(values)
     y = range(len(values))
     ax.barh(list(y), values, height=0.52,
-            color=[POSITIVE if v >= 0 else NEGATIVE for v in values])
+            color=[to_rgba(POSITIVE if v >= 0 else NEGATIVE, FADED_ALPHA if f else 1.0)
+                   for v, f in zip(values, faded)])
     ax.set_yticks(list(y))
     ax.set_yticklabels(labels, color=TEXT_PRIMARY, fontsize=10)
+    for tick, f in zip(ax.get_yticklabels(), faded):
+        if f:
+            tick.set_color(TEXT_SECONDARY)
     ax.invert_yaxis()
     ax.axvline(0, color=TEXT_SECONDARY, linewidth=0.9)
 
     span = max((abs(v) for v in values), default=0.01) or 0.01
     pad = span * 0.06
-    for i, v in enumerate(values):
+    for i, (v, f) in enumerate(zip(values, faded)):
         ax.text(v + (pad if v >= 0 else -pad), i, f"{v * 100:+.1f}%",
                 va="center", ha="left" if v >= 0 else "right",
-                color=TEXT_PRIMARY, fontsize=9.5)
+                color=TEXT_SECONDARY if f else TEXT_PRIMARY, fontsize=9.5)
     ax.set_xlim(-span * 1.45, span * 1.45)
     ax.set_xticks([])
 
@@ -99,8 +110,16 @@ def _per_row_note(notes):
     return notes, None
 
 
+def _excluded_tag(reason: str) -> str:
+    return "replay" if reason.startswith("replayed") else "excluded"
+
+
 def open_positions_chart(rows: List[Dict[str, Any]], horizon_days: int = 28) -> Optional[bytes]:
-    """Current return per open position. None if there is nothing worth drawing."""
+    """Current return per open position. None if there is nothing worth drawing.
+
+    Rows carrying `excluded` (pit_excluded, see stats.open_positions) are drawn faded and
+    tagged, and stay out of the subtitle's book totals.
+    """
     rows = [r for r in rows if r.get("position_return") is not None]
     if len(rows) < MIN_BARS:
         return None
@@ -109,15 +128,19 @@ def open_positions_chart(rows: List[Dict[str, Any]], horizon_days: int = 28) -> 
     notes, shared = _per_row_note(
         [f"day {r.get('days_open', '?')} / {horizon_days}" for r in rows])
     labels = [f"{r['ticker']}  {r['verdict']}" + (f"   {n}" if n else "")
+              + (f"  · {_excluded_tag(r['excluded'])}" if r.get("excluded") else "")
               for r, n in zip(rows, notes)]
     # The bars answer "which position", the subtitle answers "and how is the book doing" —
     # without it the reader has to eyeball-average seven diverging bars, which is exactly
     # how an unrealized figure gets misread.
     from .stats import book_totals, format_book_totals
-    subtitle = " · ".join(x for x in (shared, format_book_totals(book_totals(rows))) if x)
+    book = [r for r in rows if not r.get("excluded")]
+    outside = "faded: not counted" if len(book) < len(rows) else ""
+    subtitle = " · ".join(x for x in (shared, format_book_totals(book_totals(book)),
+                                      outside) if x)
 
     fig, ax = _canvas(len(rows))
-    _bars(ax, labels, values)
+    _bars(ax, labels, values, faded=[bool(r.get("excluded")) for r in rows])
     _title(ax, "Open positions — return since entry", subtitle or None)
     return _render(fig)
 

@@ -99,7 +99,12 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   2026-08-24, on expert advice). Behaviour change on the live path only: the flag
 #   `LT_LONG_CONFIRMS_ONLY` defaults false, so backtests and research keep the incumbent
 #   book and the arm this supersedes stays measurable offline.
-PIPELINE_VERSION = "0.11.0"
+# 0.11.1 (2026-10-24): a PATCH, display and alerting only. /open lists the ungraded
+#   `pit_excluded` trades (the weeks replayed after the 2026-10 OpenRouter outage) below
+#   the book, faded on the chart and outside every total — hidden, they read as weeks that
+#   were never filled. `scan_open_breaches` skips those rows, so a replay cannot send a
+#   STOP BREACH for a position nobody holds. Grading and the decision path are untouched.
+PIPELINE_VERSION = "0.11.1"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
