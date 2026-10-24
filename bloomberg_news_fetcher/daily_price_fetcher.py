@@ -98,27 +98,32 @@ def _finite(x):
 def save_daily(ticker, df):
     if df is None or df.empty:
         return 0
-    rows, dropped = [], 0
+    rows, dropped = [], []
     for ts, row in df.iterrows():
         try:
             o, h, lo, c = (_finite(row.get(k)) for k in ("Open", "High", "Low", "Close"))
             adj = _finite(row.get("Adj Close"))
-            volume = int(row["Volume"])
+            volume = _finite(row.get("Volume"))
+            # A bar is written whole or not at all: a partial row would silently pass the
+            # `close IS NOT NULL` checks every reader makes. A missing date is loud (the
+            # freshness preflight sees the gap); a NaN close is not.
+            bad = [k for k, v in zip(("Open", "High", "Low", "Close", "Volume"),
+                                     (o, h, lo, c, volume)) if v is None]
+            if bad:
+                dropped.append((str(ts.date()), bad))
+                continue
+            rows.append((ticker.upper(), ts.date(), o, h, lo, c,
+                         adj if adj is not None else c, int(volume)))
         except Exception:
-            dropped += 1
-            continue
-        # A bar is written whole or not at all: a partial row would silently pass the
-        # `close IS NOT NULL` checks every reader makes. A missing date is loud (the
-        # freshness preflight sees the gap); a NaN close is not.
-        if None in (o, h, lo, c):
-            dropped += 1
-            continue
-        rows.append((ticker.upper(), ts.date(), o, h, lo, c,
-                     adj if adj is not None else c, volume))
+            dropped.append((str(ts), ["unparseable"]))
     if dropped:
-        print(f"  ⚠ {ticker}: dropped {dropped} bar(s) with non-finite OHLC")
-        logger.warning("DAILY_BAR_DROPPED", f"{ticker}: {dropped} non-finite bar(s) skipped",
-                       details={"ticker": ticker, "dropped": dropped})
+        # Name the date and the fields: "1 bar dropped" alone hid for seven weeks that it
+        # was always the same-day bar with NaN OHLC (see config: DAILY_BARS_FETCH_TIME).
+        what = ", ".join(f"{d} [{'/'.join(bad)}]" for d, bad in dropped)
+        print(f"  ⚠ {ticker}: dropped {len(dropped)} bar(s) with non-finite OHLC: {what}")
+        logger.warning("DAILY_BAR_DROPPED", f"{ticker}: {len(dropped)} non-finite bar(s) skipped",
+                       details={"ticker": ticker, "dropped": len(dropped),
+                                "bars": [{"date": d, "fields": bad} for d, bad in dropped]})
     if not rows:
         return 0
     conn = get_db_connection()

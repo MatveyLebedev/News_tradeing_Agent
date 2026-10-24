@@ -6,8 +6,11 @@
 
 News and market-data fetcher, saving to PostgreSQL. Two clocks, not one: the main loop
 runs every `FETCH_INTERVAL_MIN` minutes (default 5) and writes news plus 1-minute bars,
-while the daily OHLCV top-up runs once at `DAILY_BARS_FETCH_TIME` (default 20:30 ET,
-post-close).
+while the daily OHLCV top-up runs at `DAILY_BARS_FETCH_TIME` (default 22:30 ET) and again
+at `DAILY_BARS_RETRY_TIME` (default 06:15 ET, before the 07:00 grader). Not 20:30: just
+after the 20:00 ET extended-hours close Yahoo serves the day's bar with NaN OHLC, the NaN
+guard drops it, and bar D used to reach the table only at D+1 20:30 (2026-09-02 → 10-23).
+A server `.env` that still pins `DAILY_BARS_FETCH_TIME=20:30` overrides the new default.
 
 ## Remote Access & Deployment
 

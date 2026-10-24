@@ -9,7 +9,8 @@ from config import BLOOMBERG_CATEGORIES, ENABLE_EXTERNAL_RSS
 from price_fetcher import fetch_all_tickers, DEFAULT_TICKERS, TOP_50_TICKERS
 from config import FETCH_PRICES, PRICE_FETCH_PERIOD, VERBOSE, FETCH_FULL_TEXT
 from config import (FETCH_FUNDAMENTALS, FUNDAMENTALS_FETCH_WEEKDAY, FUNDAMENTALS_FETCH_TIME,
-                    DAILY_BARS_FETCH_ENABLED, DAILY_BARS_FETCH_TIME, DAILY_BARS_PERIOD)
+                    DAILY_BARS_FETCH_ENABLED, DAILY_BARS_FETCH_TIME, DAILY_BARS_RETRY_TIME,
+                    DAILY_BARS_PERIOD)
 from config import (
     GRAPH_MAINTENANCE_ENABLED, GRAPH_CLEANUP_TIME,
     GRAPH_MERGE_WEEKDAY, GRAPH_MERGE_TIME, EVENT_EMBEDDING_RETENTION_DAYS,
@@ -276,7 +277,14 @@ def run_scheduler(verbose=True):
         try:
             schedule.every().day.at(DAILY_BARS_FETCH_TIME).do(
                 lambda: scheduled_daily_bars_fetch(verbose=verbose))
-            print(f"✓ Daily price bars scheduled: daily at {DAILY_BARS_FETCH_TIME} ET "
+            # Second pass before the 07:00 ET grader: a bar Yahoo still served as NaN in the
+            # evening would otherwise wait a full day (see config: DAILY_BARS_RETRY_TIME).
+            retry = ""
+            if DAILY_BARS_RETRY_TIME:
+                schedule.every().day.at(DAILY_BARS_RETRY_TIME).do(
+                    lambda: scheduled_daily_bars_fetch(verbose=verbose))
+                retry = f" + retry at {DAILY_BARS_RETRY_TIME} ET"
+            print(f"✓ Daily price bars scheduled: daily at {DAILY_BARS_FETCH_TIME} ET{retry} "
                   f"(period={DAILY_BARS_PERIOD})")
         except Exception as e:
             print(f"⚠️  Could not schedule daily price bars: {e}")

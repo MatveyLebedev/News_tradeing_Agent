@@ -315,3 +315,91 @@ def test_save_daily_drops_the_bar_that_started_it_all(fetcher_pkg, monkeypatch):
     assert len(written["rows"]) == 1, "the NaN bar must not be written"
     assert written["rows"][0][1] == date(2026, 7, 23)
     assert not _has_nan(list(written["rows"][0]))
+
+
+def _capture_daily_save(fetcher, monkeypatch):
+    """Stub the DB and the op log; return what save_daily wrote and what it warned."""
+    seen = {"rows": [], "warnings": []}
+
+    class _Cur:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        rowcount = 0
+
+    class _Conn:
+        def cursor(self): return _Cur()
+        def commit(self): pass
+        def close(self): pass
+
+    monkeypatch.setattr(fetcher, "get_db_connection", lambda *a, **k: _Conn())
+    monkeypatch.setattr(fetcher, "execute_values",
+                        lambda cur, sql, rows: seen["rows"].extend(rows))
+    monkeypatch.setattr(fetcher.logger, "warning",
+                        lambda event, message, **kw: seen["warnings"].append((event, message, kw)))
+    return seen
+
+
+def test_save_daily_drops_the_same_day_bar_yahoo_has_not_republished(fetcher_pkg, monkeypatch,
+                                                                     capsys):
+    """The shape every 20:30 ET run got from 2026-09-02 on: the day's bar with NaN
+    Open/High/Low/Close and a real Volume (yfinance #2895). It must still not be written —
+    moving the fetch later is the fix, not loosening this — and the warning must say WHICH
+    date and WHICH fields. "dropped 1 bar(s)" alone hid for seven weeks that it was always
+    the same-day bar, which is why bar D only ever arrived at D+1 20:30.
+    """
+    pd = pytest.importorskip("pandas")
+    import daily_price_fetcher as fetcher
+
+    nan = float("nan")
+    df = pd.DataFrame(
+        {"Open": [721.37, nan], "High": [722.40, nan], "Low": [701.10, nan],
+         "Close": [704.05, nan], "Adj Close": [704.05, nan], "Volume": [3091500, 3017200]},
+        index=pd.to_datetime([date(2026, 10, 22), date(2026, 10, 23)]),
+    )
+    seen = _capture_daily_save(fetcher, monkeypatch)
+
+    fetcher.save_daily("CAT", df)
+
+    assert [r[1] for r in seen["rows"]] == [date(2026, 10, 22)], "only the published bar"
+    assert not _has_nan(seen["rows"])
+    event, _message, kw = seen["warnings"][0]
+    assert event == "DAILY_BAR_DROPPED"
+    assert kw["details"]["bars"] == [{"date": "2026-10-23",
+                                      "fields": ["Open", "High", "Low", "Close"]}]
+    assert "2026-10-23 [Open/High/Low/Close]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+@pytest.mark.parametrize("field", ["Open", "High", "Low", "Close"])
+def test_save_daily_never_writes_a_bar_missing_any_one_price(fetcher_pkg, monkeypatch,
+                                                             field, bad):
+    """One non-finite price costs the whole bar, whichever price it is."""
+    pd = pytest.importorskip("pandas")
+    import daily_price_fetcher as fetcher
+
+    bar = {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Adj Close": 100.5,
+           "Volume": 1000}
+    bar[field] = bad
+    df = pd.DataFrame([bar], index=pd.to_datetime([date(2026, 10, 23)]))
+    seen = _capture_daily_save(fetcher, monkeypatch)
+
+    assert fetcher.save_daily("AAPL", df) == 0
+    assert seen["rows"] == []
+    assert seen["warnings"][0][2]["details"]["bars"][0]["fields"] == [field]
+
+
+def test_save_daily_keeps_a_bar_whose_only_gap_is_adj_close(fetcher_pkg, monkeypatch):
+    """Adj Close is not a price the guard protects: a missing one falls back to Close and
+    the bar is written. Only OHLC (and an unusable Volume) cost a bar."""
+    pd = pytest.importorskip("pandas")
+    import daily_price_fetcher as fetcher
+
+    df = pd.DataFrame([{"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5,
+                        "Adj Close": float("nan"), "Volume": 1000}],
+                      index=pd.to_datetime([date(2026, 10, 23)]))
+    seen = _capture_daily_save(fetcher, monkeypatch)
+
+    fetcher.save_daily("AAPL", df)
+
+    assert len(seen["rows"]) == 1 and seen["rows"][0][6] == 100.5
+    assert seen["warnings"] == []
