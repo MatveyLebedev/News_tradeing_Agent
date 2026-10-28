@@ -108,7 +108,12 @@ class Settings(BaseSettings):
     lt_telegram_chat_id: str = ""
     telegram_allowed_user_ids: str = ""
 
-    # --- LangSmith ---
+    # --- Langfuse (self-hosted tracing; core.tracing, deploy/langfuse/README.md) ---
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_base_url: str = ""          # e.g. http://langfuse-web:3000 inside the server network
+
+    # --- LangSmith (legacy root scripts only; the long-term agent traces to Langfuse) ---
     langchain_api_key: str = ""
     langchain_endpoint: str = "https://api.smith.langchain.com"
     langchain_project: str = "longterm-trading-agent"

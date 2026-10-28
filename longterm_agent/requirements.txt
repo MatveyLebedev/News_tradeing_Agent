@@ -16,6 +16,8 @@ langchain-core>=0.1.0
 langchain-openai>=0.1.0
 langgraph>=0.0.20
 langsmith>=0.1.0
+# self-hosted tracing (core/tracing.py); pinned — the v5 SDK is weeks old
+langfuse==5.0.4
 openai>=1.0.0
 pydantic>=2.0.0
 

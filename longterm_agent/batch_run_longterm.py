@@ -23,6 +23,7 @@ from longterm_agent.exit_rules import SESSION_CLOSE, in_session
 ET = pytz.timezone("America/New_York")
 
 
+from core import tracing
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph
 from longterm_agent.persistence import persist_run
@@ -218,7 +219,10 @@ def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert
                     # when any source is stale (only relevant with --skip-freshness).
                     "data_freshness": freshness}
             t0 = time.time()
-            final = graph.invoke(init)
+            with tracing.agent_run(ticker, init["as_of"], cfg,
+                                   session_id=f"batch-{as_of:%Y-%m-%d}") as trace:
+                final = graph.invoke(init, config=trace.config)
+                trace.end(final)
             elapsed = time.time() - t0
             # A decision the book never records is invisible everywhere downstream — /open,
             # /week and grading all read the results table, so an unpersisted trade looks
@@ -309,6 +313,7 @@ def run_batch(tickers, as_of, cfg, db, neo, llm_map, llm_reduce, notifier, alert
     oplog.info("BATCH_DONE", f"batch complete: {stats}", as_of=as_of, details=stats)
     if alert:
         notifier.notify_batch_summary(as_of.date(), stats)
+    tracing.flush()
     return stats
 
 
@@ -318,7 +323,7 @@ def main():
     ap.add_argument("--as-of", default=datetime.now().strftime("%Y-%m-%d"))
     ap.add_argument("--lookback", type=int, default=None)
     ap.add_argument("--no-alert", action="store_true", help="do not send Telegram alerts")
-    ap.add_argument("--trace", action="store_true", help="enable LangSmith tracing")
+    ap.add_argument("--trace", action="store_true", help="enable Langfuse tracing")
     ap.add_argument("--skip-freshness", action="store_true",
                     help="bypass the stale-data preflight (deliberate replays only)")
     ap.add_argument("--force", action="store_true",
@@ -327,7 +332,8 @@ def main():
 
     cfg = LongTermAgentConfig()
     if args.trace:
-        cfg.enable_tracing()
+        recent = (datetime.now() - datetime.strptime(args.as_of, "%Y-%m-%d")).days <= 7
+        cfg.enable_tracing("live" if recent else "backtest")
     maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible & cheap re-runs (B0)
     if args.lookback:
         cfg.LOOKBACK_DAYS_BACKGROUND = args.lookback

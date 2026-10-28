@@ -60,7 +60,9 @@ def monday_fwd_env(base=None):
     leak into the live batch process — pinning novita globally 404s every gemini map call
     (measured 2026-07-20, aborted a run)."""
     env = dict(base if base is not None else os.environ)
-    env.update({"LLM_PROVIDER": "novita", "LT_LLM_CACHE": "true", "LT_MAX_REFLECTION": "0"})
+    env.update({"LLM_PROVIDER": "novita", "LT_LLM_CACHE": "true", "LT_MAX_REFLECTION": "0",
+                # Traced like the live batch (still a no-op without LANGFUSE_* / LT_TRACE=false).
+                "LT_TRACE_BACKTEST": "true", "LANGFUSE_TRACING_ENVIRONMENT": "live"})
     return env
 
 
@@ -70,8 +72,7 @@ class Ops:
     def __init__(self):
         self.cfg = LongTermAgentConfig()
         if self.cfg.TRACE:
-            # Before make_llm so callbacks attach to every call (see run_longterm_agent).
-            self.cfg.enable_tracing()
+            self.cfg.enable_tracing("live")
         self.notifier = TelegramNotifier()
         self.db = DBManager(db_config=self.cfg.get_db_config(), min_conn=1, max_conn=5)
         self.neo = None

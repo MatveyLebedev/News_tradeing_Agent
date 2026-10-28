@@ -83,7 +83,7 @@ services:
       # - LT_BATCH_WEEKDAY=sunday
       # - LT_BATCH_TIME=06:00
       # - LT_RUN_ON_START=false
-      # LangSmith tracing of scheduled batches (default on; needs LANGCHAIN_API_KEY in .env)
+      # Langfuse tracing of scheduled batches (default on; needs LANGFUSE_* in .env)
       # - LT_TRACE=false
     logging:
       driver: "json-file"
