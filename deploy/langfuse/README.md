@@ -109,6 +109,28 @@ The trace keeps every prompt in full. Graph state keeps only article ids, not th
 mask replaces `news_corpus` on every node span, otherwise the corpus would be stored once per
 node.
 
+## Outcome scores
+
+The daily grading step ends with `longterm_agent/label_traces.py`. It writes labels from data
+that arrived after a run into Postgres `trace_labels`, then mirrors them here as scores (source
+`API`). Langfuse is the mirror, not the store: a fresh project gets every label on the next run.
+
+- **Where they land.** A label of the whole decision (`excess_4w`, `hit_4w`, `excess_stopped`,
+  `worst_position_4w`, …) goes on the trace. A label of one node goes on that node's
+  observation, e.g. `shift_detection.outcome`. Each score name has a score config, created on
+  the first run.
+- **Score time.** A score is stamped when its outcome became knowable (`label_available_at`),
+  not when it was sent, so score charts read as "what we learned when". Langfuse keeps a score
+  id's first timestamp on upsert.
+- **Runs older than tracing.** A labeled run with no trace gets one rebuilt from
+  `longterm_run_snapshots`, under the id the live run would have had and at its real time.
+  Rebuilt traces carry the tag `rebuilt:snapshot`; node timings inside them are synthetic.
+  `python -m longterm_agent.label_traces --rebuild-all` also rebuilds the unlabeled (NEUTRAL)
+  runs, so the whole history can be browsed. That is about 960 traces built from 26 MB of
+  snapshot JSON (2026-10-29), before ClickHouse compression.
+- **Do not delete and re-send a score id within minutes.** Deletion is asynchronous and can
+  remove the re-created score (seen on 4.70.1).
+
 ## Operations
 
 - **Upgrade.** Change the pinned tags, run `docker compose pull && docker compose up -d`, and

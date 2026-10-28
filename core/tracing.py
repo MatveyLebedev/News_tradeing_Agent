@@ -85,15 +85,45 @@ def flush():
         _client.flush()
 
 
+def client():
+    """The process-wide Langfuse client, or None while tracing is off."""
+    return _client
+
+
+def run_trace_key(run_kind: str, detection_version: str, ticker: str, as_of) -> str:
+    """One run's identity as a string: the trace-id seed, and the key its labels live under
+    in `trace_labels`. `run_kind` is "live", "manual" or the backtest_id."""
+    day = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)[:10]
+    return f"{run_kind}:{detection_version}:{ticker.upper()}:{day}"
+
+
+def trace_id_for(key: str) -> str:
+    from langfuse import Langfuse
+    return Langfuse.create_trace_id(seed=key)
+
+
 def run_trace_id(run_kind: str, detection_version: str, ticker: str, as_of) -> str:
     """Deterministic trace id for one run. `run_kind` is "live" or the backtest_id."""
-    from langfuse import Langfuse
-    day = as_of.strftime("%Y-%m-%d") if hasattr(as_of, "strftime") else str(as_of)[:10]
-    return Langfuse.create_trace_id(
-        seed=f"{run_kind}:{detection_version}:{ticker.upper()}:{day}")
+    return trace_id_for(run_trace_key(run_kind, detection_version, ticker, as_of))
 
 
-def _decision(final: dict) -> dict:
+def trace_attributes(ticker: str, as_of, prov: dict, run_kind: str, session_id: str,
+                     tags=()) -> dict:
+    """`propagate_attributes` kwargs for a run's trace. Shared by live runs and by traces
+    rebuilt from snapshots (longterm_agent.labeling), so both look the same in Langfuse.
+    Propagated to every observation, so keep it to short strings (the full provenance,
+    knobs included, goes on the root observation only)."""
+    meta = {"ticker": ticker.upper(), "as_of": str(as_of), "run_kind": run_kind,
+            "pipeline_version": str(prov["pipeline_version"]),
+            "detection_version": str(prov["detection_version"]),
+            "git_revision": str(prov["git_revision"])}
+    all_tags = [f"pipeline:{prov['pipeline_version']}", f"detection:{prov['detection_version']}",
+                f"run:{run_kind}", *tags]
+    return {"trace_name": f"longterm_run {ticker.upper()}", "session_id": session_id,
+            "tags": all_tags, "metadata": meta, "version": str(prov["pipeline_version"])}
+
+
+def decision(final: dict) -> dict:
     """The run's outcome as the trace output: small, readable, no state dump."""
     if not isinstance(final, dict):
         return {}
@@ -119,7 +149,7 @@ class _Run:
     def end(self, final):
         if self._span is not None:
             try:
-                self._span.update(output=_decision(final))
+                self._span.update(output=decision(final))
             except Exception as e:
                 print(f"  ⚠ trace output not recorded: {e}")
 
@@ -138,20 +168,11 @@ def agent_run(ticker: str, as_of, cfg, *, session_id: str, run_kind: str = "live
 
     prov = cfg.provenance()
     trace_id = run_trace_id(run_kind, prov["detection_version"], ticker, as_of)
-    # Propagated to every observation, so keep it to short strings (the full provenance,
-    # knobs included, goes on the root observation only).
-    meta = {"ticker": ticker.upper(), "as_of": str(as_of), "run_kind": run_kind,
-            "pipeline_version": str(prov["pipeline_version"]),
-            "detection_version": str(prov["detection_version"]),
-            "git_revision": str(prov["git_revision"])}
-    all_tags = [f"pipeline:{prov['pipeline_version']}", f"detection:{prov['detection_version']}",
-                f"run:{run_kind}", *tags]
     with _client.start_as_current_observation(
             name="longterm_run", as_type="agent", trace_context={"trace_id": trace_id},
             input={"ticker": ticker.upper(), "as_of": str(as_of)},
             metadata={"provenance": prov}) as span:
-        with propagate_attributes(trace_name=f"longterm_run {ticker.upper()}",
-                                  session_id=session_id, tags=all_tags, metadata=meta,
-                                  version=str(prov["pipeline_version"])):
+        with propagate_attributes(**trace_attributes(ticker, as_of, prov, run_kind,
+                                                     session_id, tags)):
             yield _Run({"callbacks": [CallbackHandler()], "run_name": "longterm_graph"},
                        span=span, trace_id=trace_id)

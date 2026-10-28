@@ -4,7 +4,8 @@ Scheduler for the long-term agent (Phase 6 ops) — the long-running container e
 Two scheduled jobs (ET), same `schedule`-library pattern as auto_news_fetcher.py:
   * WEEKLY batch  (LT_BATCH_WEEKDAY @ LT_BATCH_TIME): run the full pipeline across the
     universe for today's as_of, persist, alert new/flipped signals, then grade matured cohorts.
-  * DAILY grading (LT_GRADE_TIME): fill realized 4w outcomes on matured trades + shift rows.
+  * DAILY grading (LT_GRADE_TIME): fill realized 4w outcomes on matured trades + shift rows,
+    then restate them as trace labels and mirror those into Langfuse (label_traces.py).
 
 Run the weekly batch *after* the news/fundamentals fetchers have updated the DB for the week.
 
@@ -297,6 +298,23 @@ class Ops:
             oplog.error("GRADE_ERROR", detail, details={"traceback": traceback.format_exc()[-2000:]})
             self.notifier.notify_error("daily_grade", detail)
             print(f"❌ grading failed: {detail}")
+        self.label_traces()
+
+    def label_traces(self):
+        """Restate today's grades as trace labels and mirror them into Langfuse. Runs after
+        every grading step and is best-effort: a labeling failure never holds up a grade, a
+        fill or an exit, and is logged rather than paged (Langfuse being down is not news)."""
+        try:
+            from longterm_agent.label_traces import main as label_main
+            stats = label_main([])
+            oplog.info("LABEL", f"trace labels: {stats}")
+        except SystemExit:
+            pass
+        except Exception as e:
+            detail = f"{type(e).__name__}: {e}"
+            oplog.error("LABEL_ERROR", detail,
+                        details={"traceback": traceback.format_exc()[-2000:]})
+            print(f"⚠ trace labeling failed: {detail}")
 
 
 def run_scheduler(run_on_start=False):

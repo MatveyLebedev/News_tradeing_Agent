@@ -30,8 +30,9 @@ LOG_TABLES = {
 }
 # NEVER suggest cleanup for these (Phase 11): longterm_run_snapshots IS the future
 # training set (~100-200 MB/year by design — keep forever); macro_series is tiny PIT
-# history that cannot be re-fetched first-release once lost.
-KEEP_FOREVER = ["longterm_run_snapshots", "macro_series"]
+# history that cannot be re-fetched first-release once lost; trace_labels are that
+# training set's targets, and Langfuse is rebuilt FROM them.
+KEEP_FOREVER = ["longterm_run_snapshots", "macro_series", "trace_labels", "trace_label_syncs"]
 
 
 def conn():
