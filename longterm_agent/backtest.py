@@ -307,8 +307,9 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
       * the benchmark cannot be priced intraday → skip, since pricing one leg on minute
         bars and the other on a daily open measures two different windows."""
     from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_D0,
-                                           FILL_CONVENTION_MID, entry_bar, in_session,
-                                           resolve_entry, stopped_returns, t1_return)
+                                           FILL_CONVENTION_MID, entry_bar, has_exit_bar,
+                                           in_session, resolve_entry, stopped_returns,
+                                           t1_return)
     from longterm_agent.beta import beta_adjusted_excess, estimate_beta
     from longterm_agent.tools.regime_tool import regime_context_from_conn
     d0 = fill == "d0"
@@ -333,6 +334,7 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
                    ORDER BY as_of""", [backtest_id])
     rows = cur.fetchall()
     graded = backfilled = stamped = betas = 0
+    exit_bars = {}
     for (rid, ticker, as_of, horizon, direction, already, no_regime, no_beta,
          cohort_time) in rows:
         # Phase 14 — regime stamp is a property of as_of (not of maturity): fill it for any
@@ -362,8 +364,15 @@ def grade(cfg, backtest_id, asof_today=None, benchmark="SPY", fill="t1", dual_bo
         eb = entry or entry_bar(cur, ticker, as_of, include_asof_day=d0)
         if eb is None:
             continue  # entry bar not in stock_prices_daily yet; retry next run
-        if eb[0] + timedelta(days=horizon) > today:
+        exit_target = eb[0] + timedelta(days=horizon)
+        if exit_target > today:
             continue  # horizon not matured yet (anchored at the entry bar)
+        # Both legs need the exit session's OWN bar. Without this check a hole on the exit
+        # day priced the trade at the session before it, and a graded row is never revisited
+        # (the live grader's 2026-09-22 incident; see exit_rules.has_exit_bar).
+        if not (has_exit_bar(cur, ticker, exit_target, exit_bars, today)
+                and has_exit_bar(cur, benchmark, exit_target, exit_bars, today)):
+            continue  # retry next run
         tr = t1_return(cur, ticker, as_of, horizon, include_asof_day=d0, entry=entry)
         br = t1_return(cur, benchmark, as_of, horizon, include_asof_day=d0,
                        entry=bench_entry)

@@ -2,7 +2,8 @@
 
 Fill convention — `open_t1` (2026-07-19, see WALK_FORWARD_PROTOCOL.md "Fill convention"):
   - entry = OPEN of the first trading bar STRICTLY AFTER the as_of date;
-  - exit  = close on/before entry_date + horizon (the horizon anchors at the entry).
+  - exit  = close of the last session on/before entry_date + horizon, from that
+    session's OWN bar (the horizon anchors at the entry; see `exit_close`).
   The previous convention (entry = last close ≤ as_of) let a weekend decision "fill" at
   Friday's close — a price printed before up to ~38h of news the decision had read. The
   overnight/weekend gap is untradable by construction; under open_t1 it is excluded from
@@ -27,6 +28,8 @@ Simulation conventions:
 """
 from datetime import datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
+
+from longterm_agent.market_calendar import last_session_on_or_before, sessions_between
 
 Path = List[Tuple[Any, float]]  # [(date, close)] ascending
 
@@ -183,7 +186,10 @@ def entry_bar(cur, ticker: str, as_of_date, tolerance_days: int = 7,
 
 
 def close_on_or_before(cur, ticker: str, target, tolerance_days: int = 7) -> Optional[float]:
-    """Latest daily close on/before target (within tolerance). Returns float or None."""
+    """Latest daily close on/before target (within tolerance). Returns float or None.
+
+    NOT an exit price: it falls through a missing bar to the session before it. Exits use
+    `exit_close`, which refuses to."""
     cur.execute("""
         SELECT close FROM stock_prices_daily
         WHERE ticker=%s AND date <= %s AND date >= %s AND close IS NOT NULL
@@ -193,12 +199,68 @@ def close_on_or_before(cur, ticker: str, target, tolerance_days: int = 7) -> Opt
     return float(r[0]) if r else None
 
 
+def close_on(cur, ticker: str, day) -> Optional[float]:
+    """The close of exactly `day`'s bar, or None when that bar is not in the table."""
+    cur.execute("""SELECT close FROM stock_prices_daily
+                   WHERE ticker=%s AND date=%s AND close IS NOT NULL""", [ticker.upper(), day])
+    r = cur.fetchone()
+    return float(r[0]) if r else None
+
+
+def exit_close(cur, ticker: str, target) -> Optional[float]:
+    """The exit price for a horizon ending on `target`: the close of the last session
+    on/before it — that session's OWN bar, or None while it is missing.
+
+    `close_on_or_before` cannot tell a missing bar from a closed market, so a hole on the
+    exit day priced the trade at the previous session's close, and since a filled grade is
+    never revisited, the wrong number stayed (2026-10-29: the 2026-09-07 cohort's 2w was
+    graded off the 09-21 close because the 09-22 bar landed three days late). A weekend
+    or holiday target still resolves, to the session before it, by the calendar.
+    """
+    return close_on(cur, ticker, last_session_on_or_before(target))
+
+
+def has_exit_bar(cur, ticker: str, target, cache: Optional[dict] = None,
+                 today=None) -> bool:
+    """Grading guard: is the exit bar for `target` in the table yet? Callers check BOTH
+    legs (the stock and the benchmark) and leave the row ungraded otherwise, to retry on a
+    later run.
+
+    Replaces "the series' max date reaches the target", which passed whenever a LATER bar
+    existed — exactly the case where the exit bar itself was missing. It also covers the
+    frozen-series case that rule was written for (the 2026-06-15 SPY freeze): a frozen
+    series has no exit bar either.
+
+    `today` (the grader's date) also refuses an exit session that has not ended before
+    it. A fetch run during the session writes that day's bar with a mid-session price,
+    and the evening run only overwrites it later (2026-07-21: the 0.1.0 TSLA/GOOGL rows
+    were regraded at 15:47 ET off such a bar). The 07:00 grader never meets one; a manual
+    run on the exit day would.
+    """
+    key = (ticker.upper(), last_session_on_or_before(target))
+    if today is not None and key[1] >= today:
+        return False
+    if cache is None:
+        return close_on(cur, *key) is not None
+    if key not in cache:   # per run, like the max-date cache it replaces
+        cache[key] = close_on(cur, *key) is not None
+    return cache[key]
+
+
+def missing_sessions(path: Path, start, end) -> list:
+    """Sessions in [start, end] that have no bar in `path` (a price path as returned by
+    `fetch_price_path`). A walk over a path with a hole in it misses the day the stop
+    would have fired and the day the excursion was worst."""
+    have = {d for d, _ in path}
+    return [d for d in sessions_between(start, end) if d not in have]
+
+
 def t1_return(cur, ticker: str, as_of_date, horizon_days: int, tolerance_days: int = 7,
               nth: int = 1, include_asof_day: bool = False,
               entry: Optional[Tuple[Any, float]] = None) -> Optional[Dict[str, Any]]:
-    """Hold-book return under the open-entry convention: entry-bar open → close ≤
-    entry + horizon. Returns {entry_date, entry_px, ret} or None (no entry bar yet /
-    no prices).
+    """Hold-book return under the open-entry convention: entry-bar open → close of the
+    last session ≤ entry + horizon. Returns {entry_date, entry_px, ret} or None (no entry
+    bar yet / the exit session's bar is not in the table yet / no prices).
 
     `entry` INJECTS an already-resolved (entry_date, entry_px) instead of re-deriving it
     from daily bars — the one hook a `mid_1m` fill needs, since its price lives in the
@@ -210,8 +272,7 @@ def t1_return(cur, ticker: str, as_of_date, horizon_days: int, tolerance_days: i
     if eb is None:
         return None
     e_date, e_px = eb
-    exit_ = close_on_or_before(cur, ticker, e_date + timedelta(days=horizon_days),
-                               tolerance_days)
+    exit_ = exit_close(cur, ticker, e_date + timedelta(days=horizon_days))
     if not e_px or exit_ is None:
         return None
     return {"entry_date": e_date, "entry_px": e_px, "ret": (exit_ - e_px) / e_px}
@@ -280,6 +341,10 @@ def stopped_returns(cur, ticker: str, as_of_date, direction: str, horizon_days: 
     `entry`/`bench_entry` inject resolved fills for a `mid_1m` trade — see `t1_return`.
     Both must be supplied together: pricing the stock intraday and the benchmark at a
     daily open would measure the two legs over different windows.
+
+    None, too, while the walk would cross a missing bar: a hole before the exit can hide
+    the day the stop fired, a hole AT a horizon exit prices it at the session before, and
+    a benchmark without the exit day's bar would be priced the same way.
     """
     eb = entry if entry is not None else entry_bar(cur, ticker, as_of_date, tolerance_days,
                                                    nth, include_asof_day)
@@ -292,11 +357,15 @@ def stopped_returns(cur, ticker: str, as_of_date, direction: str, horizon_days: 
     sim = simulate_exit(path, eb[0], eb[1], direction, horizon_days, stop_loss, take_profit)
     if sim is None:
         return None
+    walked_to = (sim["exit_date"] if sim["reason"] != "horizon"
+                 else last_session_on_or_before(eb[0] + timedelta(days=horizon_days)))
+    if sim["exit_date"] != walked_to or missing_sessions(path, eb[0], walked_to):
+        return None
     bb = bench_entry if bench_entry is not None else entry_bar(
         cur, benchmark, as_of_date, tolerance_days, nth, include_asof_day)
     if bb is None:
         return None
-    b_exit = close_on_or_before(cur, benchmark, sim["exit_date"], tolerance_days)
+    b_exit = close_on(cur, benchmark, sim["exit_date"])
     if b_exit is None:
         return None
     fwd = (sim["exit_px"] - sim["entry_px"]) / sim["entry_px"]

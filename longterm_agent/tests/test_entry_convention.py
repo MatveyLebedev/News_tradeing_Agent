@@ -14,7 +14,7 @@ TUE = date(2026, 7, 21)
 
 
 class StubCur:
-    """Serves the three stock_prices_daily query shapes from an in-memory bar list.
+    """Serves the four stock_prices_daily query shapes from an in-memory bar list.
     bars: {ticker: [(date, open, close), ...] ascending}."""
 
     def __init__(self, bars):
@@ -23,6 +23,9 @@ class StubCur:
 
     def execute(self, sql, params):
         rows = self.bars.get(params[0], [])
+        if "date=%s" in sql:                       # close_on (the exit session's own bar)
+            self._res = [(r[2],) for r in rows if r[0] == params[1]]
+            return
         if "ORDER BY date DESC" in sql:            # close_on_or_before
             hi, lo = params[1], params[2]
             sel = [r for r in rows if lo <= r[0] <= hi]
