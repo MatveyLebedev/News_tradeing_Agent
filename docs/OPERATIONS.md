@@ -12,6 +12,14 @@ after the 20:00 ET extended-hours close Yahoo serves the day's bar with NaN OHLC
 guard drops it, and bar D used to reach the table only at D+1 20:30 (2026-09-02 → 10-23).
 A server `.env` that still pins `DAILY_BARS_FETCH_TIME=20:30` overrides the new default.
 
+**Running image.** Since 2026-10-29 the server runs `stock-fetcher:2026-10-30`. It is an
+overlay: `stock-fetcher:2026-08-11` plus four files from `main` 3287d29
+(`graph_db/event_updater.py`, `config.py`, `auto_news_fetcher.py`, `daily_price_fetcher.py`).
+That keeps its dependencies exactly as they were (yfinance 1.5.2, pandas 3). A full rebuild
+from `bloomberg_news_fetcher/requirements.txt` would re-resolve the unpinned `yfinance>=0.2.40`,
+so treat a rebuild as a dependency change. The previous container is kept stopped as
+`bloomberg_news_fetcher_old` for rollback, and its env was carried over unchanged.
+
 ## Remote Access & Deployment
 
 ### 0. Disk & Log Safety — do this FIRST on any new/rebuilt server

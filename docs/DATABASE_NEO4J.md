@@ -184,6 +184,7 @@ here is what the stock actually did.
 | `move_1d` | float | % return 1 day (1440 min) after |
 | `move_checked_at` | datetime | last fill attempt |
 | `move_unavailable` | boolean | tombstone: this edge can never be filled |
+| `move_tombstone_cleared_at` | datetime | set by the 2026-10-29 repair on edges it un-tombstoned (see below) |
 
 **How the `move_*` fields are computed** (`update_price_movements()` in
 [`graph_db/event_updater.py`](../graph_db/event_updater.py#L379), run as a background job
@@ -208,6 +209,14 @@ here is what the stock actually did.
   queued for retry. Until 2026-10-29 the missing-table query itself raised, the error left
   the shared non-autocommit connection aborted, and every later edge in the same cycle came
   back empty — so edges with full minute coverage were tombstoned too.
+* **Repair, 2026-10-29.** The fix shipped in `stock-fetcher:2026-10-30`. After that, the
+  edges the bug had tombstoned were un-tombstoned: 6,337 `AFFECTS` and 16,754 `SOURCED_FROM`.
+  Each one had a ticker with a minute table and a publish instant that resolves at least one
+  window today. The repair removed `move_unavailable` and set `move_tombstone_cleared_at`, and
+  the 5-minute loop refills them at `EVENT_MOVES_BATCH` (300) per relation per cycle. The
+  ~24k edges on tickers with no minute table, and those with no resolving window, stay
+  tombstoned, which is correct. To find the repaired set:
+  `WHERE r.move_tombstone_cleared_at IS NOT NULL`.
 
 Live fill rate on a 500-edge sample: `move_1d` 83, `move_4h` 41, `move_15m`/`move_40m` 21,
 `move_unavailable` 417. Sparse by design — most of the graph predates the minute tables.
@@ -230,6 +239,7 @@ produces (44,752 edges over 14,331 events ≈ 3.1 articles per event).
 | `move_15m`, `move_40m`, `move_4h`, `move_1d` | float | same windows, computed per affected ticker |
 | `move_checked_at` | datetime | |
 | `move_unavailable` | boolean | |
+| `move_tombstone_cleared_at` | datetime | as on `AFFECTS` |
 
 > `published_at` is present on only ~4% of live edges (added later than most ingest).
 > Fall back to `news.published` in PostgreSQL via `news_id` when it is missing.
