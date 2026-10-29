@@ -34,10 +34,12 @@ SCORES: Dict[str, ScoreSpec] = {
         "NUMERIC", "what the gate added over trading every directional verdict: the avoided "
                    "position excess when it blocked (positive = it avoided a loss), 0 when "
                    "it passed"),
+    # Langfuse requires distinct category values: positive = the gate was right, and a block
+    # outranks a pass because it is the gate's own decision.
     "risk_gate.call_4w": ScoreSpec(
-        "CATEGORICAL", "the gate's call against the 4-week outcome",
-        categories=(("passed_win", 1.0), ("blocked_loss", 1.0),
-                    ("passed_loss", -1.0), ("blocked_win", -1.0))),
+        "CATEGORICAL", "the gate's call against the 4-week outcome (positive = right)",
+        categories=(("blocked_loss", 2.0), ("passed_win", 1.0),
+                    ("passed_loss", -1.0), ("blocked_win", -2.0))),
     "reflection.change": ScoreSpec(
         "CATEGORICAL", "what the second synthesis pass did to the first one's call",
         categories=(("none", 0.0), ("conviction", 1.0), ("direction", 2.0),

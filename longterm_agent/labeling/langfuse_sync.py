@@ -65,7 +65,14 @@ def ensure_score_configs(api, specs: Dict[str, ScoreSpec]) -> Dict[str, str]:
                 kw["min_value"] = spec.min_value
             if spec.max_value is not None:
                 kw["max_value"] = spec.max_value
-            c = api.score_configs.create(name=name, data_type=spec.data_type, **kw)
+            try:
+                c = api.score_configs.create(name=name, data_type=spec.data_type, **kw)
+            except Exception as e:
+                # One rejected config must not stop every other score from syncing; its
+                # scores go without a config until the spec is fixed.
+                print(f"  ⚠ score config {name} rejected — sent without a config: "
+                      f"{str(getattr(e, 'body', e))[:200]}")
+                continue
             print(f"  + score config {name} ({spec.data_type})")
         elif str(c.data_type) != spec.data_type:
             print(f"  ⚠ score config {name}: Langfuse has {c.data_type}, code wants "

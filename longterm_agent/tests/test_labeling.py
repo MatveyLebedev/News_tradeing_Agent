@@ -244,3 +244,15 @@ def test_every_labeler_shares_one_collect_signature():
     from longterm_agent.label_traces import LABELERS
     for lab in LABELERS:
         assert list(inspect.signature(lab.collect).parameters)[:2] == ["cur", "ctx"], lab.NAME
+
+
+def test_categorical_configs_are_valid_for_langfuse():
+    """Langfuse rejects a score config whose category values (or labels) repeat — found the
+    hard way on the server: risk_gate.call_4w had 1/1/-1/-1 and the whole sync stopped."""
+    for name, spec in score_specs().items():
+        if spec.data_type != "CATEGORICAL":
+            assert not spec.categories, name
+            continue
+        labels = [lb for lb, _ in spec.categories]
+        values = [v for _, v in spec.categories]
+        assert len(set(labels)) == len(labels) and len(set(values)) == len(values), name
