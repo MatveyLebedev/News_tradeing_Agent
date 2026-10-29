@@ -118,10 +118,29 @@ def upsert_labels(cur, labels: Iterable[Label]) -> Dict[str, int]:
             "unchanged": len(rows) - len(changed)}
 
 
+def existing_keys(cur, labeler: str, version: str) -> set:
+    """{(trace_key, node, span, label_key)} this labeler version already wrote, final or
+    unavailable — what an incremental labeler skips."""
+    cur.execute("""SELECT trace_key, node, span, label_key FROM trace_labels
+                   WHERE labeler=%s AND labeler_version=%s""", [labeler, version])
+    return set(cur.fetchall())
+
+
+def final_values(cur, labeler: str, label_key: str) -> Dict[str, Dict[str, Any]]:
+    """{trace_key: {value_num, value_cat, data_cutoff}} for one label of one labeler, its
+    latest version — how a derived labeler reads another's output."""
+    cur.execute("""SELECT DISTINCT ON (trace_key) trace_key, value_num, value_cat, data_cutoff
+                   FROM trace_labels
+                   WHERE labeler=%s AND label_key=%s AND node='run' AND status='final'
+                   ORDER BY trace_key, labeler_version DESC""", [labeler, label_key])
+    return {k: {"value_num": n, "value_cat": c, "data_cutoff": d}
+            for k, n, c, d in cur.fetchall()}
+
+
 def pending_sync(cur, target: str, limit: int = None) -> List[Dict[str, Any]]:
     """Final labels this Langfuse project does not hold yet (or holds an older value of)."""
     cur.execute(f"""
-        SELECT l.id, l.trace_key, l.trace_id, l.ticker, l.as_of, l.node, l.span, l.label_key,
+        SELECT l.id, l.trace_kind, l.trace_key, l.trace_id, l.ticker, l.as_of, l.node, l.span, l.label_key,
                l.value_num, l.value_cat, l.value_json, l.labeler, l.labeler_version,
                l.data_cutoff, l.label_available_at
         FROM trace_labels l

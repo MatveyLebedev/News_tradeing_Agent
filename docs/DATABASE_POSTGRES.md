@@ -606,12 +606,12 @@ DDL: [`longterm_agent/labeling/store.py`](../longterm_agent/labeling/store.py)
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `bigserial` | PK |
-| `trace_kind` | `varchar(16)` | `lt_run` = a longterm agent run |
+| `trace_kind` | `varchar(16)` | `lt_run` = a longterm agent run; `lt_session` = a weekly batch (its Langfuse session) |
 | `trace_key` | `varchar(96)` | `run_kind:detection_version:TICKER:as_of` — `core.tracing.run_trace_key`, the Langfuse trace-id seed |
 | `trace_id` | `char(32)` | Langfuse trace id derived from `trace_key` |
 | `ticker`, `as_of` | | the run, for joins |
-| `node` | `varchar(40)` | `run` = the whole decision, else a LangGraph node (`shift_detection`, …) |
-| `span` | `varchar(80)` | sub-item within a node (empty for now) |
+| `node` | `varchar(40)` | `run` = the whole decision, `session` = a whole batch, else a LangGraph node (`shift_detection`, …) |
+| `span` | `varchar(80)` | sub-item within a node: `week:<window>` for a map bucket, else empty |
 | `label_key` | `varchar(48)` | `excess_4w`, `hit_4w`, `outcome`, … |
 | `value_num` / `value_cat` | | numeric or categorical value |
 | `value_json` | `jsonb` | the raw inputs the label was computed from (fwd/bench returns, entry date, `traded`, `pit_excluded`) |
@@ -625,8 +625,11 @@ DDL: [`longterm_agent/labeling/store.py`](../longterm_agent/labeling/store.py)
 
 `UNIQUE (trace_kind, trace_key, node, span, label_key, labeler_version)`.
 
-Labeler `results_adapter` restates `longterm_agent_results` grade columns (position-signed
-like `stats.trade_excess`), recomputing nothing. Keep forever.
+Labelers, one module each under `longterm_agent/labeling/`: `results_adapter` (the grader's
+columns, position-signed like `stats.trade_excess`, nothing recomputed), `counterfactual`
+(stock − SPY after every run, priced like a trade), `shift_persistence` (shift outcome for
+the non-trades), `decision_deltas` (risk_gate / reflection value), `map_buckets` (weekly
+excess per map bucket), `cohorts` (per-batch aggregates). Keep forever.
 
 Live 2026-10-29: 970 rows on 115 runs (0.1.0: 5, 0.2.0: 110).
 

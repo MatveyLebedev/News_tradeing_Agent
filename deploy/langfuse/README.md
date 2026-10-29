@@ -115,10 +115,16 @@ The daily grading step ends with `longterm_agent/label_traces.py`. It writes lab
 that arrived after a run into Postgres `trace_labels`, then mirrors them here as scores (source
 `API`). Langfuse is the mirror, not the store: a fresh project gets every label on the next run.
 
-- **Where they land.** A label of the whole decision (`excess_4w`, `hit_4w`, `excess_stopped`,
-  `worst_position_4w`, …) goes on the trace. A label of one node goes on that node's
-  observation, e.g. `shift_detection.outcome`. Each score name has a score config, created on
-  the first run.
+- **Where they land.** A label of the whole decision goes on the trace: the trade book
+  (`excess_4w`, `hit_4w`, `excess_stopped`, `worst_position_4w`, …) and, for every run whatever
+  its verdict, what the stock did (`stock_excess_*`, `excess_z_4w`, `opportunity_4w`). A label
+  of one node goes on that node's observation: `shift_detection.outcome`,
+  `risk_gate.value_4w` / `call_4w`, `reflection.change` / `value_4w`, and one
+  `background_profiling.bucket_excess` / `bucket_agree` per weekly bucket. A weekly batch is
+  scored on its session (`cohort_excess_4w`, `cohort_hit_4w`, `cohort_n_traded`). Each score
+  name has a score config, created on the first run.
+- **Load.** One daily run sends the scores of at most 200 traces (`--max-traces`); a backlog
+  drains over the following days.
 - **Score time.** A score is stamped when its outcome became knowable (`label_available_at`),
   not when it was sent, so score charts read as "what we learned when". Langfuse keeps a score
   id's first timestamp on upsert.

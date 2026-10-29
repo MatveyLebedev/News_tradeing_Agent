@@ -794,9 +794,24 @@ the multi-target columns; export produces a non-empty dataset for ≥2 nodes.
   (whole-decision labels on the trace); a labeled run with no trace gets one rebuilt from
   its snapshot at its real time. Verified on a local Langfuse 4.70.1: 110 traces rebuilt,
   919 scores, a re-run sends nothing.
-- ▶ Next (stage 2): labels for the 800+ NEUTRAL runs (counterfactual both ways), reflection /
-  risk-gate deltas, shift outcome for every run, map-bucket reactions, the Monday forward
-  cohort (`backtest_runs`).
+
+**2026-10-29 — stage 2 (PIPELINE_VERSION 0.11.4):** five more labelers, 16,652 labels.
+- ✅ `counterfactual`: every run priced like a trade (grader's entry/exit/guards):
+  stock_excess 2w/4w/12w, `excess_z_4w` (vs the ticker's own 4-week excess σ over the prior
+  year) and `opportunity_4w` (|z| ≥ 1). 725 runs at 4w, of which 558 are NEUTRAL: 80 missed
+  longs, 94 missed shorts, 384 right to abstain. Matches the grader on 248 of 256 graded
+  horizons; the 8 differences are grader values taken across a daily-bar HOLE that was
+  backfilled later (e.g. GS 2026-09-22 landed on 09-25 ET): `_has_data_through` checks the
+  series' max date, not the exit bar, so the grader priced the exit on the day before.
+- ✅ `shift_persistence`: the grader's estimator on the 16 matured shifted non-trades.
+- ✅ `decision_deltas`: risk_gate value/call on 105 directional runs (+0.59 summed over the
+  45 blocks); reflection change on 112 refined runs (24 flipped direction, 1 outage) and its
+  4w value on 56.
+- ✅ `map_buckets`: 7,956 weekly windows; signed map sentiment agrees with the week's
+  stock − SPY 50.1% of the time (5,024 weeks): a coin flip.
+- ✅ `cohorts`: per-batch excess / hit rate / trade count on the Langfuse session (37).
+- ⏭ Monday forward cohort: skipped. One cohort exists (2026-07-20) and `LT_MONDAY_FWD` is
+  off on the server.
 
 ---
 

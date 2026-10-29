@@ -112,7 +112,10 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   grader's columns as trace labels (`trace_labels`, longterm_agent/labeling) and mirrors
 #   them into Langfuse as scores, rebuilding a missing trace from its snapshot. Grading and
 #   decisions are untouched; a labeling failure never holds up a grade.
-PIPELINE_VERSION = "0.11.3"
+# 0.11.4 (2026-10-29): a PATCH, observability only. Trace labeling stage 2: every run gets an
+#   outcome (counterfactual), every shifted run a persistence check, risk_gate/reflection a
+#   value, map buckets a weekly excess, each batch a session score. Decisions untouched.
+PIPELINE_VERSION = "0.11.4"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.

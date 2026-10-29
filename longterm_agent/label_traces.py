@@ -15,15 +15,26 @@ import traceback
 from datetime import datetime, timezone
 from typing import Dict
 
+import pytz
+
 from core import tracing
 from core.db import get_conn
 from core.settings import get_settings
 from longterm_agent.config import LongTermAgentConfig
-from longterm_agent.labeling import results_adapter
+from longterm_agent.labeling import (cohorts, counterfactual, decision_deltas, map_buckets,
+                                     results_adapter, shift_persistence)
 from longterm_agent.labeling.base import ScoreSpec
+from longterm_agent.labeling.context import LabelContext
 from longterm_agent.labeling.store import ensure_tables, lf_target, upsert_labels
 
-LABELERS = (results_adapter,)
+# Order matters: a derived labeler reads labels the ones before it wrote in this transaction
+# (decision_deltas reads counterfactual's stock_excess_4w).
+LABELERS = (results_adapter, counterfactual, shift_persistence, decision_deltas, map_buckets,
+            cohorts)
+# One daily run sends at most this many traces' scores; a backlog drains over the next runs
+# instead of loading a 3.8 GB server in one go.
+DAILY_MAX_TRACES = 200
+ET = pytz.timezone("America/New_York")
 
 
 def score_specs() -> Dict[str, ScoreSpec]:
@@ -68,15 +79,21 @@ def main(argv=None) -> Dict[str, object]:
                     help="rebuild a trace for every snapshot that has none, labeled or not")
     ap.add_argument("--limit", type=int, default=None,
                     help="cap the traces --rebuild-all writes in one run")
+    ap.add_argument("--max-traces", type=int, default=DAILY_MAX_TRACES,
+                    help="cap the traces whose scores one run sends (0 = no cap)")
     args = ap.parse_args(argv)
 
     cfg = LongTermAgentConfig()
     stats: Dict[str, object] = {}
+    ctx = LabelContext(datetime.now(ET).date(), cfg.get_db_config())
     with get_conn(cfg.get_db_config()) as conn:
         with conn.cursor() as cur:
             ensure_tables(cur)
-            for lab in LABELERS:
-                stats[lab.NAME] = upsert_labels(cur, lab.collect(cur))
+            try:
+                for lab in LABELERS:
+                    stats[lab.NAME] = upsert_labels(cur, lab.collect(cur, ctx))
+            finally:
+                ctx.close()
             conn.commit()
             print(f"labels: {stats}")
             if args.no_sync:
@@ -96,7 +113,8 @@ def main(argv=None) -> Dict[str, object]:
                 if args.rebuild_all:
                     stats["rebuilt_all"] = rebuild_all(cur, lf, args.limit)
                 stats["sync"] = sync.push(cur, lf, target, specs, config_ids,
-                                          rebuild=not args.no_rebuild)
+                                          rebuild=not args.no_rebuild,
+                                          max_traces=args.max_traces or None)
                 conn.commit()
             except Exception as e:
                 # Langfuse is a mirror: unreachable today, the next run re-sends everything

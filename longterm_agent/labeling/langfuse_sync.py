@@ -14,11 +14,12 @@ import pytz
 
 from core import tracing
 
-from .base import RUN_NODE, ScoreSpec, score_name
+from .base import RUN_NODE, SESSION_NODE, ScoreSpec, score_name
 from .store import mark_synced, pending_sync, score_id
 
 ET = pytz.timezone("America/New_York")
 ROOT = "longterm_run"
+SESSION_KIND = "lt_session"
 # A live trace reaches Langfuse within minutes. Only a run older than this may be called
 # missing and rebuilt, or an ingestion lag would get a second, synthetic copy of it.
 REBUILD_MIN_AGE = timedelta(days=1)
@@ -205,8 +206,12 @@ def _score(label: Dict[str, Any], obs_id: Optional[str], env: Optional[str],
     name = score_name(label["node"], label["label_key"])
     data_type = specs[name].data_type
     value = label["value_cat"] if data_type == "CATEGORICAL" else float(label["value_num"])
+    on_session = label["trace_kind"] == SESSION_KIND
     return CreateScoreRequest(
-        id=score_id(label), trace_id=label["trace_id"].strip(), observation_id=obs_id,
+        id=score_id(label),
+        trace_id=None if on_session else label["trace_id"].strip(),
+        session_id=label["value_json"]["session_id"] if on_session else None,
+        observation_id=obs_id,
         name=name, value=value, data_type=data_type, config_id=config_ids.get(name),
         environment=env,
         source="API",
@@ -221,43 +226,61 @@ def _score(label: Dict[str, Any], obs_id: Optional[str], env: Optional[str],
                   "data_cutoff": str(label["data_cutoff"]),
                   "label_available_at": label["label_available_at"].isoformat(),
                   "ticker": label["ticker"], "as_of": str(label["as_of"]),
-                  "trace_key": label["trace_key"]})
+                  "trace_key": label["trace_key"], "span": label["span"] or None})
+
+
+def session_index(api, session_id: str) -> Dict[str, Any]:
+    """`{"_env": ...}` when the session has at least one trace, else {}."""
+    res = api.observations.get_many(session_id=session_id, fields="core,basic", limit=1)
+    return {"_env": res.data[0].environment} if res.data else {}
 
 
 def push(cur, lf, target: str, specs: Dict[str, ScoreSpec], config_ids: Dict[str, str],
-         rebuild: bool = True, limit: int = None) -> Dict[str, int]:
-    """Send every pending label of this Langfuse project, one batch per trace. A trace's
-    labels are marked synced only if the whole batch was accepted."""
-    labels = pending_sync(cur, target, limit)
+         rebuild: bool = True, max_traces: int = None) -> Dict[str, int]:
+    """Send pending labels of this Langfuse project, one batch per trace (or session). A
+    batch is marked synced only if all of it was accepted. `max_traces` bounds one run's load
+    on a small server; the rest stays pending for the next run."""
+    labels = pending_sync(cur, target)
     by_trace: Dict[str, List[Dict]] = {}
     for lb in labels:
         by_trace.setdefault(lb["trace_id"].strip(), []).append(lb)
-    stats = {"traces": len(by_trace), "scores": 0, "rebuilt": 0, "no_trace": 0, "rejected": 0}
+    stats = {"traces": len(by_trace), "sent": 0, "scores": 0, "rebuilt": 0, "no_trace": 0,
+             "rejected": 0}
     now = datetime.now(timezone.utc)
     for trace_id, group in by_trace.items():
-        index = observation_index(lf.api, trace_id)
-        if not index and rebuild:
-            _, dv, ticker, day = group[0]["trace_key"].split(":")
-            snap = fetch_snapshot(cur, dv, ticker, day)
-            if snap is not None and run_window(snap)[1] < now - REBUILD_MIN_AGE:
-                index = rebuild_trace(lf, snap)
-                lf.flush()  # the spans before their scores: a score must never outlive its trace
-                stats["rebuilt"] += 1
+        if max_traces and stats["sent"] + stats["no_trace"] + stats["rejected"] >= max_traces:
+            break
+        if group[0]["trace_kind"] == SESSION_KIND:
+            index = session_index(lf.api, group[0]["value_json"]["session_id"])
+        else:
+            index = observation_index(lf.api, trace_id)
+            if not index and rebuild:
+                _, dv, ticker, day = group[0]["trace_key"].split(":")
+                snap = fetch_snapshot(cur, dv, ticker, day)
+                if snap is not None and run_window(snap)[1] < now - REBUILD_MIN_AGE:
+                    index = rebuild_trace(lf, snap)
+                    lf.flush()  # spans before their scores: a score must never outlive its trace
+                    stats["rebuilt"] += 1
         if not index:
             stats["no_trace"] += 1
             continue
         reqs, done = [], []
         for lb in group:
-            obs = None if lb["node"] == RUN_NODE else index.get(lb["node"])
+            obs = None if lb["node"] in (RUN_NODE, SESSION_NODE) else index.get(lb["node"])
             reqs.append(_score(lb, obs, index.get("_env"), specs, config_ids))
             done.append((lb["id"], reqs[-1].id, obs))
-        res = lf.api.scores.create(request=reqs)
-        errors = getattr(res, "errors", None)
+        errors, res = None, None
+        for i in range(0, len(reqs), 200):   # a run with every bucket week carries ~40
+            res = lf.api.scores.create(request=reqs[i:i + 200])
+            errors = getattr(res, "errors", None)
+            if errors:
+                break
         if errors:
-            stats["rejected"] += len(reqs)
+            stats["rejected"] += 1
             print(f"  ⚠ {group[0]['trace_key']}: {getattr(res, 'rejected', '?')} of "
                   f"{len(reqs)} scores rejected — {errors[0].message}")
             continue
         mark_synced(cur, target, done)
+        stats["sent"] += 1
         stats["scores"] += len(reqs)
     return stats

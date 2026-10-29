@@ -3,7 +3,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, Optional, Tuple
 
-RUN_NODE = "run"  # the whole decision; any other node is a LangGraph node name
+RUN_NODE = "run"          # the whole decision; any other node is a LangGraph node name
+SESSION_NODE = "session"  # a whole weekly batch (scored on its Langfuse session)
 
 
 @dataclass(frozen=True)
@@ -48,5 +49,5 @@ class Label:
 
 
 def score_name(node: str, label_key: str) -> str:
-    """Langfuse score name: bare for whole-decision labels, `node.key` otherwise."""
-    return label_key if node == RUN_NODE else f"{node}.{label_key}"
+    """Langfuse score name: bare for whole-decision and session labels, `node.key` otherwise."""
+    return label_key if node in (RUN_NODE, SESSION_NODE) else f"{node}.{label_key}"

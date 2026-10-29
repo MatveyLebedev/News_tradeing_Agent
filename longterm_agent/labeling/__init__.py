@@ -13,8 +13,13 @@ A run is identified by `core.tracing.run_trace_key` — the same string its Lang
 is seeded from — so a label written weeks later lands on the right trace with no stored id.
 Runs from before tracing existed get their trace rebuilt from `longterm_run_snapshots`.
 
-Labelers (each a module with NAME, VERSION, SCORES and `collect(cur)`):
+Labelers (each a module with NAME, VERSION, SCORES and `collect(cur, ctx)`), run in order:
     results_adapter     restates the grader's columns; recomputes nothing.
+    counterfactual      what the stock did after EVERY run (NEUTRAL too), priced like a trade.
+    shift_persistence   did a shift persist — for the shifted runs the grader skips.
+    decision_deltas     what risk_gate and reflection added (derived from counterfactual).
+    map_buckets         weekly map sentiment vs that week's stock − SPY.
+    cohorts             each weekly batch as a whole, scored on its Langfuse session.
 
     python -m longterm_agent.label_traces            # label + sync (the daily job)
 """

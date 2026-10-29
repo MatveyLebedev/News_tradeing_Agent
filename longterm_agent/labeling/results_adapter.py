@@ -144,7 +144,7 @@ def labels_from_row(r: Dict[str, Any]) -> List[Label]:
     return out
 
 
-def collect(cur) -> Iterable[Label]:
+def collect(cur, ctx=None) -> Iterable[Label]:
     cur.execute(_SQL)
     cols = [d[0] for d in cur.description]
     for row in cur.fetchall():

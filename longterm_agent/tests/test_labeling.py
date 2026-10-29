@@ -159,3 +159,88 @@ def test_a_failing_label_job_never_breaks_grading(monkeypatch):
     monkeypatch.setattr(label_traces, "main", boom)
     monkeypatch.setattr(auto_longterm_agent.oplog, "error", lambda *a, **k: None)
     auto_longterm_agent.Ops.label_traces(SimpleNamespace())   # must not raise
+
+
+# --- stage 2 labelers ----------------------------------------------------------------------
+def _series(start, closes):
+    return [(start + timedelta(days=i), c) for i, c in enumerate(closes)]
+
+
+def test_sigma_uses_only_the_year_before_as_of():
+    from longterm_agent.labeling.counterfactual import sigma_4w
+    as_of = date(2026, 9, 1)
+    start = as_of - timedelta(days=200)
+    bench = _series(start, [100.0] * 200)
+    flat = _series(start, [50.0] * 200)
+    assert sigma_4w(flat, bench, as_of) is None            # zero spread is no unit
+    wavy = _series(start, [50.0 * (1.02 if i % 2 else 0.98) ** (i % 7) for i in range(200)])
+    sd = sigma_4w(wavy, bench, as_of)
+    # a crash ON as_of must not move the normalizer of the run that decided before it
+    crashed = wavy + [(as_of, 1.0)]
+    assert sd and sigma_4w(crashed, bench + [(as_of, 100.0)], as_of) == sd
+    assert sigma_4w(wavy[:60], bench, as_of) is None        # too few 20-session windows
+
+
+def test_opportunity_is_symmetric_around_one_sigma():
+    from longterm_agent.labeling.counterfactual import opportunity
+    assert [opportunity(z) for z in (1.0, 0.99, -0.99, -1.0)] == ["long", "none", "none", "short"]
+
+
+def test_gate_value_is_what_blocking_saved():
+    from longterm_agent.labeling.decision_deltas import gate_call
+    assert gate_call(False, -0.05) == (0.05, "blocked_loss")   # blocked a loser: +5%
+    assert gate_call(False, 0.03) == (-0.03, "blocked_win")
+    assert gate_call(True, 0.03) == (0.0, "passed_win")
+    assert gate_call(True, -0.03) == (0.0, "passed_loss")
+
+
+def test_reflection_passes_parse_and_an_outage_is_not_a_judgment():
+    from longterm_agent.labeling.decision_deltas import parse_pass, reflection_change
+    first = parse_pass("LONG conviction=0.65: AVGO's negative news shift …")
+    failed = parse_pass("NEUTRAL conviction=0.0: (synthesis unavailable)")
+    assert first == ("LONG", 0.65, False) and failed == ("NEUTRAL", 0.0, True)
+    assert reflection_change(first, failed) == "failed"
+    assert reflection_change(first, ("SHORT", 0.6, False)) == "direction"
+    assert reflection_change(first, ("LONG", 0.62, False)) == "none"
+    assert reflection_change(first, ("LONG", 0.5, False)) == "conviction"
+    assert parse_pass("garbage") is None
+
+
+def test_bucket_window_excess_reads_closes_on_or_before_the_edges():
+    from longterm_agent.labeling.map_buckets import parse_week, window_excess
+    start, end = parse_week("2026-08-06..2026-08-13")
+    stock = [(date(2026, 8, 5), 100.0), (date(2026, 8, 6), 100.0), (date(2026, 8, 12), 110.0),
+             (date(2026, 8, 14), 999.0)]                       # after the window: ignored
+    bench = [(date(2026, 8, 6), 200.0), (date(2026, 8, 13), 202.0)]
+    assert window_excess(stock, bench, start, end) == (0.09, date(2026, 8, 13))
+    assert window_excess(stock[:1], bench, start, end) is None   # no close inside the window
+    assert parse_week("not a week") is None
+
+
+def test_session_labels_score_the_batch_session_under_a_bare_name():
+    from longterm_agent.labeling import cohorts
+    from longterm_agent.labeling.base import SESSION_NODE
+    assert cohorts.session_id(date(2026, 9, 28)) == "batch-2026-09-28"
+    assert score_name(SESSION_NODE, "cohort_excess_4w") == "cohort_excess_4w"
+    assert "cohort_excess_4w" in score_specs()
+
+
+def test_session_score_request_has_no_trace():
+    from longterm_agent.labeling.langfuse_sync import _score
+    specs = score_specs()
+    label = {"trace_kind": "lt_session", "trace_key": "session:0.2.0:batch-2026-09-28",
+             "trace_id": "0" * 32, "node": "session", "span": "", "label_key": "cohort_hit_4w",
+             "value_num": 0.5, "value_cat": None, "labeler": "cohorts", "labeler_version": "1",
+             "data_cutoff": date(2026, 10, 26), "label_available_at": datetime(2026, 10, 27),
+             "ticker": None, "as_of": date(2026, 9, 28),
+             "value_json": {"session_id": "batch-2026-09-28"}}
+    req = _score(label, None, "live", specs, {})
+    assert req.session_id == "batch-2026-09-28" and req.trace_id is None
+    assert req.timestamp.isoformat().startswith("2026-10-27T00:00:00-04:00")
+
+
+def test_every_labeler_shares_one_collect_signature():
+    import inspect
+    from longterm_agent.label_traces import LABELERS
+    for lab in LABELERS:
+        assert list(inspect.signature(lab.collect).parameters)[:2] == ["cur", "ctx"], lab.NAME
