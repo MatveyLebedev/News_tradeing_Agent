@@ -186,7 +186,7 @@ here is what the stock actually did.
 | `move_unavailable` | boolean | tombstone: this edge can never be filled |
 
 **How the `move_*` fields are computed** (`update_price_movements()` in
-[`graph_db/event_updater.py`](../graph_db/event_updater.py#L345), run as a background job
+[`graph_db/event_updater.py`](../graph_db/event_updater.py#L379), run as a background job
 *after* the price fetcher, never during ingestion):
 
 * Baseline = first bar in `historical_data_<ticker>` at/after the publish instant. The
@@ -203,6 +203,11 @@ here is what the stock actually did.
   `move_unavailable = true`. Intraday bars only accumulate forward, so an event predating
   the tables — or on a ticker with no table, or with a junk `e.date` — can never fill.
   Tombstoning stops the retry loop from hammering it forever.
+* Only a clean empty answer tombstones. A missing table is detected with `to_regclass`, not
+  by querying it, and a query that *fails* rolls the connection back and leaves the edge
+  queued for retry. Until 2026-10-29 the missing-table query itself raised, the error left
+  the shared non-autocommit connection aborted, and every later edge in the same cycle came
+  back empty — so edges with full minute coverage were tombstoned too.
 
 Live fill rate on a 500-edge sample: `move_1d` 83, `move_4h` 41, `move_15m`/`move_40m` 21,
 `move_unavailable` 417. Sparse by design — most of the graph predates the minute tables.
