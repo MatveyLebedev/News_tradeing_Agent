@@ -412,7 +412,7 @@ event/story resolution cheap. See [DATABASE_NEO4J.md](DATABASE_NEO4J.md).
 
 ## `graph_event_embeddings`
 
-DDL: [`graph_db/event_updater.py:115`](../graph_db/event_updater.py#L115) (also created by
+DDL: [`graph_db/event_updater.py:128`](../graph_db/event_updater.py#L128) (also created by
 `bloomberg_news_fetcher/auto_news_fetcher.py` on startup)
 
 | Column | Type | Notes |
@@ -430,7 +430,7 @@ Live: 11,469 rows · 93 MB · `event_date` 2025-10-17 → 2026-08-02.
 
 ## `graph_story_centroids`
 
-DDL: [`graph_db/event_updater.py:123`](../graph_db/event_updater.py#L123)
+DDL: [`graph_db/event_updater.py:136`](../graph_db/event_updater.py#L136)
 
 | Column | Type | Notes |
 |---|---|---|

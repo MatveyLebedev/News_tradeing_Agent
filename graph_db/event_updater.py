@@ -109,6 +109,19 @@ def _get_pg_conn():
     return _pg_conn
 
 
+def _rollback_quietly(pg_conn):
+    """End a failed transaction so the next statement on this connection can run.
+
+    The shared connection is not autocommit: once any statement fails, Postgres rejects
+    every later one on it (InFailedSqlTransaction) until a rollback. A helper that catches
+    a query error and carries on without this poisons every caller after it.
+    """
+    try:
+        pg_conn.rollback()
+    except Exception:
+        pass
+
+
 def _ensure_pg_table(conn):
     with conn.cursor() as cur:
         cur.execute("""
@@ -195,6 +208,7 @@ def _pgvector_candidates(
             return [(row[0], float(row[1])) for row in cur.fetchall()]
     except Exception as exc:
         logger.warning("pgvector search failed: %s", exc)
+        _rollback_quietly(pg_conn)
         return []
 
 
@@ -301,18 +315,35 @@ def _ticker_table(ticker: str) -> str:
     return "historical_data_" + ticker.lower().replace("-", "_").replace(".", "_")
 
 
-def _query_moves(ticker: str, pub_dt: datetime, pg_conn) -> dict:
+# The table name is interpolated into SQL, and graph tickers are LLM-extracted ("^GSPC",
+# "BRK B", ...): anything outside this shape cannot be a minute table.
+_TICKER_TABLE_RE = re.compile(r"historical_data_[a-z0-9_]+")
+
+
+def _query_moves(ticker: str, pub_dt: datetime, pg_conn) -> dict | None:
     """Return {prop: pct_return} for all windows with available price data.
 
     Baseline = first bar at/after pub_dt. For each window the end bar is the first
     bar at/after pub_dt+window. If the end bar is the same bar as the baseline
     (e.g. after-hours/weekend news where both resolve to the next session open),
     the window is skipped instead of recording a misleading 0.0% move.
+
+    {} means there is nothing to measure (no minute table for the ticker, or no bars
+    yet); None means the query itself failed, and the caller must not tombstone on it.
+    2026-10-29: a missing table used to be found by querying it. The error aborted the
+    connection's transaction without a rollback, so every later edge in the cycle came
+    back {} as well — and those past the tombstone age were marked move_unavailable for
+    good, tickers with full minute coverage included.
     """
     table = _ticker_table(ticker)
     moves = {}
+    if not _TICKER_TABLE_RE.fullmatch(table):
+        return moves
     try:
         with pg_conn.cursor() as cur:
+            cur.execute("SELECT to_regclass(%s)", (table,))
+            if cur.fetchone()[0] is None:
+                return moves
             cur.execute(
                 f"SELECT timestamp, close FROM {table} WHERE timestamp >= %s ORDER BY timestamp ASC LIMIT 1",
                 (pub_dt,),
@@ -331,6 +362,8 @@ def _query_moves(ticker: str, pub_dt: datetime, pg_conn) -> dict:
                     moves[prop] = round((float(end_row[1]) - baseline) / baseline * 100, 4)
     except Exception as exc:
         logger.debug("Price movement query failed for %s: %s", ticker, exc)
+        _rollback_quietly(pg_conn)
+        return None
     return moves
 
 
@@ -384,12 +417,19 @@ def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None,
         RETURN e.id AS eid, c.ticker AS ticker,
                toString(coalesce(first_pub, e.date)) AS pub
     """)
+    n_failed = 0
     for row in affects_rows:
         pub_dt = _to_et_naive(row["pub"])
         moves = _query_moves(row["ticker"], pub_dt, pg_conn) if pub_dt else {}
-        # unparseable/old-and-empty edges can never fill (forward-only bars, junk e.date,
-        # or no historical table for that ticker) — tombstone instead of retrying forever
-        dead = not moves and (pub_dt is None or pub_dt < tombstone_before)
+        if moves is None:
+            # the query failed, which says nothing about the data — retry after the
+            # cooldown; a tombstone written on an error is permanent data loss
+            n_failed += 1
+            moves, dead = {}, False
+        else:
+            # unparseable/old-and-empty edges can never fill (forward-only bars, junk e.date,
+            # or no historical table for that ticker) — tombstone instead of retrying forever
+            dead = not moves and (pub_dt is None or pub_dt < tombstone_before)
         set_clause = ", ".join(f"r.{k} = COALESCE(r.{k}, ${k})" for k in moves)
         if dead:
             set_clause = "r.move_unavailable = true"
@@ -412,10 +452,14 @@ def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None,
     """)
     for row in sourced_rows:
         pub_dt = _to_et_naive(row["pub"])
-        filled_any = False
+        filled_any = errored = False
         if pub_dt is not None:
             for ticker in row["tickers"]:
                 moves = _query_moves(ticker, pub_dt, pg_conn)
+                if moves is None:
+                    n_failed += 1
+                    errored = True
+                    continue
                 if not moves:
                     continue
                 filled_any = True
@@ -426,13 +470,23 @@ def update_price_movements(neo4j_mgr: Neo4jManager | None = None, pg_conn=None,
                     f"MATCH (e:Event {{id: $eid}})-[r:SOURCED_FROM]->(a:Article {{news_id: $nid}}) SET {set_clause}",
                     params,
                 )
-        dead = not filled_any and (pub_dt is None or pub_dt < tombstone_before)
+        dead = not filled_any and not errored and (pub_dt is None or pub_dt < tombstone_before)
         neo4j_mgr.query(
             "MATCH (e:Event {id: $eid})-[r:SOURCED_FROM]->(a:Article {news_id: $nid}) "
             "SET r.move_checked_at = datetime()" + (", r.move_unavailable = true" if dead else ""),
             {"eid": row["eid"], "nid": row["nid"]},
         )
 
+    # Close the read transaction: on a non-autocommit connection it otherwise stays open
+    # ("idle in transaction") until the next write, holding a lock on every table it read.
+    try:
+        pg_conn.commit()
+    except Exception:
+        _rollback_quietly(pg_conn)
+
+    if n_failed:
+        logger.warning("update_price_movements: %d price queries failed; those edges stay "
+                       "queued for retry (details at DEBUG)", n_failed)
     logger.info("update_price_movements: processed %d AFFECTS, %d SOURCED_FROM rows",
                 len(affects_rows), len(sourced_rows))
     return len(affects_rows), len(sourced_rows)
@@ -628,6 +682,7 @@ def _get_story_candidates(
             pg_rows = cur.fetchall()
     except Exception as exc:
         logger.warning("Story centroid pgvector search failed: %s", exc)
+        _rollback_quietly(pg_conn)
         return []
 
     if not pg_rows:
@@ -991,6 +1046,7 @@ def merge_duplicate_stories(
             rows = cur.fetchall()
     except Exception as exc:
         logger.warning("merge_duplicate_stories: centroid load failed: %s", exc)
+        _rollback_quietly(pg_conn)
         return
 
     if len(rows) < 2:
