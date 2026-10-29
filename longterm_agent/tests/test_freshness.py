@@ -68,28 +68,34 @@ def test_threshold_override_tightens_prices():
 # --- graders' pending_data guard ---------------------------------------------
 
 class _FakeCur:
+    """A gap-free daily series ending at `max_date`, answering the guard's exact-date
+    lookup. (Holes are exercised in test_exit_bar_guard.py.)"""
+
     def __init__(self, max_date):
         self.max_date = max_date
         self.executed = 0
+        self._day = None
 
     def execute(self, sql, params):
         self.executed += 1
+        self._day = params[1]
 
     def fetchone(self):
-        return (self.max_date,)
+        return (100.0,) if self.max_date is not None and self._day <= self.max_date else None
 
 
 def test_has_data_through():
     assert _has_data_through(_FakeCur(date(2026, 7, 9)), "SPY", date(2026, 7, 9), {}) is True
-    # frozen series: max date before the exit target → NOT gradable (pending_data)
+    # frozen series: no exit bar for the target → NOT gradable (pending_data)
     assert _has_data_through(_FakeCur(date(2026, 6, 15)), "SPY", date(2026, 7, 1), {}) is False
     # no rows at all → not gradable
     assert _has_data_through(_FakeCur(None), "XXXX", date(2026, 7, 1), {}) is False
 
 
-def test_has_data_through_caches_per_ticker():
+def test_has_data_through_caches_per_exit_session():
     cur = _FakeCur(date(2026, 7, 9))
     cache = {}
-    _has_data_through(cur, "SPY", date(2026, 7, 1), cache)
-    _has_data_through(cur, "SPY", date(2026, 7, 5), cache)
-    assert cur.executed == 1  # second call served from cache
+    # Fri 07-03 (Independence Day observed), Sat 07-04, Sun 07-05 all exit at Thu 07-02
+    for target in (date(2026, 7, 3), date(2026, 7, 4), date(2026, 7, 5)):
+        assert _has_data_through(cur, "SPY", target, cache) is True
+    assert cur.executed == 1  # one exit session, one lookup

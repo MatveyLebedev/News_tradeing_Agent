@@ -25,8 +25,8 @@ from longterm_agent import oplog
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.grade_shifts import _has_data_through  # shared grading guard
 from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_MID, entry_bar,
-                                       fetch_price_path, resolve_entry, simulate_exit,
-                                       stopped_returns, t1_return)
+                                       fetch_price_path, missing_sessions, resolve_entry,
+                                       simulate_exit, stopped_returns, t1_return)
 from longterm_agent.beta import beta_adjusted_excess, estimate_beta
 from longterm_agent.sector_map import SECTOR_ETF, SECTOR_OF
 from longterm_agent.targets import (classify_fundamentals_realized, classify_shift_outcome,
@@ -95,7 +95,7 @@ def _decision_moment(run_timestamp):
     return run_timestamp
 
 
-def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, missing,
+def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, exit_bars, missing,
                          entry=None, bench_entry=None):
     """Fill 2w/12w return pairs that are matured, data-complete, and still NULL."""
     filled = 0
@@ -105,8 +105,8 @@ def _fill_extra_horizons(cur, rid, ticker, as_of, entry_date, today, max_dates, 
         target = entry_date + timedelta(days=days)
         if target > today:
             continue
-        if not (_has_data_through(cur, ticker, target, max_dates)
-                and _has_data_through(cur, BENCHMARK, target, max_dates)):
+        if not (_has_data_through(cur, ticker, target, exit_bars, today)
+                and _has_data_through(cur, BENCHMARK, target, exit_bars, today)):
             continue
         r = _finite_ret(t1_return(cur, ticker, as_of, days, entry=entry))
         b = _finite_ret(t1_return(cur, BENCHMARK, as_of, days, entry=bench_entry))
@@ -242,7 +242,7 @@ def main():
 
     graded, pending, backfilled, extras = 0, 0, 0, 0
     mid_pending_bench = 0
-    max_dates = {}
+    exit_bars = {}
     for (rid, ticker, as_of, verdict, already, no_2w, no_12w, sector_bm, no_sec_ret,
          no_worst, aux, shift_dir, fund_verdict, run_ts) in rows:
         decision = _decision_moment(run_ts)
@@ -265,17 +265,17 @@ def main():
             entry, bench_entry = (e_date, e_px), (bre[1], bre[2])
         # --- Phase 11 multi-horizon fills (each matures on its own clock) --------------
         missing = {t for t, flag in (("2w", no_2w), ("12w", no_12w)) if flag}
-        extras += _fill_extra_horizons(cur, rid, ticker, as_of, e_date, today, max_dates,
+        extras += _fill_extra_horizons(cur, rid, ticker, as_of, e_date, today, exit_bars,
                                        missing, entry=entry, bench_entry=bench_entry)
 
         target = e_date + timedelta(days=HORIZON_DAYS)
         if target > today:
             continue  # 4w horizon not matured yet
-        # pending_data guard (Phase 2): both series must actually reach the exit date,
+        # pending_data guard (Phase 2): both series must have the exit session's own bar,
         # and the benchmark is REQUIRED — the trade's score IS excess-vs-SPY, so a row
         # graded without it could never be scored. Ungraded rows retry next run.
-        if not (_has_data_through(cur, ticker, target, max_dates)
-                and _has_data_through(cur, BENCHMARK, target, max_dates)):
+        if not (_has_data_through(cur, ticker, target, exit_bars, today)
+                and _has_data_through(cur, BENCHMARK, target, exit_bars, today)):
             pending += 1
             continue
         r = _finite_ret(t1_return(cur, ticker, as_of, HORIZON_DAYS, entry=entry))
@@ -321,7 +321,13 @@ def main():
             cur.execute("UPDATE longterm_agent_results SET sector_benchmark=%s WHERE id=%s",
                         [sector_bm, rid])
         if no_sec_ret and sector_bm and sector_bm != "NONE":
-            sbr = _finite_ret(t1_return(cur, sector_bm, as_of, HORIZON_DAYS))
+            # The ETF enters on its own daily bar, so its exit can fall a session after the
+            # stock's — a bar the stock's guard never checked. By 2026-10-29, 52 rows had
+            # this leg priced at the ETF's previous close. It needs the same guard.
+            sr = t1_return(cur, sector_bm, as_of, HORIZON_DAYS)
+            sbr = (_finite_ret(sr) if sr and _has_data_through(
+                cur, sector_bm, sr["entry_date"] + timedelta(days=HORIZON_DAYS), exit_bars,
+                today) else None)
             if sbr is not None:
                 cur.execute("""UPDATE longterm_agent_results
                                SET sector_benchmark_return_4w=%s WHERE id=%s""",
@@ -330,8 +336,10 @@ def main():
         # max adverse excursion over the horizon (exit-discipline / sizing target)
         if no_worst:
             h_path = [(d, c) for d, c in fetch_price_path(cur, ticker, as_of, HORIZON_DAYS)
-                      if d <= e_date + timedelta(days=HORIZON_DAYS)]
-            worst = worst_position_return(h_path, verdict, e_px)
+                      if d <= target]
+            # a hole can be the worst day; leave it NULL and retry once the bar lands
+            worst = (None if missing_sessions(h_path, as_of + timedelta(days=1), target)
+                     else worst_position_return(h_path, verdict, e_px))
             if worst is not None:
                 cur.execute("""UPDATE longterm_agent_results
                                SET worst_position_return_4w=%s WHERE id=%s""", [worst, rid])

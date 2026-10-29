@@ -1521,3 +1521,67 @@ UNGRADED rather than writing a non-finite outcome, the analog pool drops non-fin
 `persist_run`/`write_snapshot` scrub non-finite floats to NULL and log the field paths, and
 CHECK constraints (`x > '-Infinity' AND x < 'Infinity'`) cover 6 columns on `shift_library`
 and 14 on `longterm_agent_results`.
+
+### `exit_holes_1029` — exits priced at the previous session's close (found 2026-10-29)
+
+**Symptom.** The trace-labeling `counterfactual` labeler reproduced the grader on 248 of 256
+horizons. The other 8 were the 2026-09-07 cohort's 2w (GS, TMUS, PANW, LLY, CVX, BRK-B) and
+two 0.1.0 rows from 2026-06-22 (GOOGL, TSLA, 4w, both legs). GS read fwd −7.80% in the
+book, against −8.75% recomputed.
+
+**Mechanism.** An exit was "the close on/before entry + horizon" (`close_on_or_before`,
+7-day tolerance). The only guard asked whether a series' MAX date reached the target. So
+whenever the exit session's own bar was absent at grading time, the trade was priced at the
+session before. A graded column is never revisited, so the wrong number stayed. This
+happened in three ways:
+- **a hole:** the 2026-09-22 bar of 95 tickers first landed on 09-25 at 20:30 ET, after
+  09-23 and 09-24 were already in, so the max-date guard passed;
+- **a leg with no guard:** `backtest.grade()` had no guard at all, so the h84 exits on
+  07-20 were graded on 07-20 off 07-17 (`exit_days` 81). The live sector-ETF leg enters on
+  its own daily bar, so it exits a session after the stock. While the fetcher still runs at
+  20:30 ET and lands bar D at D+1 20:30, that bar is still missing at the 07:00 grade.
+  This is still happening; the last case was graded 2026-10-28;
+- **a mid-session bar:** a manual fetch at 07-21 15:47 ET wrote that day's bar at an
+  intraday price. The July fetcher ran weekly, so the intraday price stood until the
+  Saturday top-up. h56/h42/h84 exits on 07-21 graded on 07-24 read it, and so did the
+  07-21 open_t1 regrade of the 0.1.0 rows.
+
+**Fix (`exit_rules`, new `market_calendar`).** The exit is now the close of the last NYSE
+session on/before the target, taken from that session's OWN bar (`exit_close`). The session
+comes from the exchange's rules: weekends, holidays and the 2025-01-09 closure, checked
+against all 593 SPY sessions since 2024-06-17. The guard is now `has_exit_bar`. It requires
+that bar for both legs and refuses a session that has not ended before the grader's date.
+It covers the 4w book, the 2w/12w horizons, the sector leg, `grade_shifts` and
+`backtest.grade()`. A stopped book or MAE path with a missing session now returns nothing
+rather than walking past the hole. Tests: `longterm_agent/tests/test_exit_bar_guard.py`.
+
+**Damage (read-only recomputation, `regrade_exit_holes.py`;
+`reports/regrade_exit_holes_2026-10-29.md`).** Every differing column carries evidence from
+`fetch_time`:
+
+| table | rows differing | by cause |
+|---|---|---|
+| `longterm_agent_results` | 58 | 52 sector legs; 6 × 2w (09-07 cohort); 2 × 0.1.0 4w + stopped |
+| `shift_library` | 31 | 16 exit bar late, missing or mid-session; **15 legacy close→close** (06-18 cohort graded 07-20 by old code, after the open_t1 regrade had run) |
+| `backtest_runs` | 427 | 330 exit bar not in at the grade (`monday_t1_pit`, `wf_30x_f12`, `wf_30x_v0.2_deep`, `wf_30x_deep_pit_on/off`); 97 mid-session 07-21 bar (`wf_extra13`, `wf_fresh30_pit`, `wf_30x_strong_sonnet`) |
+
+**Deployed and regraded 2026-10-29** (owner's OK). `longterm-agent:0.11.5` has been live
+since 13:05 ET. The rollback point is the stopped `*_old` containers on 0.11.4.
+
+`regrade_exit_holes --apply --tables longterm_agent_results` rewrote all 58 live rows. The
+old values are in `reports/backup_pre_exit_holes_20261029_130649.jsonl`, and a re-run finds 0.
+
+The 0.2.0 4w book is unchanged by construction: 51 traded, mean excess +0.71% before and
+after. Only its sector leg (50 rows) and 2w (6) moved, together with the two 0.1.0 rows.
+
+- **`shift_library` was regraded too**, on a separate OK. Its 4w outcomes are the analog
+  base rates the live prompt quotes, so this changes decision inputs from the next run on
+  (19 of 278 graded 0.2.0 analogs). Past decisions are not re-run, the same remedy as the
+  2026-07-28 NaN repair.
+  - All 31 rows were rewritten. The 15 legacy close→close rows also got the open_t1 entry
+    stamp (`entry_date`, `entry_px`, `fill_convention`) that `grade_shifts` writes.
+    Without it, the analog leakage filter would have kept reading them by `as_of`.
+  - Every graded row now carries `fill_convention`. Old values are in
+    `reports/backup_pre_exit_holes_20261029_132936.jsonl`, and a re-run finds 0.
+- **`backtest_runs` is not regraded**, by decision. Verdicts already frozen in this ledger
+  are not re-read.
