@@ -1565,5 +1565,17 @@ rather than walking past the hole. Tests: `longterm_agent/tests/test_exit_bar_gu
 | `shift_library` | 31 | 16 exit bar late, missing or mid-session; **15 legacy close→close** (06-18 cohort graded 07-20 by old code, after the open_t1 regrade had run) |
 | `backtest_runs` | 427 | 330 exit bar not in at the grade (`monday_t1_pit`, `wf_30x_f12`, `wf_30x_v0.2_deep`, `wf_30x_deep_pit_on/off`); 97 mid-session 07-21 bar (`wf_extra13`, `wf_fresh30_pit`, `wf_30x_strong_sonnet`) |
 
-**Regrade: proposed, NOT applied** (waiting for the owner's OK; stats and the Telegram book
-read these columns). Verdicts already frozen in this ledger are not re-read.
+**Deployed and regraded 2026-10-29** (owner's OK). `longterm-agent:0.11.5` has been live
+since 13:05 ET. The rollback point is the stopped `*_old` containers on 0.11.4.
+
+`regrade_exit_holes --apply --tables longterm_agent_results` rewrote all 58 live rows. The
+old values are in `reports/backup_pre_exit_holes_20261029_130649.jsonl`, and a re-run finds 0.
+
+The 0.2.0 4w book is unchanged by construction: 51 traded, mean excess +0.71% before and
+after. Only its sector leg (50 rows) and 2w (6) moved, together with the two 0.1.0 rows.
+
+- **`shift_library` is held.** Its 4w outcomes are the analog base rates the live prompt
+  quotes, so regrading them changes decision inputs mid-experiment (19 of 278 graded 0.2.0
+  analogs). That needs a separate OK.
+- **`backtest_runs` is not regraded**, by decision. Verdicts already frozen in this ledger
+  are not re-read.
