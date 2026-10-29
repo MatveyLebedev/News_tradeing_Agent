@@ -1574,8 +1574,14 @@ old values are in `reports/backup_pre_exit_holes_20261029_130649.jsonl`, and a r
 The 0.2.0 4w book is unchanged by construction: 51 traded, mean excess +0.71% before and
 after. Only its sector leg (50 rows) and 2w (6) moved, together with the two 0.1.0 rows.
 
-- **`shift_library` is held.** Its 4w outcomes are the analog base rates the live prompt
-  quotes, so regrading them changes decision inputs mid-experiment (19 of 278 graded 0.2.0
-  analogs). That needs a separate OK.
+- **`shift_library` was regraded too**, on a separate OK. Its 4w outcomes are the analog
+  base rates the live prompt quotes, so this changes decision inputs from the next run on
+  (19 of 278 graded 0.2.0 analogs). Past decisions are not re-run, the same remedy as the
+  2026-07-28 NaN repair.
+  - All 31 rows were rewritten. The 15 legacy close→close rows also got the open_t1 entry
+    stamp (`entry_date`, `entry_px`, `fill_convention`) that `grade_shifts` writes.
+    Without it, the analog leakage filter would have kept reading them by `as_of`.
+  - Every graded row now carries `fill_convention`. Old values are in
+    `reports/backup_pre_exit_holes_20261029_132936.jsonl`, and a re-run finds 0.
 - **`backtest_runs` is not regraded**, by decision. Verdicts already frozen in this ledger
   are not re-read.

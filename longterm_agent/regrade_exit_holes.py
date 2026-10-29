@@ -51,9 +51,10 @@ import pytz
 from longterm_agent.backtest import _decision_moment as _cohort_moment
 from longterm_agent.beta import beta_adjusted_excess
 from longterm_agent.config import LongTermAgentConfig
-from longterm_agent.exit_rules import (FILL_CONVENTION_D0, FILL_CONVENTION_MID, entry_bar,
-                                       fetch_price_path, in_session, missing_sessions,
-                                       resolve_entry, stopped_returns, t1_return)
+from longterm_agent.exit_rules import (FILL_CONVENTION, FILL_CONVENTION_D0,
+                                       FILL_CONVENTION_MID, entry_bar, fetch_price_path,
+                                       in_session, missing_sessions, resolve_entry,
+                                       stopped_returns, t1_return)
 from longterm_agent.grade_results import (BENCHMARK, EXTRA_HORIZONS, HORIZON_DAYS,
                                           _decision_moment)
 from longterm_agent.market_calendar import last_session_on_or_before
@@ -307,6 +308,14 @@ def audit_shift_library(mc, diffs):
                 if old is not None and leg is not None and abs(old - leg) <= TOL:
                     ev[col] = [f"legacy_convention {t} close {as_of}→+{days}d"]
         diffs.add("shift_library", row["id"], f"{tk} {as_of}", row, fresh, ev)
+        if row["fill_convention"] is None and diffs.rows and diffs.rows[-1]["id"] == row["id"]:
+            # A legacy row regraded under open_t1 gets the entry stamp grade_shifts writes;
+            # left NULL, the analog leakage filter (COALESCE(entry_date, as_of)) and every
+            # convention check would still read it as a close→close row.
+            why = ["legacy_convention: stamp the open_t1 entry"]
+            diffs.rows[-1]["cols"].update({"entry_date": (None, eb[0], why),
+                                           "entry_px": (None, eb[1], why),
+                                           "fill_convention": (None, FILL_CONVENTION, why)})
 
 
 def audit_backtests(mc, cfg, diffs):
