@@ -84,10 +84,22 @@ FUNDAMENTALS_FETCH_TIME = os.getenv("FUNDAMENTALS_FETCH_TIME", "03:00")  # ET, o
 #   * the 2026-07-24 NaN incident sat in the table for days because nothing re-read it.
 # Daily + a 1-month window makes both self-healing: a bar the writer drops as non-finite
 # (daily_price_fetcher.save_daily) is simply refetched the next evening, and any gap inside
-# the window closes without a manual repair. 20:30 ET is well clear of the 16:00 close and
-# of the other daily jobs (17:30 options, 18:30 macro, 19:30 filings).
+# the window closes without a manual repair.
+#
+# Why 22:30 and not 20:30 (moved 2026-10-24): from the 2026-09-02 session on, every 20:30
+# run got the SAME-DAY bar from Yahoo with a non-finite OHLC. save_daily rightly dropped it
+# for all 132 tickers, so bar D first reached the table at D+1 20:30. fetch_time shows it
+# for every one of the 36 sessions 09-02..10-22; from 07-29 to 09-01 the same 20:30 run had
+# landed bar D the same evening. Yahoo republishes the day's bar after the 20:00 ET
+# extended-hours close and serves it with NaN Open/High/Low/Close (Volume present) for a
+# while: reported "highly reproducible" at 00:30 UTC (= 20:30 EDT, our slot exactly) and
+# not at 01:30 UTC (yfinance issue #2895). 22:30 sits an hour past that.
+# The RETRY pass is the second chance before the 07:00 ET grader (LT_GRADE_TIME): if the
+# evening pass still met a NaN bar, the grader would otherwise run a session behind.
+# Empty string disables it.
 DAILY_BARS_FETCH_ENABLED = os.getenv("DAILY_BARS_FETCH_ENABLED", "true").lower() == "true"
-DAILY_BARS_FETCH_TIME = os.getenv("DAILY_BARS_FETCH_TIME", "20:30")   # ET, post-close
+DAILY_BARS_FETCH_TIME = os.getenv("DAILY_BARS_FETCH_TIME", "22:30")   # ET, after Yahoo republishes
+DAILY_BARS_RETRY_TIME = os.getenv("DAILY_BARS_RETRY_TIME", "06:15")   # ET, before the 07:00 grader
 DAILY_BARS_PERIOD = os.getenv("DAILY_BARS_PERIOD", "1mo")             # heal window
 
 # Macro/regime series (Modification Plan Phase 14) — free PIT series (VIX, HY OAS, 10Y,

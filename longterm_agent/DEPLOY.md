@@ -31,7 +31,8 @@ vs-SPY leg and the batch freshness preflight all read `stock_prices_daily` on a 
 
 ```ini
 DAILY_BARS_FETCH_ENABLED=true    # default
-DAILY_BARS_FETCH_TIME=20:30      # ET, post-close; clear of options 17:30 / macro 18:30 / filings 19:30
+DAILY_BARS_FETCH_TIME=22:30      # ET; NOT 20:30 — Yahoo serves the day's bar as NaN just after 20:00
+DAILY_BARS_RETRY_TIME=06:15      # ET, second pass before the 07:00 grader (empty = off)
 DAILY_BARS_PERIOD=1mo            # window > cadence, so a dropped or missed bar heals itself
 ```
 

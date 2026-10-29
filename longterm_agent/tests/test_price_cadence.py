@@ -60,6 +60,40 @@ def test_bar_fetch_uses_the_configured_heal_window(fetcher_pkg, monkeypatch):
         f"a {cfg.DAILY_BARS_PERIOD} window on a daily cadence leaves no room to heal"
 
 
+def test_bars_land_after_yahoo_republishes_and_again_before_the_grader(fetcher_pkg,
+                                                                      monkeypatch):
+    """Two passes, checked on the real scheduler rather than on run_scheduler's source.
+
+    At 20:30 ET Yahoo served the day's bar with NaN OHLC (just after the 20:00 extended-hours
+    close), so bar D reached the table at D+1 20:30 and the 07:00 grader ran a session
+    behind (2026-09-02 → 10-23). The evening pass must sit past that window, and a second
+    pass must run before the grader.
+    """
+    import types
+    from datetime import time
+    import schedule
+    from longterm_agent.config import LongTermAgentConfig
+
+    fetcher, cfg = fetcher_pkg
+    jobs = schedule.Scheduler()
+
+    def stop():
+        raise KeyboardInterrupt   # run_scheduler's own exit path, so its loop returns
+    monkeypatch.setattr(fetcher, "schedule", types.SimpleNamespace(
+        every=jobs.every, next_run=lambda: jobs.next_run, run_pending=stop))
+    for name in ("_init_graph_tables", "run_startup_db_maintenance", "_test_embedding_api"):
+        monkeypatch.setattr(fetcher, name, lambda *a, **k: None)
+
+    fetcher.run_scheduler(verbose=False)
+
+    bar_times = sorted(j.at_time for j in jobs.jobs
+                       if "scheduled_daily_bars_fetch" in j.job_func.func.__code__.co_names)
+    grade = time(*(int(x) for x in LongTermAgentConfig.GRADE_TIME.split(":")))
+    retry, evening = bar_times
+    assert evening >= time(21, 30), "20:00-21:30 ET is when Yahoo serves the bar as NaN"
+    assert retry < grade, "the second pass must land the bar before the grader reads it"
+
+
 def test_bar_fetch_time_is_after_the_close_and_does_not_collide(fetcher_pkg):
     _, cfg = fetcher_pkg
     hh, _mm = (int(x) for x in cfg.DAILY_BARS_FETCH_TIME.split(":"))
