@@ -9,6 +9,7 @@ import argparse
 from datetime import datetime
 
 
+from core import tracing
 from longterm_agent.config import LongTermAgentConfig
 from longterm_agent.agent.graph import create_longterm_graph
 from longterm_agent.persistence import persist_run
@@ -24,14 +25,13 @@ def main():
     ap.add_argument("--json", action="store_true", help="Print the background profile as JSON")
     ap.add_argument("--no-persist", action="store_true", help="Skip writing to the results/shift tables")
     ap.add_argument("--trace", action=argparse.BooleanOptionalAction, default=True,
-                    help="LangSmith tracing (default: ON; exports prompts to the LangSmith cloud). "
-                         "Use --no-trace to disable, e.g. for offline/reproducible runs.")
+                    help="Langfuse tracing (default: ON when LANGFUSE_* is set; self-hosted). "
+                         "Use --no-trace to disable.")
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
-    # Enable tracing BEFORE building LLMs/graph so callbacks attach to every call.
     if args.trace:
-        cfg.enable_tracing()
+        cfg.enable_tracing("dev")
     maybe_enable_llm_cache()  # LT_LLM_CACHE=true → reproducible & cheap re-runs (B0)
     as_of = datetime.strptime(args.as_of, "%Y-%m-%d")
     lookback = args.lookback or cfg.LOOKBACK_DAYS_BACKGROUND
@@ -62,7 +62,12 @@ def main():
             "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": [],
             "data_freshness": freshness}
     t0 = time.time()
-    final = graph.invoke(init)
+    # run_kind "manual": a hand run must not share a trace id with the live run of that day.
+    with tracing.agent_run(args.ticker, as_of, cfg, run_kind="manual",
+                           session_id=f"manual-{as_of:%Y-%m-%d}") as trace:
+        final = graph.invoke(init, config=trace.config)
+        trace.end(final)
+    tracing.flush()
     elapsed = time.time() - t0
 
     if not args.no_persist:

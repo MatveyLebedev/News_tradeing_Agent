@@ -1,0 +1,210 @@
+# Self-hosted Langfuse v4 for the trading agents (tracing, datasets, experiments, annotation).
+#
+# Derived from upstream langfuse/langfuse docker-compose.yml (v4), with four deliberate changes:
+#   * every image is pinned to an exact version (upstream floats on :4 / :latest);
+#   * every port binds to 127.0.0.1 — Langfuse is reached through an SSH tunnel, never the
+#     internet (prompts carry news text and financials);
+#   * secrets have no defaults: `${VAR:?}` fails loudly instead of starting with upstream's
+#     well-known placeholders. Generate them with deploy/langfuse/gen_env.sh;
+#   * memory, swap, CPU and log caps, and oom_score_adj 800 on every service: on a shared host
+#     the kernel's OOM killer takes Langfuse first, never the trading Postgres/Neo4j. Tracing
+#     is best-effort, the database is not. Defaults suit a laptop; the server sets the tight
+#     values in .env (deploy/langfuse/README.md).
+#
+# Project name and network are `trade-langfuse` so this stack never collides with another
+# Langfuse on the same Docker host. Agent containers join the network and reach
+# http://langfuse-web:3000. Runbook: deploy/langfuse/README.md.
+name: trade-langfuse
+
+x-guard: &guard
+  oom_score_adj: 800
+  restart: unless-stopped
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-langfuse-env: &langfuse-env
+  NEXTAUTH_URL: ${NEXTAUTH_URL:?run gen_env.sh}
+  DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?}@postgres:5432/postgres
+  SALT: ${SALT:?}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+  TELEMETRY_ENABLED: "false"
+  LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: clickhouse
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?}
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+  LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+  LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+  LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+  LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${REDIS_AUTH:?}
+
+services:
+  langfuse-worker:
+    <<: *guard
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.70.1
+    depends_on: &langfuse-depends-on
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-env
+      NODE_OPTIONS: --max-old-space-size=${WORKER_NODE_HEAP_MB:-1024}
+    mem_limit: ${WORKER_MEM_LIMIT:-1536m}
+    memswap_limit: ${WORKER_MEM_LIMIT:-1536m}
+    cpus: ${WORKER_CPUS:-2}
+    logging: *logging
+
+  langfuse-web:
+    <<: *guard
+    image: docker.langfuse.com/langfuse/langfuse:4.70.1
+    depends_on: *langfuse-depends-on
+    ports:
+      - 127.0.0.1:${LANGFUSE_PORT:-3000}:3000
+    environment:
+      <<: *langfuse-env
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?}
+      # Presigned media URLs are opened by the browser / SDK, i.e. through the tunnel.
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:${MINIO_PORT:-9090}
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://minio:9000
+      # Headless init: org, project, API keys and the admin user exist on first start,
+      # so nobody has to sign up through the UI. No-ops once they exist.
+      LANGFUSE_INIT_ORG_ID: trade-agent
+      LANGFUSE_INIT_ORG_NAME: trade-agent
+      LANGFUSE_INIT_PROJECT_ID: longterm-agent
+      LANGFUSE_INIT_PROJECT_NAME: longterm-agent
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:?}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:?}
+      LANGFUSE_INIT_USER_NAME: admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?}
+      AUTH_DISABLE_SIGNUP: "true"
+      NODE_OPTIONS: --max-old-space-size=${WEB_NODE_HEAP_MB:-1024}
+    mem_limit: ${WEB_MEM_LIMIT:-1536m}
+    memswap_limit: ${WEB_MEM_LIMIT:-1536m}
+    cpus: ${WEB_CPUS:-2}
+    logging: *logging
+
+  clickhouse:
+    <<: *guard
+    image: docker.io/clickhouse/clickhouse-server:26.4.5.143
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./clickhouse/low-footprint.xml:/etc/clickhouse-server/config.d/low-footprint.xml:ro
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+      start_interval: 2s
+    mem_limit: ${CLICKHOUSE_MEM_LIMIT:-3g}
+    memswap_limit: ${CLICKHOUSE_MEM_LIMIT:-3g}
+    cpus: ${CLICKHOUSE_CPUS:-2}
+    logging: *logging
+
+  minio:
+    <<: *guard
+    # Chainguard publishes only :latest for free, so the digest is the pin.
+    image: cgr.dev/chainguard/minio@sha256:e70b2b1e74d79457f808710483bd726ff364529ca30736eaa15a6ab547d3a5a7
+    entrypoint: sh
+    # create the 'langfuse' bucket before starting the service
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    ports:
+      - 127.0.0.1:${MINIO_PORT:-9090}:9000
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      # upstream polls every 1s — ~7% of a core at idle on a 2-vCPU host
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+      start_interval: 1s
+    mem_limit: ${MINIO_MEM_LIMIT:-512m}
+    memswap_limit: ${MINIO_MEM_LIMIT:-512m}
+    logging: *logging
+
+  redis:
+    <<: *guard
+    image: docker.io/redis:7.4.12
+    command: >
+      --requirepass ${REDIS_AUTH:?}
+      --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_AUTH:?}", "--no-auth-warning", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+      start_interval: 2s
+    mem_limit: ${REDIS_MEM_LIMIT:-512m}
+    memswap_limit: ${REDIS_MEM_LIMIT:-512m}
+    logging: *logging
+
+  postgres:
+    <<: *guard
+    image: docker.io/postgres:17.10
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 3s
+      retries: 10
+      start_period: 60s
+      start_interval: 2s
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: postgres
+      TZ: UTC
+      PGTZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    mem_limit: ${LF_POSTGRES_MEM_LIMIT:-1g}
+    memswap_limit: ${LF_POSTGRES_MEM_LIMIT:-1g}
+    logging: *logging
+
+networks:
+  default:
+    name: trade-langfuse
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  clickhouse_logs:
+  minio_data:
+  redis_data:

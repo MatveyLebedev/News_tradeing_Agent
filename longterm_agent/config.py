@@ -104,7 +104,18 @@ DETECTION_VERSION = {1: "0.1.0", 2: "0.2.0", 3: "0.3.0"}[METRICS_VERSION]
 #   the book, faded on the chart and outside every total — hidden, they read as weeks that
 #   were never filled. `scan_open_breaches` skips those rows, so a replay cannot send a
 #   STOP BREACH for a position nobody holds. Grading and the decision path are untouched.
-PIPELINE_VERSION = "0.11.1"
+# 0.11.2 (2026-10-28): a PATCH, observability only. Tracing moves from the LangSmith cloud to
+#   self-hosted Langfuse (core/tracing.py, deploy/langfuse): one trace per run under a
+#   deterministic id, incl. the Monday forward cohort. Callbacks ride in the invoke config,
+#   so prompts and LLM-cache keys are unchanged (test_tracing.py); decisions are untouched.
+# 0.11.3 (2026-10-29): a PATCH, observability only. The daily grading step now restates the
+#   grader's columns as trace labels (`trace_labels`, longterm_agent/labeling) and mirrors
+#   them into Langfuse as scores, rebuilding a missing trace from its snapshot. Grading and
+#   decisions are untouched; a labeling failure never holds up a grade.
+# 0.11.4 (2026-10-29): a PATCH, observability only. Trace labeling stage 2: every run gets an
+#   outcome (counterfactual), every shifted run a persistence check, risk_gate/reflection a
+#   value, map buckets a weekly excess, each batch a session score. Decisions untouched.
+PIPELINE_VERSION = "0.11.4"
 AGENT_VERSION = DETECTION_VERSION  # back-compat alias (DB `agent_version` column value)
 
 # BUCKET_CACHE_VERSION keys bucket_summary_cache SEPARATELY from the detection version.
@@ -364,11 +375,8 @@ class LongTermAgentConfig:
 
     TIMEZONE = pytz.timezone("America/New_York")
 
-    # --- LangSmith tracing (off unless enabled; sends prompts to LangSmith cloud) ---
-    LANGCHAIN_ENDPOINT = os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com")
-    LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY", "")
-    LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "longterm-trading-agent")
-    # Scheduler tracing (auto_longterm_agent): LT_TRACE=false to opt out; no-op without API key.
+    # --- Tracing: self-hosted Langfuse (core.tracing). Prompts stay on our own server. ---
+    # Scheduler tracing (auto_longterm_agent): LT_TRACE=false to opt out; no-op without LANGFUSE_*.
     TRACE = os.getenv("LT_TRACE", "true").lower() == "true"
 
     # --- Ops / Phase 6 (weekly scheduler, Telegram alerts, stats bot) ---
@@ -465,18 +473,12 @@ class LongTermAgentConfig:
         return dict(cls.DB_CONFIG)
 
     @classmethod
-    def enable_tracing(cls):
-        """Turn on LangSmith tracing for this process. NOTE: exports prompts (news text,
-        financials, model reasoning) to the LangSmith cloud. Returns True if enabled."""
-        if not cls.LANGCHAIN_API_KEY:
-            print("⚠ LANGCHAIN_API_KEY not set — tracing NOT enabled")
-            return False
-        os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        os.environ["LANGCHAIN_ENDPOINT"] = cls.LANGCHAIN_ENDPOINT
-        os.environ["LANGCHAIN_API_KEY"] = cls.LANGCHAIN_API_KEY
-        os.environ["LANGCHAIN_PROJECT"] = cls.LANGCHAIN_PROJECT
-        print(f"✓ LangSmith tracing enabled → project '{cls.LANGCHAIN_PROJECT}'")
-        return True
+    def enable_tracing(cls, environment: str = "dev"):
+        """Turn on Langfuse tracing for this process (self-hosted, see core.tracing).
+        Runs are traced only where the caller wraps graph.invoke in tracing.agent_run.
+        Returns True if enabled."""
+        from core import tracing
+        return tracing.init(default_environment=environment)
 
     @classmethod
     def llm_provider_routing(cls):

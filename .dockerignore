@@ -22,9 +22,16 @@ docker-compose.yml
 .vscode
 .idea
 # secrets must NEVER enter an image (longterm Dockerfile does COPY . .)
+# A bare `.env` matches only the repo root; deploy/langfuse/.env slipped into a 2026-10-28
+# build that way (ship_image.sh refused it). `**/` covers every directory.
 .env
 .env.*
+**/.env
+**/.env.*
 *.bak
+**/*.bak
+# The Langfuse stack is deployed by its own compose file, never from an agent image.
+deploy/langfuse/
 # local tooling / bulky non-runtime dirs
 .claude/
 longterm_agent/reports/

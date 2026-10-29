@@ -109,7 +109,7 @@ Groups:
 | Market data | [`stock_prices_daily`](#stock_prices_daily), [`historical_data_<ticker>`](#historical_data_ticker), [`stock_prices`](#stock_prices-legacy), [`macro_series`](#macro_series), [`options_iv`](#options_iv) |
 | Fundamentals & filings | [`fundamentals`](#fundamentals), [`filings`](#filings), [`insider_trades`](#insider_trades) |
 | Graph support (pgvector) | [`graph_event_embeddings`](#graph_event_embeddings), [`graph_story_centroids`](#graph_story_centroids) |
-| Agent output | [`agent_results`](#agent_results), [`longterm_agent_results`](#longterm_agent_results), [`longterm_run_snapshots`](#longterm_run_snapshots), [`shift_library`](#shift_library), [`backtest_runs`](#backtest_runs), [`simulated_trades`](#simulated_trades) |
+| Agent output | [`agent_results`](#agent_results), [`longterm_agent_results`](#longterm_agent_results), [`longterm_run_snapshots`](#longterm_run_snapshots), [`trace_labels`](#trace_labels), [`trace_label_syncs`](#trace_label_syncs), [`shift_library`](#shift_library), [`backtest_runs`](#backtest_runs), [`simulated_trades`](#simulated_trades) |
 | Caches | [`bucket_summary_cache`](#bucket_summary_cache), [`longterm_llm_cache`](#longterm_llm_cache) |
 | Ops | [`longterm_agent_log`](#longterm_agent_log) |
 
@@ -593,6 +593,60 @@ Sizing: ~30–80 KB per run → ~100–200 MB/year at 50 tickers/week. Keep fore
 
 Live: 130 rows — `detection_version` `0.2.0` across `pipeline_version` `0.8.0` (66),
 `0.9.5` (63), `0.9.6` (1).
+
+## `trace_labels`
+
+Labels for agent runs computed from data that arrived **after** the run — the targets of the
+training set whose inputs `longterm_run_snapshots` holds. The source of truth: Langfuse scores
+are a mirror rebuilt from this table. Written daily after grading by
+`longterm_agent/label_traces.py`; one module per labeler under `longterm_agent/labeling/`.
+
+DDL: [`longterm_agent/labeling/store.py`](../longterm_agent/labeling/store.py)
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigserial` | PK |
+| `trace_kind` | `varchar(16)` | `lt_run` = a longterm agent run; `lt_session` = a weekly batch (its Langfuse session) |
+| `trace_key` | `varchar(96)` | `run_kind:detection_version:TICKER:as_of` — `core.tracing.run_trace_key`, the Langfuse trace-id seed |
+| `trace_id` | `char(32)` | Langfuse trace id derived from `trace_key` |
+| `ticker`, `as_of` | | the run, for joins |
+| `node` | `varchar(40)` | `run` = the whole decision, `session` = a whole batch, else a LangGraph node (`shift_detection`, …) |
+| `span` | `varchar(80)` | sub-item within a node: `week:<window>` for a map bucket, else empty |
+| `label_key` | `varchar(48)` | `excess_4w`, `hit_4w`, `outcome`, … |
+| `value_num` / `value_cat` | | numeric or categorical value |
+| `value_json` | `jsonb` | the raw inputs the label was computed from (fwd/bench returns, entry date, `traded`, `pit_excluded`) |
+| `status` | `varchar(12)` | `final`, or `unavailable` (measured, nothing to grade — `reason` says why) |
+| `labeler`, `labeler_version` | | who computed it; a new version adds rows, never overwrites |
+| `trace_time` | `timestamp` | decision moment, naive ET |
+| `horizon_days` | `int` | |
+| `data_cutoff` | `date` | last market day the label reads |
+| `label_available_at` | `timestamp` | `data_cutoff` + 1 day, ET. **A consumer at `as_of` may use a label only if `label_available_at <= as_of`** |
+| `created_at`, `updated_at` | `timestamp` | ET, set from Python; `updated_at` moves only when the value changes |
+
+`UNIQUE (trace_kind, trace_key, node, span, label_key, labeler_version)`.
+
+Labelers, one module each under `longterm_agent/labeling/`: `results_adapter` (the grader's
+columns, position-signed like `stats.trade_excess`, nothing recomputed), `counterfactual`
+(stock − SPY after every run, priced like a trade), `shift_persistence` (shift outcome for
+the non-trades), `decision_deltas` (risk_gate / reflection value), `map_buckets` (weekly
+excess per map bucket), `cohorts` (per-batch aggregates). Keep forever.
+
+Live 2026-10-29: 970 rows on 115 runs (0.1.0: 5, 0.2.0: 110).
+
+## `trace_label_syncs`
+
+Which labels a given Langfuse project already holds as scores.
+
+| Column | Type | Notes |
+|---|---|---|
+| `label_id` | `bigint` | FK → `trace_labels.id`, `ON DELETE CASCADE` |
+| `lf_target` | `varchar(16)` | `sha256(LANGFUSE_PUBLIC_KEY)[:16]` — one project, whatever URL reaches it |
+| `score_id` | `char(32)` | deterministic, so a re-send updates instead of duplicating |
+| `observation_id` | `varchar(32)` | NULL = scored on the trace |
+| `synced_at` | `timestamp` | ET; a label with `updated_at` after it is re-sent |
+
+`PRIMARY KEY (label_id, lf_target)`. A new Langfuse project (new keys) has no rows here,
+so it receives every label on the next run.
 
 ## `shift_library`
 

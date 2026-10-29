@@ -16,6 +16,7 @@ Reproducible: enable the B0 LLM cache and run with reflection off.
     python -m longterm_agent.backtest --backtest-id exp1 --report-only   # re-print the report
 """
 import argparse
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, date, time
@@ -155,11 +156,16 @@ def _thread_ctx(cfg):
 
 
 def _run_one(cfg, backtest_id, prov, horizons, tk, as_of):
+    from core import tracing
     ctx = _thread_ctx(cfg)
     try:
-        final = ctx["graph"].invoke({"ticker": tk.upper(), "as_of": as_of,
-                                     "lookback_days": cfg.LOOKBACK_DAYS_BACKGROUND,
-                                     "shift_window_days": cfg.SHIFT_WINDOW_DAYS, "messages": []})
+        with tracing.agent_run(tk, as_of, cfg, run_kind=backtest_id,
+                               session_id=backtest_id, tags=[backtest_id]) as trace:
+            final = ctx["graph"].invoke({"ticker": tk.upper(), "as_of": as_of,
+                                         "lookback_days": cfg.LOOKBACK_DAYS_BACKGROUND,
+                                         "shift_window_days": cfg.SHIFT_WINDOW_DAYS,
+                                         "messages": []}, config=trace.config)
+            trace.end(final)
         _write_rows(cfg, backtest_id, prov, tk, as_of, horizons, final)
         return True
     except Exception as e:
@@ -667,8 +673,10 @@ def main():
     args = ap.parse_args()
 
     cfg = LongTermAgentConfig()
-    if args.trace:
-        cfg.enable_tracing()
+    # LT_TRACE_BACKTEST: set by the scheduler for the forward Monday cohort, which is a live
+    # run in backtest clothing; a plain sweep stays untraced unless asked.
+    if args.trace or os.getenv("LT_TRACE_BACKTEST", "false").lower() == "true":
+        cfg.enable_tracing("backtest")
     if not args.report_only:
         if args.tickers and args.start and args.end:
             cohorts = _weekly(datetime.strptime(args.start, "%Y-%m-%d"),

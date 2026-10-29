@@ -142,6 +142,8 @@ ssh root@<host> '
       --env-file /root/trade_agent/.env \
       --log-opt max-size=10m --log-opt max-file=3 \
       longterm-agent:<PIPELINE_VERSION> python -u -m $MOD
+    # Langfuse tracing: second network, so http://langfuse-web:3000 resolves (../deploy/langfuse)
+    docker network inspect trade-langfuse >/dev/null 2>&1 && docker network connect trade-langfuse $n
   done'
 ```
 
