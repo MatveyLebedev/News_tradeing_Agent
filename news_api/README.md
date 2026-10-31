@@ -70,7 +70,7 @@ the source-ranking config (§5) and the section drop list.
 | `ts` | `ts` — ISO8601 UTC (§6) | Original RSS publication time, converted from the DB's US-Eastern storage. Falls back to fetch time when the feed gave no date. |
 | `headline` | `headline` | RSS title. All current feeds are English. |
 | `body` | `body` (§6: first 1000 chars) | `full_text` when scraped, else the RSS summary. Full-text scraping is currently **off** (`FETCH_FULL_TEXT=false`), so expect short RSS summaries — enough for Stage 1 (500 chars) and Stage 2 (300 chars). |
-| `source` | source ranking (§5) + section drop (§3) | Labels: `bloomberg-technology`, `bloomberg-economics`, `bloomberg-industries`, `bloomberg-markets`, **`bloomberg-opinion`** (drop it at Stage 1 per §3), `cnbc-top`, `cnbc-technology`, `cnbc-finance`, `cnbc-earnings`, `cnbc-economy`, `cnbc-energy`, `marketwatch-top`. |
+| `source` | source ranking (§5) + section drop (§3) | Labels: `bloomberg-technology`, `bloomberg-economics`, `bloomberg-industries`, `bloomberg-markets`, `cnbc-top`, `cnbc-technology`, `cnbc-finance`, `cnbc-earnings`, `cnbc-economy`, `cnbc-energy`, `marketwatch-top`. No opinion feed is fetched: Bloomberg's `opinion` slug is dead (404) and never stored a row, so there is no opinion label to drop. |
 | `fetched_at` | — | When the scraper stored the row (UTC). The `ts_field=fetched` window filters on this. |
 
 ## Examples

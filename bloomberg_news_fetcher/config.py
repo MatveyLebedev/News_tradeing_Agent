@@ -31,12 +31,13 @@ DB_CONFIG = {
 }
 
 # Bloomberg RSS feed categories
-# Available categories: technology, economics, industries, opinion, markets
+# 'opinion' was removed 2026-10-30. Its feed returns 404, and it never stored a single row,
+# only a FETCH_ERROR every cycle. Bloomberg Opinion now lives at /bview/, but it is
+# deliberately not fetched: the news_api consumers drop opinion pieces anyway.
 BLOOMBERG_CATEGORIES = [
     'technology',
     'economics',
     'industries',
-    'opinion',
     'markets'
 ]
 

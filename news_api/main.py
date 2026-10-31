@@ -12,9 +12,9 @@ the pipeline pulls increments over HTTP. Field mapping to that document:
     headline -> news.title
     body     -> best available text: full_text if scraped, else the RSS
                 summary; truncated server-side to `body_chars`
-    source   -> feed label (bloomberg-technology, bloomberg-opinion,
-                cnbc-top, marketwatch-top, ...); use it for the section
-                drop (doc §3: bloomberg-opinion) and source ranking (§5)
+    source   -> feed label (bloomberg-technology, cnbc-top,
+                marketwatch-top, ...); use it for the section drop (doc §3)
+                and source ranking (§5). No opinion feed is fetched.
 
 Auth: X-API-Key header, compared against the NEWS_API_KEY env var.
 The service opens the DB with the same DB_* env vars as the fetcher and
